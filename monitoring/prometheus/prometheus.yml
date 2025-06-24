@@ -1,0 +1,57 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+scrape_configs:
+  # Prometheus 自身监控
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Django Service 监控
+  - job_name: 'django-service'
+    static_configs:
+      - targets: ['django_service:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # FastAPI Service 监控  
+  - job_name: 'fastapi-service'
+    static_configs:
+      - targets: ['fastapi_service:8001']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # MySQL 监控
+  - job_name: 'mysql'
+    static_configs:
+      - targets: ['mysql:9104']
+    scrape_interval: 30s
+
+  # Redis 监控
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:9121']
+    scrape_interval: 30s
+
+  # RabbitMQ 监控
+  - job_name: 'rabbitmq'
+    static_configs:
+      - targets: ['rabbitmq:15692']
+    scrape_interval: 30s
+
+  # Node Exporter (系统监控)
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+    scrape_interval: 30s
+
+  # Docker 容器监控
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']
+    scrape_interval: 30s

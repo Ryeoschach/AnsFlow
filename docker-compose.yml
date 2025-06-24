@@ -1,0 +1,175 @@
+version: '3.8'
+
+services:
+  # MySQL Database
+  mysql:
+    image: mysql:8.0
+    container_name: ansflow_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: root_password_123
+      MYSQL_DATABASE: ansflow_db
+      MYSQL_USER: ansflow_user
+      MYSQL_PASSWORD: ansflow_password_123
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./deployment/docker/mysql/init:/docker-entrypoint-initdb.d
+    networks:
+      - ansflow_network
+
+  # Redis Cache
+  redis:
+    image: redis:7-alpine
+    container_name: ansflow_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - ansflow_network
+
+  # RabbitMQ Message Queue
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: ansflow_rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ansflow
+      RABBITMQ_DEFAULT_PASS: ansflow_rabbitmq_123
+    ports:
+      - "5672:5672"   # AMQP port
+      - "15672:15672" # Management UI
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - ansflow_network
+
+  # Django Management Service
+  django_service:
+    build:
+      context: ./backend/django_service
+      dockerfile: Dockerfile.dev
+    container_name: ansflow_django
+    restart: unless-stopped
+    environment:
+      - DEBUG=True
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend/django_service:/app
+      - media_files:/app/media
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - ansflow_network
+    command: >
+      sh -c "
+        python manage.py migrate &&
+        python manage.py collectstatic --noinput &&
+        python manage.py runserver 0.0.0.0:8000
+      "
+
+  # FastAPI High-Performance Service  
+  fastapi_service:
+    build:
+      context: ./backend/fastapi_service
+      dockerfile: Dockerfile.dev
+    container_name: ansflow_fastapi
+    restart: unless-stopped
+    environment:
+      - DEBUG=True
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./backend/fastapi_service:/app
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - ansflow_network
+    command: uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+
+  # React Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: ansflow_frontend
+    restart: unless-stopped
+    environment:
+      - REACT_APP_API_BASE_URL=http://localhost:8000
+      - REACT_APP_FASTAPI_BASE_URL=http://localhost:8001
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - django_service
+      - fastapi_service
+    networks:
+      - ansflow_network
+    command: npm run dev
+
+  # Prometheus Monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: ansflow_prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus:/etc/prometheus
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - ansflow_network
+
+  # Grafana Dashboard
+  grafana:
+    image: grafana/grafana:latest
+    container_name: ansflow_grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+    ports:
+      - "3001:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    depends_on:
+      - prometheus
+    networks:
+      - ansflow_network
+
+volumes:
+  mysql_data:
+  redis_data:
+  rabbitmq_data:
+  media_files:
+  prometheus_data:
+  grafana_data:
+
+networks:
+  ansflow_network:
+    driver: bridge
