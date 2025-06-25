@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="zh-cn">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AnsFlow 登录测试</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .form-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+        input {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        button {
+            background-color: #1890ff;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 4px;
+            font-size: 16px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #40a9ff;
+        }
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .result {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 4px;
+            white-space: pre-wrap;
+            font-family: monospace;
+        }
+        .success {
+            background-color: #f6ffed;
+            border: 1px solid #b7eb8f;
+            color: #389e0d;
+        }
+        .error {
+            background-color: #fff2f0;
+            border: 1px solid #ffccc7;
+            color: #cf1322;
+        }
+        .info {
+            background-color: #f0f9ff;
+            border: 1px solid #91caff;
+            color: #1677ff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 AnsFlow 登录测试</h1>
+        <p>测试前端身份验证系统是否正常工作</p>
+        
+        <div class="form-group">
+            <label for="username">用户名:</label>
+            <input type="text" id="username" value="john_doe" placeholder="输入用户名">
+        </div>
+        
+        <div class="form-group">
+            <label for="password">密码:</label>
+            <input type="password" id="password" value="password123" placeholder="输入密码">
+        </div>
+        
+        <button onclick="testLogin()">🚀 测试登录</button>
+        <button onclick="testCurrentUser()">👤 获取当前用户</button>
+        <button onclick="testLogout()">🚪 测试登出</button>
+        <button onclick="clearResults()">🗑️ 清空结果</button>
+        
+        <div id="result" class="result" style="display: none;"></div>
+    </div>
+
+    <script>
+        let currentToken = null;
+
+        function showResult(message, type = 'info') {
+            const resultDiv = document.getElementById('result');
+            resultDiv.textContent = message;
+            resultDiv.className = `result ${type}`;
+            resultDiv.style.display = 'block';
+        }
+
+        function clearResults() {
+            document.getElementById('result').style.display = 'none';
+        }
+
+        async function testLogin() {
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            if (!username || !password) {
+                showResult('请输入用户名和密码', 'error');
+                return;
+            }
+
+            try {
+                showResult('正在测试登录...', 'info');
+                
+                // 步骤1：获取JWT令牌
+                const tokenResponse = await fetch('/api/v1/auth/token/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ username, password })
+                });
+
+                if (!tokenResponse.ok) {
+                    throw new Error(`令牌获取失败: ${tokenResponse.status} ${tokenResponse.statusText}`);
+                }
+
+                const tokenData = await tokenResponse.json();
+                currentToken = tokenData.access;
+                
+                // 步骤2：使用令牌获取用户信息
+                const userResponse = await fetch('/api/v1/auth/users/me/', {
+                    headers: {
+                        'Authorization': `Bearer ${currentToken}`
+                    }
+                });
+
+                if (!userResponse.ok) {
+                    throw new Error(`用户信息获取失败: ${userResponse.status} ${userResponse.statusText}`);
+                }
+
+                const userData = await userResponse.json();
+
+                const result = `✅ 登录成功！
+
+🔑 JWT 令牌信息:
+- Access Token: ${currentToken.substring(0, 50)}...
+- Refresh Token: ${tokenData.refresh.substring(0, 50)}...
+
+👤 用户信息:
+- ID: ${userData.id}
+- 用户名: ${userData.username}
+- 邮箱: ${userData.email}
+- 姓名: ${userData.first_name} ${userData.last_name}
+
+🎉 前端身份验证系统工作正常！`;
+
+                showResult(result, 'success');
+                
+                // 存储令牌到 localStorage (模拟前端应用行为)
+                localStorage.setItem('authToken', currentToken);
+                
+            } catch (error) {
+                showResult(`❌ 登录失败: ${error.message}`, 'error');
+                console.error('Login error:', error);
+            }
+        }
+
+        async function testCurrentUser() {
+            const token = currentToken || localStorage.getItem('authToken');
+            
+            if (!token) {
+                showResult('❌ 没有有效的认证令牌，请先登录', 'error');
+                return;
+            }
+
+            try {
+                showResult('正在获取当前用户信息...', 'info');
+                
+                const response = await fetch('/api/v1/auth/users/me/', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (!response.ok) {
+                    throw new Error(`请求失败: ${response.status} ${response.statusText}`);
+                }
+
+                const userData = await response.json();
+                
+                const result = `✅ 用户信息获取成功！
+
+👤 当前用户:
+- ID: ${userData.id}
+- 用户名: ${userData.username}
+- 邮箱: ${userData.email}
+- 姓名: ${userData.first_name} ${userData.last_name}
+
+🔑 使用的令牌: ${token.substring(0, 50)}...`;
+
+                showResult(result, 'success');
+                
+            } catch (error) {
+                showResult(`❌ 获取用户信息失败: ${error.message}`, 'error');
+                console.error('Current user error:', error);
+            }
+        }
+
+        async function testLogout() {
+            showResult('正在清除认证信息...', 'info');
+            
+            // 清除存储的令牌
+            localStorage.removeItem('authToken');
+            currentToken = null;
+            
+            showResult('✅ 登出成功！认证信息已清除。', 'success');
+        }
+
+        // 页面加载时检查是否已有令牌
+        window.onload = function() {
+            const savedToken = localStorage.getItem('authToken');
+            if (savedToken) {
+                currentToken = savedToken;
+                showResult(`💡 发现已保存的认证令牌: ${savedToken.substring(0, 50)}...\n\n点击"获取当前用户"测试令牌是否有效。`, 'info');
+            }
+        };
+    </script>
+</body>
+</html>
