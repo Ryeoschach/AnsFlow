@@ -88,7 +88,7 @@ class Command(BaseCommand):
                 self.stdout.write('2. 跳过项目访问测试（未提供项目ID）')
             
             # 3. 测试流水线配置生成
-            self.stdout.write('3. 测试流水线配置生成...')
+                        self.stdout.write('3. 测试流水线配置生成...')
             try:
                 from cicd_integrations.adapters import PipelineDefinition
                 

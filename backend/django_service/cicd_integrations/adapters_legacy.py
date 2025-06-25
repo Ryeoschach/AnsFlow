@@ -9,17 +9,19 @@ The CI/CD adapters have been moved to individual modules for better maintainabil
 - GitHub Actions adapter: cicd_integrations.adapters.github_actions
 - Adapter factory: cicd_integrations.adapters.factory
 
-Please update your imports to use the new modular structure. The imports should
-remain the same thanks to the __init__.py file:
+Please update your imports to use the new modular structure:
 
-    from cicd_integrations.adapters import (
-        JenkinsAdapter, 
-        GitLabCIAdapter, 
-        GitHubActionsAdapter,
-        AdapterFactory,
-        PipelineDefinition,
-        ExecutionResult
-    )
+Old import:
+    from cicd_integrations.adapters import JenkinsAdapter, GitLabCIAdapter, GitHubActionsAdapter
+
+New import:
+    from cicd_integrations.adapters import JenkinsAdapter, GitLabCIAdapter, GitHubActionsAdapter
+
+The imports remain the same thanks to the __init__.py file, but the underlying structure
+is now modular and better organized.
+
+For the factory, use:
+    from cicd_integrations.adapters import AdapterFactory
 
 This file will be removed in a future version.
 """
@@ -31,7 +33,7 @@ from .adapters.gitlab_ci import GitLabCIAdapter
 from .adapters.github_actions import GitHubActionsAdapter
 from .adapters.factory import AdapterFactory
 
-# Legacy compatibility - keeping old factory name for backward compatibility
+# Legacy compatibility
 CICDAdapterFactory = AdapterFactory
 
 __all__ = [

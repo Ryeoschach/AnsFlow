@@ -43,7 +43,7 @@ from django.core.management import call_command
 from cicd_integrations.models import CICDTool, AtomicStep, PipelineExecution
 from cicd_integrations.services import UnifiedCICDEngine
 from cicd_integrations.adapters import (
-    CICDAdapterFactory, 
+    AdapterFactory, 
     JenkinsAdapter, 
     GitLabCIAdapter, 
     GitHubActionsAdapter,
@@ -135,7 +135,7 @@ class UnifiedCICDIntegrationTest:
         
         try:
             # 创建适配器
-            adapter = CICDAdapterFactory.create_adapter(tool_type, **config)
+            adapter = AdapterFactory.create_adapter(tool_type, **config)
             
             # 健康检查
             health_ok = await adapter.health_check()
@@ -239,7 +239,7 @@ class UnifiedCICDIntegrationTest:
             
             # 生成配置
             config = self.tool_configs[tool_type]
-            adapter = CICDAdapterFactory.create_adapter(tool_type, **config)
+            adapter = AdapterFactory.create_adapter(tool_type, **config)
             
             pipeline_config = await adapter.create_pipeline_file(pipeline_def)
             
@@ -358,7 +358,7 @@ class UnifiedCICDIntegrationTest:
         self.test_results['原子步骤检查'] = atomic_steps_ok
         
         # 检查支持的工具
-        supported_tools = CICDAdapterFactory.get_supported_tools()
+        supported_tools = AdapterFactory.get_supported_platforms()
         self.print_info(f"支持的 CI/CD 工具: {', '.join(supported_tools)}")
         
         # 2. 连接测试

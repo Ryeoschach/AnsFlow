@@ -9,7 +9,7 @@ from celery import shared_task
 from asgiref.sync import sync_to_async
 
 from .models import CICDTool, PipelineExecution, StepExecution, AtomicStep
-from .adapters import CICDAdapterFactory, PipelineDefinition, ExecutionResult
+from .adapters import AdapterFactory, PipelineDefinition, ExecutionResult
 from pipelines.models import Pipeline
 
 logger = logging.getLogger(__name__)
@@ -49,7 +49,7 @@ class UnifiedCICDEngine:
     async def health_check_tool(self, tool: CICDTool) -> bool:
         """检查工具健康状态"""
         try:
-            adapter = CICDAdapterFactory.create_adapter(
+            adapter = AdapterFactory.create_adapter(
                 tool.tool_type,
                 base_url=tool.base_url,
                 username=tool.username,
@@ -125,7 +125,7 @@ class UnifiedCICDEngine:
             
             # 创建适配器
             tool = execution.cicd_tool
-            adapter = CICDAdapterFactory.create_adapter(
+            adapter = AdapterFactory.create_adapter(
                 tool.tool_type,
                 base_url=tool.base_url,
                 username=tool.username,
@@ -266,7 +266,7 @@ class UnifiedCICDEngine:
             
             # 创建适配器并取消执行
             tool = execution.cicd_tool
-            adapter = CICDAdapterFactory.create_adapter(
+            adapter = AdapterFactory.create_adapter(
                 tool.tool_type,
                 base_url=tool.base_url,
                 username=tool.username,
@@ -301,7 +301,7 @@ class UnifiedCICDEngine:
             
             # 否则从外部工具获取
             tool = execution.cicd_tool
-            adapter = CICDAdapterFactory.create_adapter(
+            adapter = AdapterFactory.create_adapter(
                 tool.tool_type,
                 base_url=tool.base_url,
                 username=tool.username,
