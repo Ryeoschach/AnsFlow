@@ -20,7 +20,8 @@ from .factory import (
     create_jenkins_adapter,
     create_gitlab_adapter,
     create_github_adapter,
-    get_adapter_for_platform
+    get_adapter_for_platform,
+    get_adapter
 )
 
 # 向后兼容性别名

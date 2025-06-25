@@ -117,3 +117,17 @@ def get_adapter_for_platform(platform: str, **kwargs) -> CICDAdapter:
         CICDAdapter: An instance of the appropriate adapter
     """
     return AdapterFactory.create_adapter(platform, **kwargs)
+
+
+def get_adapter(platform: str, **kwargs) -> CICDAdapter:
+    """
+    Factory function to create an adapter instance.
+    
+    Args:
+        platform: The CI/CD platform name
+        **kwargs: Additional arguments to pass to the adapter constructor
+        
+    Returns:
+        CICDAdapter: An instance of the appropriate adapter
+    """
+    return AdapterFactory.create_adapter(platform, **kwargs)
