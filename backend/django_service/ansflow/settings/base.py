@@ -58,6 +58,7 @@ LOCAL_APPS = [
     'user_management',
     'workflow',
     'audit',
+    'cicd_integrations',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

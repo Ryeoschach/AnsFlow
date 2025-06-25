@@ -40,6 +40,7 @@ urlpatterns = [
     # API v1
     path('api/v1/pipelines/', include('pipelines.urls')),
     path('api/v1/projects/', include('project_management.urls')),
+    path('api/v1/cicd/', include('cicd_integrations.urls')),
     
     # API Documentation
     path('api/schema/', include([
