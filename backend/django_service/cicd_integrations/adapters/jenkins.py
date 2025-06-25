@@ -443,3 +443,488 @@ pipeline {{
         except Exception as e:
             logger.error(f"Jenkins health check failed: {e}")
             return False
+        
+        # ===============================
+    # Jenkins Job 管理功能扩展
+    # ===============================
+    
+    async def list_jobs(self, folder_path: str = "") -> List[Dict[str, Any]]:
+        """获取Jenkins中的所有Job列表"""
+        try:
+            if folder_path:
+                url = f"{self.base_url}/job/{folder_path}/api/json?tree=jobs[name,url,color,buildable,lastBuild[number,result,timestamp,url]]"
+            else:
+                url = f"{self.base_url}/api/json?tree=jobs[name,url,color,buildable,lastBuild[number,result,timestamp,url]]"
+            
+            response = await self.client.get(url, auth=self.auth)
+            
+            if response.status_code == 200:
+                data = response.json()
+                jobs = []
+                
+                for job in data.get('jobs', []):
+                    job_info = {
+                        'name': job.get('name'),
+                        'url': job.get('url'),
+                        'status': self._convert_jenkins_color_to_status(job.get('color', 'notbuilt')),
+                        'buildable': job.get('buildable', False),
+                        'last_build': None
+                    }
+                    
+                    # 处理最后一次构建信息
+                    last_build = job.get('lastBuild')
+                    if last_build:
+                        job_info['last_build'] = {
+                            'number': last_build.get('number'),
+                            'result': last_build.get('result'),
+                            'timestamp': datetime.fromtimestamp(
+                                last_build.get('timestamp', 0) / 1000
+                            ).isoformat() if last_build.get('timestamp') else None,
+                            'url': last_build.get('url')
+                        }
+                    
+                    jobs.append(job_info)
+                
+                return jobs
+            else:
+                logger.error(f"Failed to list Jenkins jobs: HTTP {response.status_code}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error listing Jenkins jobs: {e}")
+            return []
+    
+    def _convert_jenkins_color_to_status(self, color: str) -> str:
+        """将Jenkins的颜色状态转换为统一状态"""
+        color_mapping = {
+            'blue': 'success',
+            'green': 'success',
+            'red': 'failed',
+            'yellow': 'unstable',
+            'grey': 'disabled',
+            'disabled': 'disabled',
+            'aborted': 'cancelled',
+            'notbuilt': 'not_built',
+            'blue_anime': 'running',
+            'red_anime': 'running',
+            'yellow_anime': 'running',
+            'grey_anime': 'running'
+        }
+        return color_mapping.get(color, 'unknown')
+    
+    async def get_job_info(self, job_name: str) -> Dict[str, Any]:
+        """获取指定Job的详细信息"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/api/json"
+            response = await self.client.get(url, auth=self.auth)
+            
+            if response.status_code == 200:
+                job_data = response.json()
+                
+                return {
+                    'name': job_data.get('name'),
+                    'url': job_data.get('url'),
+                    'description': job_data.get('description', ''),
+                    'buildable': job_data.get('buildable', False),
+                    'color': job_data.get('color'),
+                    'status': self._convert_jenkins_color_to_status(job_data.get('color', 'notbuilt')),
+                    'last_build': job_data.get('lastBuild'),
+                    'last_successful_build': job_data.get('lastSuccessfulBuild'),
+                    'last_failed_build': job_data.get('lastFailedBuild'),
+                    'next_build_number': job_data.get('nextBuildNumber', 1),
+                    'builds': job_data.get('builds', [])[:10],  # 最近10次构建
+                    'health_report': job_data.get('healthReport', []),
+                    'parameters': self._extract_job_parameters(job_data),
+                    'concurrent_build': job_data.get('concurrentBuild', False),
+                    'raw_data': job_data
+                }
+            else:
+                logger.error(f"Job '{job_name}' not found: HTTP {response.status_code}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Error getting job info for '{job_name}': {e}")
+            return {}
+    
+    def _extract_job_parameters(self, job_data: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """从Job配置中提取参数定义"""
+        parameters = []
+        properties = job_data.get('property', [])
+        
+        for prop in properties:
+            if prop.get('_class') == 'hudson.model.ParametersDefinitionProperty':
+                param_definitions = prop.get('parameterDefinitions', [])
+                for param in param_definitions:
+                    parameters.append({
+                        'name': param.get('name'),
+                        'type': param.get('type'),
+                        'description': param.get('description', ''),
+                        'default_value': param.get('defaultParameterValue', {}).get('value')
+                    })
+        
+        return parameters
+    
+    async def create_job(
+        self, 
+        job_name: str, 
+        job_config: str, 
+        description: str = "Created by AnsFlow"
+    ) -> bool:
+        """创建新的Jenkins Job"""
+        try:
+            url = f"{self.base_url}/createItem?name={job_name}"
+            
+            response = await self._make_authenticated_request(
+                'POST',
+                url,
+                content=job_config,
+                headers={'Content-Type': 'application/xml'}
+            )
+            
+            if response.status_code in [200, 201]:
+                logger.info(f"Jenkins job '{job_name}' created successfully")
+                return True
+            else:
+                logger.error(f"Failed to create job '{job_name}': HTTP {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error creating job '{job_name}': {e}")
+            return False
+    
+    async def delete_job(self, job_name: str) -> bool:
+        """删除Jenkins Job"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/doDelete"
+            
+            response = await self._make_authenticated_request('POST', url)
+            
+            if response.status_code in [200, 302]:
+                logger.info(f"Jenkins job '{job_name}' deleted successfully")
+                return True
+            else:
+                logger.error(f"Failed to delete job '{job_name}': HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error deleting job '{job_name}': {e}")
+            return False
+    
+    async def enable_job(self, job_name: str) -> bool:
+        """启用Jenkins Job"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/enable"
+            
+            response = await self._make_authenticated_request('POST', url)
+            
+            if response.status_code in [200, 302]:
+                logger.info(f"Jenkins job '{job_name}' enabled successfully")
+                return True
+            else:
+                logger.error(f"Failed to enable job '{job_name}': HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error enabling job '{job_name}': {e}")
+            return False
+    
+    async def disable_job(self, job_name: str) -> bool:
+        """禁用Jenkins Job"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/disable"
+            
+            response = await self._make_authenticated_request('POST', url)
+            
+            if response.status_code in [200, 302]:
+                logger.info(f"Jenkins job '{job_name}' disabled successfully")
+                return True
+            else:
+                logger.error(f"Failed to disable job '{job_name}': HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error disabling job '{job_name}': {e}")
+            return False
+    
+    async def start_build(
+        self, 
+        job_name: str, 
+        parameters: Dict[str, Any] = None,
+        wait_for_start: bool = True
+    ) -> Dict[str, Any]:
+        """启动Jenkins Job构建"""
+        try:
+            # 构建参数
+            if parameters:
+                url = f"{self.base_url}/job/{job_name}/buildWithParameters"
+                params_data = '&'.join([f"{k}={v}" for k, v in parameters.items()])
+            else:
+                url = f"{self.base_url}/job/{job_name}/build"
+                params_data = ''
+            
+            response = await self._make_authenticated_request(
+                'POST',
+                url,
+                data=params_data,
+                headers={'Content-Type': 'application/x-www-form-urlencoded'}
+            )
+            
+            if response.status_code in [200, 201]:
+                queue_url = response.headers.get('Location')
+                
+                if wait_for_start and queue_url:
+                    # 等待构建开始并获取构建编号
+                    build_number = await self._get_build_number_from_queue(queue_url)
+                    
+                    return {
+                        'success': True,
+                        'build_number': build_number,
+                        'queue_url': queue_url,
+                        'build_url': f"{self.base_url}/job/{job_name}/{build_number}/",
+                        'execution_id': f"{job_name}#{build_number}",
+                        'message': f"Build {build_number} started for job '{job_name}'"
+                    }
+                else:
+                    return {
+                        'success': True,
+                        'queue_url': queue_url,
+                        'message': f"Build queued for job '{job_name}'"
+                    }
+            else:
+                return {
+                    'success': False,
+                    'message': f"Failed to start build: HTTP {response.status_code}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Error starting build for job '{job_name}': {e}")
+            return {
+                'success': False,
+                'message': f"Error starting build: {str(e)}"
+            }
+    
+    async def stop_build(self, job_name: str, build_number: str) -> bool:
+        """停止指定的构建"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/{build_number}/stop"
+            
+            response = await self._make_authenticated_request('POST', url)
+            
+            if response.status_code in [200, 302]:
+                logger.info(f"Build {build_number} of job '{job_name}' stopped successfully")
+                return True
+            else:
+                logger.error(f"Failed to stop build {build_number}: HTTP {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error stopping build {build_number} of job '{job_name}': {e}")
+            return False
+    
+    async def get_build_info(self, job_name: str, build_number: str) -> Dict[str, Any]:
+        """获取指定构建的详细信息"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/{build_number}/api/json"
+            response = await self.client.get(url, auth=self.auth)
+            
+            if response.status_code == 200:
+                build_data = response.json()
+                
+                return {
+                    'number': build_data.get('number'),
+                    'url': build_data.get('url'),
+                    'result': build_data.get('result'),
+                    'building': build_data.get('building', False),
+                    'duration': build_data.get('duration', 0),
+                    'estimated_duration': build_data.get('estimatedDuration', 0),
+                    'timestamp': build_data.get('timestamp'),
+                    'started_at': datetime.fromtimestamp(
+                        build_data.get('timestamp', 0) / 1000
+                    ).isoformat() if build_data.get('timestamp') else None,
+                    'description': build_data.get('description', ''),
+                    'full_display_name': build_data.get('fullDisplayName'),
+                    'changes': build_data.get('changeSet', {}).get('items', []),
+                    'culprits': [user.get('fullName') for user in build_data.get('culprits', [])],
+                    'parameters': self._extract_build_parameters(build_data),
+                    'artifacts': build_data.get('artifacts', []),
+                    'test_results': self._extract_test_results(build_data),
+                    'raw_data': build_data
+                }
+            else:
+                logger.error(f"Build {build_number} not found: HTTP {response.status_code}")
+                return {}
+                
+        except Exception as e:
+            logger.error(f"Error getting build info: {e}")
+            return {}
+    
+    def _extract_build_parameters(self, build_data: Dict[str, Any]) -> Dict[str, Any]:
+        """从构建数据中提取参数"""
+        parameters = {}
+        actions = build_data.get('actions', [])
+        
+        for action in actions:
+            if action.get('_class') == 'hudson.model.ParametersAction':
+                for param in action.get('parameters', []):
+                    parameters[param.get('name')] = param.get('value')
+        
+        return parameters
+    
+    def _extract_test_results(self, build_data: Dict[str, Any]) -> Dict[str, Any]:
+        """从构建数据中提取测试结果"""
+        test_results = {}
+        actions = build_data.get('actions', [])
+        
+        for action in actions:
+            if 'TestResultAction' in action.get('_class', ''):
+                test_results = {
+                    'total_count': action.get('totalCount', 0),
+                    'fail_count': action.get('failCount', 0),
+                    'skip_count': action.get('skipCount', 0),
+                    'pass_count': action.get('totalCount', 0) - action.get('failCount', 0) - action.get('skipCount', 0),
+                    'url_name': action.get('urlName')
+                }
+                break
+        
+        return test_results
+    
+    async def get_job_builds(
+        self, 
+        job_name: str, 
+        limit: int = 20,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """获取Job的构建历史"""
+        try:
+            # 构造API URL，获取构建列表
+            url = f"{self.base_url}/job/{job_name}/api/json?tree=builds[number,url,result,timestamp,duration,building]{{,{limit}}}"
+            
+            response = await self.client.get(url, auth=self.auth)
+            
+            if response.status_code == 200:
+                job_data = response.json()
+                builds = []
+                
+                all_builds = job_data.get('builds', [])
+                # 应用分页
+                paginated_builds = all_builds[offset:offset + limit]
+                
+                for build in paginated_builds:
+                    builds.append({
+                        'number': build.get('number'),
+                        'url': build.get('url'),
+                        'result': build.get('result'),
+                        'building': build.get('building', False),
+                        'duration': build.get('duration', 0),
+                        'timestamp': build.get('timestamp'),
+                        'started_at': datetime.fromtimestamp(
+                            build.get('timestamp', 0) / 1000
+                        ).isoformat() if build.get('timestamp') else None,
+                        'status': self._convert_jenkins_result_to_status(
+                            build.get('result'), 
+                            build.get('building', False)
+                        )
+                    })
+                
+                return builds
+            else:
+                logger.error(f"Failed to get builds for job '{job_name}': HTTP {response.status_code}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error getting builds for job '{job_name}': {e}")
+            return []
+    
+    def _convert_jenkins_result_to_status(self, result: str, building: bool) -> str:
+        """将Jenkins构建结果转换为统一状态"""
+        if building:
+            return 'running'
+        
+        result_mapping = {
+            'SUCCESS': 'success',
+            'FAILURE': 'failed',
+            'UNSTABLE': 'unstable',
+            'ABORTED': 'cancelled',
+            'NOT_BUILT': 'not_built',
+            None: 'pending'
+        }
+        
+        return result_mapping.get(result, 'unknown')
+    
+    async def get_build_console_log(
+        self, 
+        job_name: str, 
+        build_number: str,
+        start_position: int = 0
+    ) -> Dict[str, Any]:
+        """获取构建的控制台日志（支持增量获取）"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/{build_number}/logText/progressiveText"
+            params = {'start': start_position} if start_position > 0 else {}
+            
+            response = await self.client.get(url, auth=self.auth, params=params)
+            
+            if response.status_code == 200:
+                log_text = response.text
+                has_more = response.headers.get('X-More-Data', 'false').lower() == 'true'
+                text_size = response.headers.get('X-Text-Size', '0')
+                
+                return {
+                    'log_text': log_text,
+                    'has_more': has_more,
+                    'next_position': int(text_size),
+                    'current_position': start_position
+                }
+            else:
+                return {
+                    'log_text': f"Failed to get console log: HTTP {response.status_code}",
+                    'has_more': False,
+                    'next_position': 0,
+                    'current_position': start_position
+                }
+                
+        except Exception as e:
+            logger.error(f"Error getting console log: {e}")
+            return {
+                'log_text': f"Error getting console log: {str(e)}",
+                'has_more': False,
+                'next_position': 0,
+                'current_position': start_position
+            }
+    
+    async def get_queue_info(self) -> List[Dict[str, Any]]:
+        """获取Jenkins构建队列信息"""
+        try:
+            url = f"{self.base_url}/queue/api/json"
+            response = await self.client.get(url, auth=self.auth)
+            
+            if response.status_code == 200:
+                queue_data = response.json()
+                queue_items = []
+                
+                for item in queue_data.get('items', []):
+                    task = item.get('task', {})
+                    queue_items.append({
+                        'id': item.get('id'),
+                        'job_name': task.get('name'),
+                        'job_url': task.get('url'),
+                        'why': item.get('why'),
+                        'blocked': item.get('blocked', False),
+                        'buildable': item.get('buildable', False),
+                        'in_queue_since': item.get('inQueueSince'),
+                        'queued_at': datetime.fromtimestamp(
+                            item.get('inQueueSince', 0) / 1000
+                        ).isoformat() if item.get('inQueueSince') else None,
+                        'stuck': item.get('stuck', False),
+                        'executable': item.get('executable'),
+                        'url': item.get('url')
+                    })
+                
+                return queue_items
+            else:
+                logger.error(f"Failed to get queue info: HTTP {response.status_code}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error getting queue info: {e}")
+            return []
