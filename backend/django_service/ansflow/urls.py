@@ -43,6 +43,9 @@ urlpatterns = [
     path('api/v1/projects/', include('project_management.urls')),
     path('api/v1/cicd/', include('cicd_integrations.urls')),
     
+    # 兼容性路由 - 直接支持 /api/v1/executions/
+    path('api/v1/', include('executions_compat_urls')),
+    
     # API Documentation
     path('api/schema/', include([
         path('', SpectacularAPIView.as_view(), name='schema'),
