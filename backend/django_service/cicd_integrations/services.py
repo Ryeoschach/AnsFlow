@@ -11,6 +11,8 @@ from asgiref.sync import sync_to_async
 from .models import CICDTool, PipelineExecution, StepExecution, AtomicStep
 from .adapters import AdapterFactory, PipelineDefinition, ExecutionResult
 from pipelines.models import Pipeline
+from .executors import PipelineExecutor, ExecutionContext, DependencyResolver, StepExecutor
+from .executors.sync_pipeline_executor import SyncPipelineExecutor
 
 logger = logging.getLogger(__name__)
 
@@ -113,78 +115,107 @@ class UnifiedCICDEngine:
             logger.error(f"Failed to start pipeline execution: {e}")
             raise
     
-    async def _perform_execution(self, execution_id: int):
-        """执行流水线的核心逻辑"""
+    async def execute_atomic_steps_locally(
+        self,
+        pipeline: Pipeline,
+        trigger_type: str = 'manual',
+        triggered_by=None,
+        parameters: Dict[str, Any] = None
+    ) -> PipelineExecution:
+        """本地执行原子步骤（不依赖外部CI/CD工具）"""
+        
+        if parameters is None:
+            parameters = {}
+        
         try:
-            execution = await sync_to_async(PipelineExecution.objects.select_related)(
-                'pipeline', 'cicd_tool'
-            ).aget(id=execution_id)
-            
-            # 构建流水线定义
-            definition = self._build_pipeline_definition(execution)
-            
-            # 创建适配器
-            tool = execution.cicd_tool
-            adapter = AdapterFactory.create_adapter(
-                tool.tool_type,
-                base_url=tool.base_url,
-                username=tool.username,
-                token=tool.token,
-                **tool.config
+            # 创建执行记录
+            execution = await sync_to_async(PipelineExecution.objects.create)(
+                pipeline=pipeline,
+                cicd_tool=None,  # 本地执行不需要外部工具
+                status='pending',
+                trigger_type=trigger_type,
+                triggered_by=triggered_by,
+                definition=pipeline.config,
+                parameters=parameters,
+                trigger_data={
+                    'timestamp': timezone.now().isoformat(),
+                    'user': triggered_by.username if triggered_by else 'system',
+                    'execution_mode': 'local'
+                }
             )
             
-            async with adapter:
-                # 更新状态为运行中
-                execution.status = 'running'
-                execution.started_at = timezone.now()
-                await sync_to_async(execution.save)(
-                    update_fields=['status', 'started_at']
-                )
-                
-                # 1. 创建或更新远程流水线
-                try:
-                    pipeline_id = await adapter.create_pipeline(definition)
-                    logger.info(f"Pipeline created in {tool.tool_type}: {pipeline_id}")
-                except Exception as e:
-                    logger.warning(f"Failed to create pipeline, using existing: {e}")
-                    pipeline_id = execution.pipeline.name.replace(' ', '-').lower()
-                
-                # 2. 触发执行
-                result = await adapter.trigger_pipeline(pipeline_id, execution.parameters)
-                
-                if result.success:
-                    # 更新执行记录
-                    execution.external_id = result.external_id
-                    execution.external_url = result.external_url
-                    await sync_to_async(execution.save)(
-                        update_fields=['external_id', 'external_url']
-                    )
-                    
-                    # 3. 监控执行状态
-                    await self._monitor_execution(execution, adapter)
-                else:
-                    # 执行失败
-                    execution.status = 'failed'
-                    execution.completed_at = timezone.now()
-                    execution.logs = result.message
-                    await sync_to_async(execution.save)(
-                        update_fields=['status', 'completed_at', 'logs']
-                    )
+            # 启动异步执行任务
+            execute_pipeline_task.delay(execution.id)
+            
+            logger.info(f"Local pipeline execution started: {execution.id}")
+            return execution
         
         except Exception as e:
-            logger.error(f"Pipeline execution failed: {e}")
-            # 更新执行状态为失败
-            try:
-                execution = await sync_to_async(PipelineExecution.objects.get)(id=execution_id)
+            logger.error(f"Failed to start local pipeline execution: {e}")
+            raise
+    
+    def _perform_execution(self, execution_id: int):
+        """执行流水线的核心逻辑（同步版本供Celery使用）"""
+        try:
+            execution = PipelineExecution.objects.select_related(
+                'pipeline', 'cicd_tool'
+            ).get(id=execution_id)
+            
+            logger.info(f"Starting pipeline execution {execution_id}")
+            
+            # 获取流水线的原子步骤
+            atomic_steps = list(
+                AtomicStep.objects.filter(
+                    pipeline=execution.pipeline
+                ).order_by('order')
+            )
+            
+            if not atomic_steps:
+                logger.warning(f"No atomic steps found for pipeline {execution.pipeline.id}")
                 execution.status = 'failed'
                 execution.completed_at = timezone.now()
-                execution.logs = str(e)
-                await sync_to_async(execution.save)()
-            except:
-                pass
+                execution.logs = "No atomic steps found in pipeline"
+                execution.save()
+                return
+            
+            logger.info(f"Found {len(atomic_steps)} atomic steps to execute")
+            
+            # 使用同步执行器
+            sync_executor = SyncPipelineExecutor()
+            
+            # 准备工具配置
+            tool_config = {}
+            if execution.cicd_tool:
+                tool_config = {
+                    'tool_type': execution.cicd_tool.tool_type,
+                    'base_url': execution.cicd_tool.base_url,
+                    'project_id': execution.cicd_tool.project_id,
+                    'config': execution.cicd_tool.config
+                }
+            
+            # 执行流水线
+            result = sync_executor.execute_pipeline(
+                execution_id=execution_id,
+                tool_config=tool_config,
+                parameters=execution.parameters
+            )
+            
+            logger.info(f"Pipeline execution completed: {execution.id} - {'success' if result['success'] else 'failed'}")
+        
+        except Exception as e:
+            logger.error(f"Pipeline execution failed: {e}", exc_info=True)
+            # 更新执行状态为失败
+            try:
+                execution = PipelineExecution.objects.get(id=execution_id)
+                execution.status = 'failed'
+                execution.completed_at = timezone.now()
+                execution.logs = f"Execution failed: {str(e)}"
+                execution.save()
+            except Exception as save_error:
+                logger.error(f"Failed to save error state: {save_error}")
     
     def _build_pipeline_definition(self, execution: PipelineExecution) -> PipelineDefinition:
-        """构建流水线定义"""
+        """构建流水线定义（保留用于外部工具兼容性）"""
         pipeline_config = execution.definition
         
         # 从原子步骤构建步骤列表
@@ -207,7 +238,7 @@ class UnifiedCICDEngine:
         )
     
     async def _monitor_execution(self, execution: PipelineExecution, adapter):
-        """监控流水线执行状态"""
+        """监控外部CI/CD工具的流水线执行状态"""
         max_checks = 360  # 最多检查6小时 (每分钟检查一次)
         check_count = 0
         
@@ -327,17 +358,10 @@ class UnifiedCICDEngine:
 @shared_task
 def execute_pipeline_task(execution_id: int):
     """异步执行流水线任务"""
-    import asyncio
-    
     engine = UnifiedCICDEngine()
     
-    # 在新的事件循环中运行异步代码
-    try:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(engine._perform_execution(execution_id))
-    finally:
-        loop.close()
+    # 直接调用同步方法
+    engine._perform_execution(execution_id)
 
 
 @shared_task

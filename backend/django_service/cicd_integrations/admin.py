@@ -57,24 +57,24 @@ class AtomicStepAdmin(admin.ModelAdmin):
     """原子步骤管理"""
     
     list_display = [
-        'name', 'step_type', 'is_public', 'dependencies_count',
+        'name', 'step_type', 'pipeline', 'order', 'is_public', 
         'created_by', 'created_at'
     ]
-    list_filter = ['step_type', 'is_public', 'created_at']
+    list_filter = ['step_type', 'pipeline', 'is_public', 'created_at']
     search_fields = ['name', 'description']
     readonly_fields = ['created_at', 'updated_at']
-    filter_horizontal = ['dependencies']
     
     fieldsets = (
         ('基本信息', {
-            'fields': ('name', 'step_type', 'description', 'is_public')
+            'fields': ('name', 'step_type', 'description', 'pipeline', 'order', 'is_public')
         }),
         ('配置', {
-            'fields': ('parameters', 'conditions'),
+            'fields': ('parameters', 'config', 'conditions', 'timeout', 'retry_count'),
             'classes': ('collapse',)
         }),
         ('依赖关系', {
-            'fields': ('dependencies',)
+            'fields': ('dependencies',),
+            'description': '依赖的步骤名称列表（JSON格式）'
         }),
         ('元数据', {
             'fields': ('created_by', 'created_at', 'updated_at'),
@@ -82,10 +82,9 @@ class AtomicStepAdmin(admin.ModelAdmin):
         }),
     )
     
-    def dependencies_count(self, obj):
-        """依赖数量"""
-        return obj.dependencies.count()
-    dependencies_count.short_description = 'Dependencies'
+    def get_queryset(self, request):
+        """优化查询"""
+        return super().get_queryset(request).select_related('pipeline', 'created_by')
 
 
 @admin.register(PipelineExecution)

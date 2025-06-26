@@ -78,16 +78,28 @@ class AtomicStep(models.Model):
     step_type = models.CharField(max_length=50, choices=STEP_TYPES, help_text="步骤类型")
     description = models.TextField(blank=True, help_text="步骤描述")
     
+    # 关联流水线
+    pipeline = models.ForeignKey('pipelines.Pipeline', on_delete=models.CASCADE,
+                                related_name='atomic_steps', 
+                                help_text="所属流水线",
+                                null=True, blank=True)
+    
+    # 执行顺序
+    order = models.PositiveIntegerField(default=0, help_text="执行顺序")
+    
     # 参数配置
     parameters = models.JSONField(default=dict, help_text="步骤参数配置")
+    config = models.JSONField(default=dict, help_text="步骤配置")
     
-    # 依赖关系
-    dependencies = models.ManyToManyField('self', blank=True, symmetrical=False,
-                                        related_name='dependent_steps',
-                                        help_text="依赖的步骤")
+    # 依赖关系(字符串形式的步骤名称列表)
+    dependencies = models.JSONField(default=list, help_text="依赖的步骤名称列表")
     
     # 条件执行
     conditions = models.JSONField(default=dict, help_text="执行条件")
+    
+    # 超时和重试
+    timeout = models.PositiveIntegerField(default=600, help_text="超时时间(秒)")
+    retry_count = models.PositiveIntegerField(default=0, help_text="重试次数")
     
     # 所有者
     created_by = models.ForeignKey(User, on_delete=models.CASCADE,
@@ -129,7 +141,9 @@ class PipelineExecution(models.Model):
     pipeline = models.ForeignKey('pipelines.Pipeline', on_delete=models.CASCADE,
                                 related_name='executions')
     cicd_tool = models.ForeignKey(CICDTool, on_delete=models.CASCADE,
-                                 related_name='executions')
+                                 related_name='executions',
+                                 null=True, blank=True,
+                                 help_text="关联的CI/CD工具，为空表示本地执行")
     
     # 执行信息
     external_id = models.CharField(max_length=255, help_text="外部工具中的执行ID")
@@ -164,7 +178,7 @@ class PipelineExecution(models.Model):
         ordering = ['-created_at']
         verbose_name = "Pipeline Execution"
         verbose_name_plural = "Pipeline Executions"
-        unique_together = ['cicd_tool', 'external_id']
+        # 移除unique_together约束，因为本地执行没有cicd_tool和external_id
     
     def __str__(self):
         return f"{self.pipeline.name} - {self.external_id} ({self.status})"
