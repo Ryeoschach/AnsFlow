@@ -106,7 +106,13 @@ class UnifiedCICDEngine:
             )
             
             # 启动异步执行任务
-            execute_pipeline_task.delay(execution.id)
+            execute_pipeline_task.delay(
+                execution_id=execution.id,
+                pipeline_id=pipeline.id,
+                trigger_type=trigger_type,
+                triggered_by_id=triggered_by.id if triggered_by else None,
+                parameters=parameters or {}
+            )
             
             logger.info(f"Pipeline execution started: {execution.id}")
             return execution
@@ -201,6 +207,7 @@ class UnifiedCICDEngine:
             )
             
             logger.info(f"Pipeline execution completed: {execution.id} - {'success' if result['success'] else 'failed'}")
+            return result
         
         except Exception as e:
             logger.error(f"Pipeline execution failed: {e}", exc_info=True)

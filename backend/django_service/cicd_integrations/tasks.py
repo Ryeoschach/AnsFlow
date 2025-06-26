@@ -499,3 +499,74 @@ def backup_pipeline_configurations():
     logger.info(f"Backed up {len(backup_data)} pipeline configurations")
     
     return backup
+
+
+@shared_task(bind=True, retry_kwargs={'max_retries': 3, 'countdown': 60})
+def execute_pipeline_task(self, execution_id: int, pipeline_id: int, trigger_type: str, 
+                         triggered_by_id: int, parameters: Dict[str, Any]):
+    """
+    执行流水线任务 - 支持同步和异步调用
+    
+    Args:
+        execution_id: 流水线执行ID
+        pipeline_id: 流水线ID
+        trigger_type: 触发类型
+        triggered_by_id: 触发用户ID
+        parameters: 执行参数
+    """
+    try:
+        from django.contrib.auth.models import User
+        
+        logger.info(f"开始执行流水线任务: execution_id={execution_id}, pipeline_id={pipeline_id}")
+        
+        # 获取执行记录
+        execution = PipelineExecution.objects.get(id=execution_id)
+        execution.status = 'running'
+        execution.started_at = timezone.now()
+        execution.save(update_fields=['status', 'started_at'])
+        
+        # 创建统一CICD引擎实例
+        engine = UnifiedCICDEngine()
+        
+        # 直接调用同步方法，不需要asyncio
+        result = engine._perform_execution(execution_id)
+        
+        # 更新执行状态
+        execution.refresh_from_db()
+        if execution.status not in ['success', 'failed']:
+            final_status = 'success' if (result and result.get('success', False)) else 'failed'
+            execution.status = final_status
+            execution.completed_at = timezone.now()
+            execution.save(update_fields=['status', 'completed_at'])
+        
+        logger.info(f"流水线任务执行完成: execution_id={execution_id}, success={result.get('success', False) if result else False}")
+        
+        return {
+            "status": "success" if result and result.get('success', False) else "failed",
+            "execution_id": execution_id,
+            "pipeline_id": pipeline_id,
+            "result": result
+        }
+        
+    except PipelineExecution.DoesNotExist:
+        logger.error(f"流水线执行记录不存在: {execution_id}")
+        raise
+    except Exception as e:
+        logger.error(f"流水线任务执行失败: execution_id={execution_id}, error={str(e)}")
+        
+        # 更新执行状态为失败
+        try:
+            execution = PipelineExecution.objects.get(id=execution_id)
+            execution.status = 'failed'
+            execution.completed_at = timezone.now()
+            execution.logs = (execution.logs or '') + f"\n任务执行错误: {str(e)}"
+            execution.save(update_fields=['status', 'completed_at', 'logs'])
+        except:
+            pass
+        
+        # 重试机制
+        if self.request.retries < self.retry_kwargs['max_retries']:
+            logger.info(f"重试流水线任务: execution_id={execution_id} (尝试 {self.request.retries + 1})")
+            raise self.retry(exc=e)
+        
+        raise e
