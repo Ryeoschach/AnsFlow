@@ -100,6 +100,17 @@ class ApiService {
     return response.data
   }
 
+  // Projects
+  async getProjects(): Promise<any[]> {
+    const response = await this.api.get('/projects/projects/')
+    return response.data.results || response.data
+  }
+
+  async getProject(id: number): Promise<any> {
+    const response = await this.api.get(`/projects/projects/${id}/`)
+    return response.data
+  }
+
   // Pipelines
   async getPipelines(): Promise<Pipeline[]> {
     const response = await this.api.get('/pipelines/')

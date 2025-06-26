@@ -37,10 +37,22 @@ const Tools: React.FC = () => {
   const [editingTool, setEditingTool] = useState<Tool | null>(null)
   const [form] = Form.useForm()
   const [activeTab, setActiveTab] = useState('list')
+  const [projects, setProjects] = useState<any[]>([])
 
   useEffect(() => {
     loadTools()
+    loadProjects()
   }, [loadTools])
+
+  const loadProjects = async () => {
+    try {
+      const projectList = await apiService.getProjects()
+      setProjects(projectList)
+    } catch (error) {
+      console.error('Failed to load projects:', error)
+      message.error('加载项目列表失败')
+    }
+  }
 
   const handleAddTool = () => {
     setEditingTool(null)
@@ -95,11 +107,18 @@ const Tools: React.FC = () => {
     try {
       const values = await form.validateFields()
       
+      // 映射字段名
+      const toolData = {
+        ...values,
+        token: values.password // 将 password 字段映射为 token
+      }
+      delete toolData.password // 删除原 password 字段
+      
       if (editingTool) {
-        await apiService.updateTool(editingTool.id!, values)
+        await apiService.updateTool(editingTool.id!, toolData)
         message.success('工具更新成功')
       } else {
-        await apiService.createTool(values)
+        await apiService.createTool(toolData)
         message.success('工具创建成功')
       }
       
@@ -260,6 +279,20 @@ const Tools: React.FC = () => {
         cancelText="取消"
       >
         <Form form={form} layout="vertical">
+          <Form.Item
+            name="project"
+            label="所属项目"
+            rules={[{ required: true, message: '请选择项目' }]}
+          >
+            <Select placeholder="选择项目">
+              {projects.map(project => (
+                <Option key={project.id} value={project.id}>
+                  {project.name}
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
           <Form.Item
             name="name"
             label="工具名称"
