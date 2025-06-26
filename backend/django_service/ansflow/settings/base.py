@@ -50,6 +50,7 @@ THIRD_PARTY_APPS = [
     'drf_spectacular',
     'django_prometheus',
     'django_extensions',
+    'channels',
 ]
 
 LOCAL_APPS = [
@@ -59,6 +60,7 @@ LOCAL_APPS = [
     'workflow',
     'audit',
     'cicd_integrations',
+    'realtime',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -95,6 +97,9 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = 'ansflow.wsgi.application'
+
+# ASGI application for WebSocket support
+ASGI_APPLICATION = 'ansflow.asgi.application'
 
 
 # Database
@@ -208,6 +213,16 @@ CACHES = {
 # Session configuration
 SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
 SESSION_CACHE_ALIAS = 'default'
+
+# Channels configuration
+CHANNEL_LAYERS = {
+    'default': {
+        'BACKEND': 'channels_redis.core.RedisChannelLayer',
+        'CONFIG': {
+            'hosts': [env('REDIS_URL', default='redis://127.0.0.1:6379/2')],
+        },
+    },
+}
 
 # Logging configuration
 LOGGING = {

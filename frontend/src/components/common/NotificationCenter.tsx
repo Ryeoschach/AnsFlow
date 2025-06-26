@@ -122,7 +122,7 @@ const NotificationCenter: React.FC = () => {
                   marginBottom: 4 
                 }}>
                   <Text strong>{notification.title}</Text>
-                  <Tag color={getTagColor(notification.level)} size="small">
+                  <Tag color={getTagColor(notification.level)}>
                     {getLevelText(notification.level)}
                   </Tag>
                 </div>

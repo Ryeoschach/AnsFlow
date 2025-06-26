@@ -3,12 +3,13 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { Layout } from 'antd'
 import { useAuthStore } from '@stores/auth'
 import MainLayout from '@components/layout/MainLayout'
-import Login from '@pages/Login'
-import Dashboard from '@pages/Dashboard'
-import Pipelines from '@pages/Pipelines'
-import PipelineDetail from '@pages/PipelineDetail'
-import Tools from '@pages/Tools'
-import Executions from '@pages/Executions'
+import Login from './pages/Login'
+import Dashboard from './pages/Dashboard'
+import Pipelines from './pages/Pipelines'
+import PipelineDetail from './pages/PipelineDetail'
+import Tools from './pages/Tools'
+import Executions from './pages/Executions'
+import ExecutionDetailFixed from '@pages/ExecutionDetailFixed'
 import Settings from '@pages/Settings'
 
 const { Content } = Layout
@@ -38,6 +39,7 @@ function App() {
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/tools" element={<Tools />} />
         <Route path="/executions" element={<Executions />} />
+        <Route path="/executions/:id" element={<ExecutionDetailFixed />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -45,7 +45,7 @@ const JenkinsJobForm: React.FC<JenkinsJobFormProps> = ({
     
     try {
       const jobDetail = await apiService.getJenkinsJob(tool.id, job.name)
-      setConfig(jobDetail.config || '')
+      setConfig(typeof jobDetail.config === 'string' ? jobDetail.config : JSON.stringify(jobDetail.config || {}))
     } catch (error) {
       console.error('Failed to load job config:', error)
       setConfig('')

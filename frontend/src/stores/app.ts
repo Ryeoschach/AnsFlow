@@ -27,6 +27,7 @@ interface AppState {
   
   loadExecutions: (pipelineId?: number) => Promise<void>
   selectExecution: (execution: PipelineExecution | null) => void
+  getExecutionById: (executionId: number) => Promise<PipelineExecution>
   updateExecution: (execution: PipelineExecution) => void
   
   // Notifications
@@ -118,6 +119,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   selectExecution: (execution) => {
     set({ selectedExecution: execution })
+  },
+
+  getExecutionById: async (executionId) => {
+    try {
+      const execution = await apiService.getExecution(executionId)
+      return execution
+    } catch (error) {
+      console.error('Failed to load execution:', error)
+      get().addNotification({
+        level: 'error',
+        title: '加载执行记录失败',
+        message: '无法加载执行记录详情，请稍后重试'
+      })
+      throw error
+    }
   },
 
   updateExecution: (execution) => {

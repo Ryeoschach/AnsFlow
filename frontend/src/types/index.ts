@@ -56,6 +56,9 @@ export interface CICDTool {
   project: number
 }
 
+// Tool 类型别名，用于兼容
+export type Tool = CICDTool
+
 // 流水线类型
 export interface Pipeline {
   id: number
@@ -91,7 +94,9 @@ export interface PipelineExecution {
   pipeline_name?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
   trigger_type: 'manual' | 'webhook' | 'schedule'
+  triggered_by?: string
   parameters: Record<string, any>
+  result?: Record<string, any>  // 添加result字段用于存储步骤执行结果
   logs?: string
   external_id?: string
   external_url?: string
@@ -158,6 +163,8 @@ export interface JenkinsJob {
   color: string
   buildable: boolean
   inQueue: boolean
+  description?: string
+  config?: Record<string, any>
   lastBuild?: {
     number: number
     url: string
@@ -201,7 +208,6 @@ export interface CreatePipelineForm {
   description: string
   tool: number
   steps: CreateStepForm[]
-  metadata?: Record<string, any>
 }
 
 export interface CreateStepForm {
@@ -211,68 +217,24 @@ export interface CreateStepForm {
   order: number
 }
 
-// 统计类型
-export interface DashboardStats {
+export interface CreateExecutionForm {
+  pipeline: number
+  trigger_type: 'manual' | 'webhook' | 'schedule'
+  parameters?: Record<string, any>
+}
+
+// 请求类型
+export interface CreatePipelineRequest extends CreatePipelineForm {}
+export interface UpdatePipelineRequest extends Partial<CreatePipelineRequest> {}
+export interface CreateExecutionRequest extends CreateExecutionForm {}
+export interface UpdateExecutionRequest extends Partial<CreateExecutionRequest> {}
+
+// 系统统计类型
+export interface SystemStats {
   total_pipelines: number
-  active_pipelines: number
+  active_executions: number
   total_executions: number
-  successful_executions: number
-  failed_executions: number
-  running_executions: number
   success_rate: number
   tools_count: number
   healthy_tools: number
 }
-
-export interface ExecutionStats {
-  date: string
-  total: number
-  successful: number
-  failed: number
-  success_rate: number
-}
-
-// 过滤器类型
-export interface ExecutionFilter {
-  status?: string
-  pipeline?: number
-  date_from?: string
-  date_to?: string
-  trigger_type?: string
-}
-
-export interface PipelineFilter {
-  tool_type?: string
-  is_active?: boolean
-  search?: string
-}
-
-// Hook 状态类型
-export interface UseQueryResult<T> {
-  data?: T
-  isLoading: boolean
-  isError: boolean
-  error?: Error
-  refetch: () => void
-}
-
-// 页面状态类型
-export interface PageState {
-  loading: boolean
-  error?: string
-  data?: any
-}
-
-// 表格列类型
-export interface TableColumn {
-  title: string
-  dataIndex: string
-  key: string
-  width?: number
-  fixed?: 'left' | 'right'
-  render?: (value: any, record: any, index: number) => React.ReactNode
-  sorter?: boolean
-  filters?: Array<{ text: string; value: any }>
-}
-
-export default {}

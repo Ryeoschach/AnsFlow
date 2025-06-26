@@ -157,6 +157,10 @@ class ApiService {
     return response.data
   }
 
+  async getExecutionById(id: number): Promise<PipelineExecution> {
+    return this.getExecution(id)
+  }
+
   async createExecution(execution: CreateExecutionRequest): Promise<PipelineExecution> {
     const response = await this.api.post('/executions/', execution)
     return response.data

@@ -15,6 +15,15 @@ from .execution_context import ExecutionContext
 from .dependency_resolver import DependencyResolver, StepNode
 from .sync_step_executor import SyncStepExecutor
 
+# WebSocket通知支持
+try:
+    from realtime.notifications import WebSocketNotifier
+    WEBSOCKET_AVAILABLE = True
+except ImportError:
+    logger.warning("WebSocket notifications not available - realtime app not configured")
+    WEBSOCKET_AVAILABLE = False
+    WebSocketNotifier = None
+
 logger = logging.getLogger(__name__)
 
 class SyncPipelineExecutionError(Exception):
@@ -28,6 +37,7 @@ class SyncPipelineExecutor:
         self.max_parallel_steps = 3  # 降低并行数以便调试
         self.step_timeout = 1800  # 单步超时时间（秒）
         self.check_interval = 2  # 状态检查间隔
+        self.notifier = None  # WebSocket通知器
     
     def execute_pipeline(
         self,
@@ -52,6 +62,13 @@ class SyncPipelineExecutor:
         context = None
         
         try:
+            # 初始化WebSocket通知器
+            if WEBSOCKET_AVAILABLE and WebSocketNotifier:
+                self.notifier = WebSocketNotifier(execution_id)
+                self.notifier.send_execution_update('starting', {
+                    'message': '流水线执行开始准备'
+                })
+            
             # 获取流水线执行记录
             try:
                 pipeline_execution = PipelineExecution.objects.get(id=execution_id)
@@ -75,6 +92,15 @@ class SyncPipelineExecutor:
             # 更新执行状态
             self._update_pipeline_status(pipeline_execution, 'running', context)
             
+            # 发送WebSocket通知
+            if self.notifier:
+                self.notifier.send_execution_update('running', {
+                    'pipeline_name': pipeline_execution.pipeline.name,
+                    'total_steps': len(steps_config),
+                    'message': f'开始执行流水线: {pipeline_execution.pipeline.name}'
+                })
+                self.notifier.send_log_update(f"开始执行流水线: {pipeline_execution.pipeline.name} (ID: {execution_id})")
+            
             logger.info(f"开始执行流水线: {pipeline_execution.pipeline.name} (ID: {execution_id})")
             
             # 构建依赖图
@@ -83,6 +109,8 @@ class SyncPipelineExecutor:
             # 验证依赖关系
             validation_errors = resolver.validate_dependencies()
             if validation_errors:
+                if self.notifier:
+                    self.notifier.send_error_update(f"依赖关系验证失败: {', '.join(validation_errors)}")
                 raise SyncPipelineExecutionError(f"依赖关系验证失败: {', '.join(validation_errors)}")
             
             # 执行流水线
@@ -93,6 +121,17 @@ class SyncPipelineExecutor:
             # 更新最终状态
             final_status = 'success' if execution_result['success'] else 'failed'
             self._update_pipeline_status(pipeline_execution, final_status, context)
+            
+            # 发送最终状态通知
+            if self.notifier:
+                self.notifier.send_execution_update(final_status, {
+                    'total_steps': execution_result.get('total_steps', 0),
+                    'successful_steps': execution_result.get('successful_steps', 0),
+                    'failed_steps': execution_result.get('failed_steps', 0),
+                    'execution_time': execution_result.get('execution_time', 0),
+                    'message': f'流水线执行{final_status}: {pipeline_execution.pipeline.name}'
+                })
+                self.notifier.send_log_update(f"流水线执行完成: {pipeline_execution.pipeline.name} - {final_status}")
             
             logger.info(f"流水线执行完成: {pipeline_execution.pipeline.name} - {final_status}")
             
@@ -367,14 +406,33 @@ class SyncPipelineExecutor:
         try:
             logger.info(f"开始执行步骤: {step_node.step_name} (ID: {step_id})")
             
+            # 发送步骤开始通知
+            if self.notifier:
+                self.notifier.send_step_update(step_node.step_name, 'running', {
+                    'step_id': step_id,
+                    'step_type': step_node.step_type,
+                    'message': f'开始执行步骤: {step_node.step_name}'
+                })
+                self.notifier.send_log_update(f"[步骤] 开始执行: {step_node.step_name}", step_name=step_node.step_name)
+            
             # 获取原子步骤对象
             try:
                 atomic_step = AtomicStep.objects.get(id=step_id)
             except AtomicStep.DoesNotExist:
-                logger.error(f"未找到原子步骤: {step_id}")
+                error_msg = f'原子步骤不存在: {step_id}'
+                logger.error(error_msg)
+                
+                # 发送失败通知
+                if self.notifier:
+                    self.notifier.send_step_update(step_node.step_name, 'failed', {
+                        'step_id': step_id,
+                        'error_message': error_msg
+                    })
+                    self.notifier.send_log_update(f"[错误] {error_msg}", level='error', step_name=step_node.step_name)
+                
                 context.step_results[step_key] = {
                     'status': 'failed',
-                    'error_message': f'原子步骤不存在: {step_id}',
+                    'error_message': error_msg,
                     'start_time': timezone.now().isoformat(),
                     'end_time': timezone.now().isoformat()
                 }
@@ -389,13 +447,49 @@ class SyncPipelineExecutor:
             # 保存结果
             context.step_results[step_key] = result
             
-            logger.info(f"步骤执行完成: {step_node.step_name} - {result.get('status', 'unknown')}")
+            # 发送步骤完成通知
+            final_status = result.get('status', 'unknown')
+            if self.notifier:
+                self.notifier.send_step_update(step_node.step_name, final_status, {
+                    'step_id': step_id,
+                    'execution_time': result.get('execution_time', 0),
+                    'output': result.get('output', ''),
+                    'error_message': result.get('error_message')
+                })
+                
+                if final_status == 'success':
+                    self.notifier.send_log_update(
+                        f"[步骤] 执行成功: {step_node.step_name} ({result.get('execution_time', 0):.2f}s)",
+                        step_name=step_node.step_name
+                    )
+                else:
+                    self.notifier.send_log_update(
+                        f"[步骤] 执行失败: {step_node.step_name} - {result.get('error_message', 'Unknown error')}",
+                        level='error',
+                        step_name=step_node.step_name
+                    )
+            
+            logger.info(f"步骤执行完成: {step_node.step_name} - {final_status}")
             
         except Exception as e:
-            logger.error(f"步骤执行异常: {step_node.step_name} - {str(e)}", exc_info=True)
+            error_msg = str(e)
+            logger.error(f"步骤执行异常: {step_node.step_name} - {error_msg}", exc_info=True)
+            
+            # 发送异常通知
+            if self.notifier:
+                self.notifier.send_step_update(step_node.step_name, 'failed', {
+                    'step_id': step_id,
+                    'error_message': error_msg
+                })
+                self.notifier.send_log_update(
+                    f"[异常] 步骤执行异常: {step_node.step_name} - {error_msg}",
+                    level='error',
+                    step_name=step_node.step_name
+                )
+            
             context.step_results[step_key] = {
                 'status': 'failed',
-                'error_message': str(e),
+                'error_message': error_msg,
                 'start_time': timezone.now().isoformat(),
                 'end_time': timezone.now().isoformat()
             }

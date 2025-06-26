@@ -38,6 +38,10 @@ dependencies = [
     # 开发工具
     "django-debug-toolbar>=4.0.0",
     "django-extensions>=3.2.0",
+    "channels>=4.2.2",
+    "channels-redis>=4.2.1",
+    "websockets>=15.0.1",
+    "daphne>=4.2.0",
 ]
 
 [project.optional-dependencies]
