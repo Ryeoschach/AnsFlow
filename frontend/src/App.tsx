@@ -1,6 +1,6 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
-import { Layout } from 'antd'
+import { Layout, Spin } from 'antd'
 import { useAuthStore } from '@stores/auth'
 import MainLayout from '@components/layout/MainLayout'
 import Login from './pages/Login'
@@ -15,7 +15,31 @@ import Settings from '@pages/Settings'
 const { Content } = Layout
 
 function App() {
-  const { isAuthenticated } = useAuthStore()
+  const { isAuthenticated, checkAuth } = useAuthStore()
+  const [isInitializing, setIsInitializing] = useState(true)
+
+  useEffect(() => {
+    const initializeAuth = async () => {
+      try {
+        await checkAuth()
+      } catch (error) {
+        console.error('Auth initialization failed:', error)
+      } finally {
+        setIsInitializing(false)
+      }
+    }
+    
+    initializeAuth()
+  }, [checkAuth])
+
+  // Show loading spinner while checking auth
+  if (isInitializing) {
+    return (
+      <Layout style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <Spin size="large" tip="加载中..." />
+      </Layout>
+    )
+  }
 
   if (!isAuthenticated) {
     return (

@@ -3,7 +3,8 @@ import {
   Tool, Pipeline, PipelineExecution, 
   JenkinsJob, JenkinsBuild, User,
   CreatePipelineRequest, UpdatePipelineRequest,
-  CreateExecutionRequest, UpdateExecutionRequest
+  CreateExecutionRequest, UpdateExecutionRequest,
+  AtomicStep
 } from '../types'
 
 class ApiService {
@@ -71,31 +72,31 @@ class ApiService {
 
   // Tools
   async getTools(): Promise<Tool[]> {
-    const response = await this.api.get('/tools/')
-    return response.data
+    const response = await this.api.get('/cicd/tools/')
+    return response.data.results || response.data
   }
 
   async getTool(id: number): Promise<Tool> {
-    const response = await this.api.get(`/tools/${id}/`)
+    const response = await this.api.get(`/cicd/tools/${id}/`)
     return response.data
   }
 
   async createTool(tool: Partial<Tool>): Promise<Tool> {
-    const response = await this.api.post('/tools/', tool)
+    const response = await this.api.post('/cicd/tools/', tool)
     return response.data
   }
 
   async updateTool(id: number, tool: Partial<Tool>): Promise<Tool> {
-    const response = await this.api.put(`/tools/${id}/`, tool)
+    const response = await this.api.put(`/cicd/tools/${id}/`, tool)
     return response.data
   }
 
   async deleteTool(id: number): Promise<void> {
-    await this.api.delete(`/tools/${id}/`)
+    await this.api.delete(`/cicd/tools/${id}/`)
   }
 
   async testToolConnection(id: number): Promise<{ success: boolean; message: string }> {
-    const response = await this.api.post(`/tools/${id}/test_connection/`)
+    const response = await this.api.post(`/cicd/tools/${id}/test_connection/`)
     return response.data
   }
 
@@ -147,13 +148,13 @@ class ApiService {
 
   // Pipeline Executions
   async getExecutions(pipelineId?: number): Promise<PipelineExecution[]> {
-    const url = pipelineId ? `/pipelines/${pipelineId}/executions/` : '/executions/'
+    const url = pipelineId ? `/pipelines/${pipelineId}/executions/` : '/cicd/executions/'
     const response = await this.api.get(url)
-    return response.data
+    return response.data.results || response.data
   }
 
   async getExecution(id: number): Promise<PipelineExecution> {
-    const response = await this.api.get(`/executions/${id}/`)
+    const response = await this.api.get(`/cicd/executions/${id}/`)
     return response.data
   }
 
@@ -162,42 +163,96 @@ class ApiService {
   }
 
   async createExecution(execution: CreateExecutionRequest): Promise<PipelineExecution> {
-    const response = await this.api.post('/executions/', execution)
+    const response = await this.api.post('/cicd/executions/', execution)
     return response.data
   }
 
   async updateExecution(id: number, execution: UpdateExecutionRequest): Promise<PipelineExecution> {
-    const response = await this.api.put(`/executions/${id}/`, execution)
+    const response = await this.api.put(`/cicd/executions/${id}/`, execution)
     return response.data
   }
 
   async cancelExecution(id: number): Promise<void> {
-    await this.api.post(`/executions/${id}/cancel/`)
+    await this.api.post(`/cicd/executions/${id}/cancel/`)
   }
 
   async retryExecution(id: number): Promise<PipelineExecution> {
-    const response = await this.api.post(`/executions/${id}/retry/`)
+    const response = await this.api.post(`/cicd/executions/${id}/retry/`)
     return response.data
   }
 
   async getExecutionLogs(id: number): Promise<string> {
-    const response = await this.api.get(`/executions/${id}/logs/`)
+    const response = await this.api.get(`/cicd/executions/${id}/logs/`)
     return response.data.logs
+  }
+
+  // Atomic Steps
+  async getAtomicSteps(): Promise<AtomicStep[]> {
+    const response = await this.api.get('/cicd/atomic-steps/')
+    return response.data
+  }
+
+  async getAtomicStep(id: number): Promise<AtomicStep> {
+    const response = await this.api.get(`/cicd/atomic-steps/${id}/`)
+    return response.data
+  }
+
+  async createAtomicStep(step: Partial<AtomicStep>): Promise<AtomicStep> {
+    const response = await this.api.post('/cicd/atomic-steps/', step)
+    return response.data
+  }
+
+  async updateAtomicStep(id: number, step: Partial<AtomicStep>): Promise<AtomicStep> {
+    const response = await this.api.put(`/cicd/atomic-steps/${id}/`, step)
+    return response.data
+  }
+
+  async deleteAtomicStep(id: number): Promise<void> {
+    await this.api.delete(`/cicd/atomic-steps/${id}/`)
+  }
+
+  async testAtomicStep(id: number, toolId: number, parameters?: Record<string, any>): Promise<any> {
+    const response = await this.api.post(`/cicd/atomic-steps/${id}/test/`, {
+      tool_id: toolId,
+      parameters: parameters || {}
+    })
+    return response.data
+  }
+
+  async validateAtomicStep(id: number, parameters?: Record<string, any>, toolType?: string): Promise<any> {
+    const response = await this.api.post(`/cicd/atomic-steps/${id}/validate/`, {
+      parameters: parameters || {},
+      tool_type: toolType
+    })
+    return response.data
+  }
+
+  async cloneAtomicStep(id: number, newName: string, newDescription?: string): Promise<AtomicStep> {
+    const response = await this.api.post(`/cicd/atomic-steps/${id}/clone/`, {
+      new_name: newName,
+      new_description: newDescription
+    })
+    return response.data
+  }
+
+  async getAtomicStepStats(): Promise<any> {
+    const response = await this.api.get('/cicd/atomic-steps/stats/')
+    return response.data
   }
 
   // Jenkins Integration
   async getJenkinsJobs(toolId: number): Promise<JenkinsJob[]> {
-    const response = await this.api.get(`/tools/${toolId}/jenkins/jobs/`)
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/`)
     return response.data
   }
 
   async getJenkinsJob(toolId: number, jobName: string): Promise<JenkinsJob> {
-    const response = await this.api.get(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/`)
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/`)
     return response.data
   }
 
   async createJenkinsJob(toolId: number, jobName: string, config: string): Promise<JenkinsJob> {
-    const response = await this.api.post(`/tools/${toolId}/jenkins/jobs/`, {
+    const response = await this.api.post(`/cicd/tools/${toolId}/jenkins/jobs/`, {
       name: jobName,
       config
     })
@@ -205,57 +260,57 @@ class ApiService {
   }
 
   async updateJenkinsJob(toolId: number, jobName: string, config: string): Promise<JenkinsJob> {
-    const response = await this.api.put(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/`, {
+    const response = await this.api.put(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/`, {
       config
     })
     return response.data
   }
 
   async deleteJenkinsJob(toolId: number, jobName: string): Promise<void> {
-    await this.api.delete(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/`)
+    await this.api.delete(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/`)
   }
 
   async enableJenkinsJob(toolId: number, jobName: string): Promise<void> {
-    await this.api.post(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/enable/`)
+    await this.api.post(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/enable/`)
   }
 
   async disableJenkinsJob(toolId: number, jobName: string): Promise<void> {
-    await this.api.post(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/disable/`)
+    await this.api.post(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/disable/`)
   }
 
   async buildJenkinsJob(toolId: number, jobName: string, parameters?: Record<string, any>): Promise<{ queueId: number }> {
-    const response = await this.api.post(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/build/`, {
+    const response = await this.api.post(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/build/`, {
       parameters
     })
     return response.data
   }
 
   async stopJenkinsBuild(toolId: number, jobName: string, buildNumber: number): Promise<void> {
-    await this.api.post(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/stop/`)
+    await this.api.post(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/stop/`)
   }
 
   async getJenkinsBuilds(toolId: number, jobName: string): Promise<JenkinsBuild[]> {
-    const response = await this.api.get(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/`)
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/`)
     return response.data
   }
 
   async getJenkinsBuild(toolId: number, jobName: string, buildNumber: number): Promise<JenkinsBuild> {
-    const response = await this.api.get(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/`)
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/`)
     return response.data
   }
 
   async getJenkinsBuildLogs(toolId: number, jobName: string, buildNumber: number): Promise<string> {
-    const response = await this.api.get(`/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/logs/`)
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/logs/`)
     return response.data.logs
   }
 
   async getJenkinsQueue(toolId: number): Promise<any[]> {
-    const response = await this.api.get(`/tools/${toolId}/jenkins/queue/`)
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/queue/`)
     return response.data
   }
 
   async cancelJenkinsQueueItem(toolId: number, queueId: number): Promise<void> {
-    await this.api.delete(`/tools/${toolId}/jenkins/queue/${queueId}/`)
+    await this.api.delete(`/cicd/tools/${toolId}/jenkins/queue/${queueId}/`)
   }
 }
 

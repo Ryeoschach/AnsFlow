@@ -92,8 +92,8 @@ export interface PipelineExecution {
   id: number
   pipeline: number
   pipeline_name?: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'cancelled'
-  trigger_type: 'manual' | 'webhook' | 'schedule'
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled' | 'timeout'
+  trigger_type: 'manual' | 'webhook' | 'schedule' | 'api'
   triggered_by?: string
   parameters: Record<string, any>
   result?: Record<string, any>  // 添加result字段用于存储步骤执行结果

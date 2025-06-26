@@ -62,7 +62,7 @@ class AtomicStepViewSet(viewsets.ModelViewSet):
             is_enabled = enabled.lower() in ['true', '1', 'yes']
             queryset = queryset.filter(is_enabled=is_enabled)
         
-        return queryset.order_by('category', 'name')
+        return queryset.order_by('step_type', 'name')
     
     def perform_create(self, serializer):
         """创建原子步骤"""

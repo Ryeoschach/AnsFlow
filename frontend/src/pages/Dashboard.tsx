@@ -8,6 +8,7 @@ import {
   ToolOutlined,
   AppstoreOutlined
 } from '@ant-design/icons'
+import { useNavigate } from 'react-router-dom'
 import { useAppStore } from '../stores/app'
 import { ColumnsType } from 'antd/es/table'
 import { PipelineExecution } from '../types'
@@ -15,6 +16,7 @@ import { formatDistanceToNow } from 'date-fns'
 import { zhCN } from 'date-fns/locale'
 
 const Dashboard: React.FC = () => {
+  const navigate = useNavigate()
   const { 
     tools,
     toolsLoading,
@@ -29,20 +31,24 @@ const Dashboard: React.FC = () => {
     loadExecutions()
   }, [loadTools, loadExecutions])
 
+  const handleExecutionClick = (executionId: number) => {
+    navigate(`/executions/${executionId}`)
+  }
+
   const getExecutionStats = () => {
-    const total = executions.length
-    const running = executions.filter(e => e.status === 'running').length
-    const success = executions.filter(e => e.status === 'completed').length
-    const failed = executions.filter(e => e.status === 'failed').length
-    const pending = executions.filter(e => e.status === 'pending').length
+    const total = (executions || []).length
+    const running = (executions || []).filter(e => e.status === 'running').length
+    const success = (executions || []).filter(e => e.status === 'success').length
+    const failed = (executions || []).filter(e => e.status === 'failed').length
+    const pending = (executions || []).filter(e => e.status === 'pending').length
 
     return { total, running, success, failed, pending }
   }
 
   const getToolStats = () => {
-    const total = tools.length
-    const active = tools.filter(t => t.is_active).length
-    const jenkins = tools.filter(t => t.tool_type === 'jenkins').length
+    const total = (tools || []).length
+    const active = (tools || []).filter(t => t.is_active).length
+    const jenkins = (tools || []).filter(t => t.tool_type === 'jenkins').length
     
     return { total, active, jenkins }
   }
@@ -50,21 +56,27 @@ const Dashboard: React.FC = () => {
   const executionStats = getExecutionStats()
   const toolStats = getToolStats()
 
-  const recentExecutions = executions
+  const recentExecutions = (executions || [])
     .filter(e => e.started_at) // 先过滤掉没有开始时间的
     .sort((a, b) => new Date(b.started_at!).getTime() - new Date(a.started_at!).getTime())
     .slice(0, 5)
 
   const getStatusIcon = (status: string) => {
     switch (status) {
-      case 'completed':
+      case 'success':
         return <CheckCircleOutlined style={{ color: '#52c41a' }} />
       case 'failed':
         return <CloseCircleOutlined style={{ color: '#ff4d4f' }} />
       case 'running':
         return <PlayCircleOutlined style={{ color: '#1890ff' }} />
-      default:
+      case 'pending':
         return <ClockCircleOutlined style={{ color: '#faad14' }} />
+      case 'cancelled':
+        return <CloseCircleOutlined style={{ color: '#8c8c8c' }} />
+      case 'timeout':
+        return <CloseCircleOutlined style={{ color: '#fa8c16' }} />
+      default:
+        return <ClockCircleOutlined style={{ color: '#d9d9d9' }} />
     }
   }
 
@@ -74,6 +86,14 @@ const Dashboard: React.FC = () => {
       dataIndex: 'pipeline_name',
       key: 'pipeline_name',
       width: 150,
+      render: (pipeline_name: string, record: PipelineExecution) => (
+        <a 
+          onClick={() => handleExecutionClick(record.id)}
+          style={{ cursor: 'pointer', color: '#1890ff' }}
+        >
+          {pipeline_name || `Pipeline ${record.pipeline}`}
+        </a>
+      ),
     },
     {
       title: '状态',
@@ -101,7 +121,7 @@ const Dashboard: React.FC = () => {
   return (
     <div style={{ padding: '24px' }}>
       <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={6}>
+        <Col span={5}>
           <Card>
             <Statistic
               title="总执行次数"
@@ -110,17 +130,27 @@ const Dashboard: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={5}>
           <Card>
             <Statistic
               title="运行中"
               value={executionStats.running}
-              prefix={<ClockCircleOutlined />}
+              prefix={<PlayCircleOutlined />}
               valueStyle={{ color: '#1890ff' }}
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={5}>
+          <Card>
+            <Statistic
+              title="等待中"
+              value={executionStats.pending}
+              prefix={<ClockCircleOutlined />}
+              valueStyle={{ color: '#faad14' }}
+            />
+          </Card>
+        </Col>
+        <Col span={5}>
           <Card>
             <Statistic
               title="成功执行"
@@ -130,7 +160,7 @@ const Dashboard: React.FC = () => {
             />
           </Card>
         </Col>
-        <Col span={6}>
+        <Col span={4}>
           <Card>
             <Statistic
               title="失败执行"
@@ -184,7 +214,21 @@ const Dashboard: React.FC = () => {
                 dot: getStatusIcon(execution.status),
                 children: (
                   <div>
-                    <div style={{ fontWeight: 500 }}>
+                    <div 
+                      style={{ 
+                        fontWeight: 500, 
+                        cursor: 'pointer', 
+                        color: '#1890ff',
+                        textDecoration: 'none'
+                      }}
+                      onClick={() => handleExecutionClick(execution.id)}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.textDecoration = 'underline'
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.textDecoration = 'none'
+                      }}
+                    >
                       {execution.pipeline_name || `Pipeline ${execution.pipeline}`}
                     </div>
                     <div style={{ fontSize: 12, color: '#666' }}>

@@ -56,7 +56,7 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
         # 根据CI/CD工具过滤
         tool_id = self.request.query_params.get('tool_id')
         if tool_id:
-            queryset = queryset.filter(tool_id=tool_id)
+            queryset = queryset.filter(cicd_tool_id=tool_id)
         
         # 根据状态过滤
         execution_status = self.request.query_params.get('status')
@@ -73,7 +73,7 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
         if triggered_by:
             queryset = queryset.filter(triggered_by_id=triggered_by)
         
-        return queryset.select_related('pipeline', 'tool', 'triggered_by').order_by('-created_at')
+        return queryset.select_related('pipeline', 'cicd_tool', 'triggered_by').order_by('-created_at')
     
     @extend_schema(
         summary="Cancel execution",
@@ -248,7 +248,7 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
         if pipeline_id:
             queryset = queryset.filter(pipeline_id=pipeline_id)
         if tool_id:
-            queryset = queryset.filter(tool_id=tool_id)
+            queryset = queryset.filter(cicd_tool_id=tool_id)
         
         # 计算统计信息
         total_executions = queryset.count()
