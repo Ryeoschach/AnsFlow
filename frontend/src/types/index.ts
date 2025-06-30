@@ -48,8 +48,10 @@ export interface CICDTool {
   token: string
   config: Record<string, any>
   metadata: Record<string, any>
-  is_active: boolean
-  health_status: 'healthy' | 'unhealthy' | 'error' | 'pending'
+  status: string  // 数据库状态字段
+  detailed_status?: string  // 详细状态
+  is_active: boolean  // 计算得出的活跃状态
+  health_status?: 'healthy' | 'unhealthy' | 'error' | 'pending'
   last_health_check?: string
   created_at: string
   updated_at: string
@@ -64,15 +66,25 @@ export interface Pipeline {
   id: number
   name: string
   description: string
-  tool: number
+  tool?: number
   tool_name?: string
   tool_type?: string
-  steps: AtomicStep[]
+  steps?: AtomicStep[]  // 详情API返回
+  steps_count?: number  // 列表API返回
   is_active: boolean
-  metadata: Record<string, any>
+  metadata?: Record<string, any>
   created_at: string
   updated_at: string
   project: number
+  project_name?: string
+  created_by?: number
+  created_by_username?: string
+  status?: string
+  runs?: any[]
+  runs_count?: number
+  started_at?: string | null
+  completed_at?: string | null
+  config?: Record<string, any>
 }
 
 // 原子步骤类型
@@ -80,6 +92,7 @@ export interface AtomicStep {
   id: number
   name: string
   step_type: string
+  description?: string
   parameters: Record<string, any>
   order: number
   pipeline: number
@@ -166,11 +179,18 @@ export interface JenkinsJob {
   description?: string
   config?: Record<string, any>
   lastBuild?: {
-    number: number
-    url: string
-    timestamp: number
-    result: string
-  }
+    number?: number
+    url?: string
+    timestamp?: number
+    result?: string
+    duration?: number
+  } | null
+  healthReport?: Array<{
+    description: string
+    iconClassName: string
+    iconUrl: string
+    score: number
+  }>
 }
 
 export interface JenkinsBuild {
@@ -200,6 +220,8 @@ export interface CreateToolForm {
   base_url: string
   username: string
   token: string
+  project: number
+  description?: string
   config?: Record<string, any>
 }
 

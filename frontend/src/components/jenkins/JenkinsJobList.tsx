@@ -212,15 +212,35 @@ const JenkinsJobList: React.FC<JenkinsJobListProps> = ({ tool }) => {
       dataIndex: 'lastBuild',
       key: 'lastBuild',
       render: (lastBuild: any) => {
-        if (!lastBuild) return '-'
+        if (!lastBuild || !lastBuild.number) return '-'
+        
+        // 安全处理时间戳
+        let timeDisplay = '-'
+        if (lastBuild.timestamp) {
+          try {
+            const timestamp = typeof lastBuild.timestamp === 'string' 
+              ? parseInt(lastBuild.timestamp) 
+              : lastBuild.timestamp
+            
+            if (timestamp && !isNaN(timestamp) && timestamp > 0) {
+              const date = new Date(timestamp)
+              if (!isNaN(date.getTime())) {
+                timeDisplay = formatDistanceToNow(date, {
+                  addSuffix: true,
+                  locale: zhCN
+                })
+              }
+            }
+          } catch (error) {
+            console.warn('Invalid timestamp format:', lastBuild.timestamp)
+          }
+        }
+        
         return (
           <div>
             <div>#{lastBuild.number}</div>
             <div style={{ fontSize: 12, color: '#666' }}>
-              {formatDistanceToNow(new Date(lastBuild.timestamp), {
-                addSuffix: true,
-                locale: zhCN
-              })}
+              {timeDisplay}
             </div>
           </div>
         )

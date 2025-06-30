@@ -16,6 +16,7 @@ class Pipeline(models.Model):
     name = models.CharField(max_length=255, help_text="Pipeline name")
     description = models.TextField(blank=True, help_text="Pipeline description")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    is_active = models.BooleanField(default=True, help_text="Whether the pipeline is active")
     
     # Configuration
     config = models.JSONField(default=dict, help_text="Pipeline configuration in JSON format")

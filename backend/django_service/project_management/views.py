@@ -21,7 +21,12 @@ class ProjectViewSet(viewsets.ModelViewSet):
     
     def get_queryset(self):
         user = self.request.user
-        # Users can see projects they own or are members of
+        
+        # Superusers can see all projects
+        if user.is_superuser:
+            return Project.objects.all().select_related('owner').prefetch_related('members')
+        
+        # Regular users can see projects they own or are members of
         return Project.objects.filter(
             Q(owner=user) | Q(members=user)
         ).distinct().select_related('owner').prefetch_related('members')

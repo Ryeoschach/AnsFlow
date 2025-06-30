@@ -58,14 +58,19 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
         
         return queryset.select_related('project', 'created_by')
     
-    async def perform_create(self, serializer):
+    def perform_create(self, serializer):
         """创建 CI/CD 工具并进行健康检查"""
         tool_data = serializer.validated_data
         tool_data['created_by'] = self.request.user
         
+        # 添加调试日志
+        logger.info(f"Creating CI/CD tool with data: {tool_data}")
+        logger.info(f"Project from validated_data: {tool_data.get('project')}")
+        
         try:
-            # 使用统一引擎注册工具
-            tool = await cicd_engine.register_tool(tool_data, self.request.user)
+            # 暂时使用简单的创建方式，不使用异步引擎
+            tool = serializer.save()
+            logger.info(f"Tool created successfully: {tool.id}, project: {tool.project}")
             return tool
         except Exception as e:
             logger.error(f"Failed to register CI/CD tool: {e}")
@@ -76,21 +81,72 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
         description="Perform health check on a CI/CD tool"
     )
     @action(detail=True, methods=['post'])
-    async def health_check(self, request, pk=None):
+    def health_check(self, request, pk=None):
         """执行工具健康检查"""
         tool = self.get_object()
         
         try:
-            is_healthy = await cicd_engine.health_check_tool(tool)
+            # 简单的健康检查实现
+            import requests
+            from django.utils import timezone
+            
+            if tool.tool_type == 'jenkins':
+                try:
+                    auth = None
+                    if tool.username and tool.token:
+                        auth = requests.auth.HTTPBasicAuth(tool.username, tool.token)
+                    
+                    response = requests.get(
+                        f"{tool.base_url}/api/json",
+                        auth=auth,
+                        timeout=10,
+                        verify=False
+                    )
+                    
+                    # Jenkins响应说明：
+                    # 200: 认证成功，服务健康
+                    # 403: 服务正常运行但需要认证
+                    # 401: 认证失败但服务正常运行  
+                    # 其他: 服务不可用
+                    is_healthy = response.status_code in [200, 401, 403]
+                    
+                    if response.status_code == 200:
+                        tool.status = 'authenticated'  # 在线已认证
+                        message = 'Jenkins service is healthy and authenticated'
+                        detailed_status = 'authenticated'
+                    elif response.status_code in [401, 403]:
+                        tool.status = 'needs_auth'  # 在线需认证
+                        message = f'Jenkins service is running but requires authentication (HTTP {response.status_code})'
+                        detailed_status = 'needs_auth'
+                    else:
+                        tool.status = 'offline'  # 离线
+                        message = f'Jenkins service is not responding correctly (HTTP {response.status_code})'
+                        detailed_status = 'offline'
+                    
+                    tool.last_health_check = timezone.now()
+                    tool.save(update_fields=['status', 'last_health_check'])
+                    
+                except Exception as e:
+                    is_healthy = False
+                    tool.status = 'offline'
+                    tool.last_health_check = timezone.now()
+                    tool.save(update_fields=['status', 'last_health_check'])
+                    message = f'Health check failed: {str(e)}'
+                    detailed_status = 'offline'
+            else:
+                is_healthy = False
+                message = 'Unsupported tool type for health check'
+                detailed_status = 'unknown'
             
             return Response({
                 'tool_id': tool.id,
                 'tool_name': tool.name,
                 'tool_type': tool.tool_type,
                 'status': tool.status,
+                'detailed_status': detailed_status,
                 'is_healthy': is_healthy,
                 'last_check': tool.last_health_check,
-                'message': 'Health check completed successfully' if is_healthy else 'Health check failed'
+                'message': message
             })
         
         except Exception as e:
@@ -105,7 +161,7 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
         description="Execute a pipeline using this CI/CD tool"
     )
     @action(detail=True, methods=['post'])
-    async def execute_pipeline(self, request, pk=None):
+    def execute_pipeline(self, request, pk=None):
         """使用此工具执行流水线"""
         tool = self.get_object()
         serializer = PipelineExecutionCreateSerializer(data=request.data, context={'request': request})
@@ -114,11 +170,15 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
             try:
                 pipeline = Pipeline.objects.get(id=serializer.validated_data['pipeline_id'])
                 
-                execution = await cicd_engine.execute_pipeline(
+                # 简化的流水线执行实现
+                from ..models import PipelineExecution
+                execution = PipelineExecution.objects.create(
                     pipeline=pipeline,
-                    tool=tool,
+                    cicd_tool=tool,
+                    status='pending',
                     trigger_type=serializer.validated_data['trigger_type'],
                     triggered_by=request.user,
+                    definition=pipeline.config or {},
                     parameters=serializer.validated_data['parameters']
                 )
                 
@@ -144,12 +204,26 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
         description="Get the capabilities and supported features of a CI/CD tool"
     )
     @action(detail=True, methods=['get'])
-    async def capabilities(self, request, pk=None):
+    def capabilities(self, request, pk=None):
         """获取工具能力信息"""
         tool = self.get_object()
         
         try:
-            capabilities = await cicd_engine.get_tool_capabilities(tool)
+            # 简单的能力信息返回
+            capabilities = {
+                'supported_features': [],
+                'max_concurrent_jobs': 0,
+                'supported_scm': [],
+                'available_plugins': []
+            }
+            
+            if tool.tool_type == 'jenkins':
+                capabilities = {
+                    'supported_features': ['build', 'deploy', 'test', 'pipeline'],
+                    'max_concurrent_jobs': 10,
+                    'supported_scm': ['git', 'svn'],
+                    'available_plugins': ['git', 'pipeline', 'build-timeout']
+                }
             
             return Response({
                 'tool_id': tool.id,
@@ -170,12 +244,81 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
         description="Test the connection to a CI/CD tool"
     )
     @action(detail=True, methods=['post'])
-    async def test_connection(self, request, pk=None):
+    def test_connection(self, request, pk=None):
         """测试工具连接"""
         tool = self.get_object()
         
         try:
-            connection_result = await cicd_engine.test_tool_connection(tool)
+            # 使用同步方式测试连接，避免 httpx 代理问题
+            import requests
+            from django.utils import timezone
+            
+            if tool.tool_type == 'jenkins':
+                try:
+                    # 测试 Jenkins API 连接
+                    import requests.auth
+                    auth = requests.auth.HTTPBasicAuth(tool.username, tool.token) if tool.username and tool.token else None
+                    
+                    response = requests.get(
+                        f"{tool.base_url}/api/json",
+                        auth=auth,
+                        timeout=10,
+                        verify=False,
+                        proxies={'http': None, 'https': None}  # 禁用代理
+                    )
+                    
+                    if response.status_code == 200:
+                        # 更新工具状态
+                        tool.status = 'active'
+                        tool.last_health_check = timezone.now()
+                        tool.save(update_fields=['status', 'last_health_check'])
+                        
+                        connection_result = {
+                            'success': True,
+                            'message': f'Successfully connected to Jenkins at {tool.base_url}',
+                            'status': 'online',
+                            'response_time': f'{response.elapsed.total_seconds():.2f}s'
+                        }
+                    else:
+                        tool.status = 'error'
+                        tool.save(update_fields=['status'])
+                        
+                        connection_result = {
+                            'success': False,
+                            'message': f'Jenkins returned status code {response.status_code}',
+                            'status': 'offline',
+                            'error': f'HTTP {response.status_code}'
+                        }
+                
+                except requests.exceptions.ConnectionError:
+                    tool.status = 'error'
+                    tool.save(update_fields=['status'])
+                    
+                    connection_result = {
+                        'success': False,
+                        'message': f'Cannot connect to Jenkins at {tool.base_url}',
+                        'status': 'offline',
+                        'error': 'Connection refused'
+                    }
+                
+                except requests.exceptions.Timeout:
+                    tool.status = 'error'
+                    tool.save(update_fields=['status'])
+                    
+                    connection_result = {
+                        'success': False,
+                        'message': f'Timeout connecting to Jenkins at {tool.base_url}',
+                        'status': 'offline',
+                        'error': 'Connection timeout'
+                    }
+            
+            else:
+                connection_result = {
+                    'success': False,
+                    'message': f'Connection test not implemented for {tool.tool_type}',
+                    'status': 'unknown',
+                    'error': 'Not implemented'
+                }
             
             return Response({
                 'tool_id': tool.id,

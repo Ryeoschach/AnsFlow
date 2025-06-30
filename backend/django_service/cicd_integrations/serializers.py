@@ -12,13 +12,23 @@ class CICDToolSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
     tool_type_display = serializers.CharField(source='get_tool_type_display', read_only=True)
     status_display = serializers.CharField(source='get_status_display', read_only=True)
+    is_active = serializers.SerializerMethodField()
+    detailed_status = serializers.SerializerMethodField()
+    
+    def get_is_active(self, obj):
+        """根据状态确定是否活跃"""
+        return obj.status in ['active', 'authenticated', 'needs_auth']
+    
+    def get_detailed_status(self, obj):
+        """返回详细状态信息"""
+        return obj.status
     
     class Meta:
         model = CICDTool
         fields = [
             'id', 'name', 'tool_type', 'tool_type_display', 'base_url',
             'username', 'config', 'metadata', 'status', 'status_display',
-            'last_health_check', 'project', 'project_name',
+            'is_active', 'detailed_status', 'last_health_check', 'project', 'project_name',
             'created_by', 'created_by_username', 'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -44,6 +54,12 @@ class CICDToolCreateSerializer(serializers.ModelSerializer):
         ]
     
     def validate(self, data):
+        # 添加调试日志
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"CICDToolCreateSerializer validating data: {data}")
+        logger.info(f"Project field: {data.get('project')}")
+        
         # 验证同一项目下工具名称唯一
         if CICDTool.objects.filter(
             project=data['project'],

@@ -95,8 +95,17 @@ class ApiService {
     await this.api.delete(`/cicd/tools/${id}/`)
   }
 
-  async testToolConnection(id: number): Promise<{ success: boolean; message: string }> {
-    const response = await this.api.post(`/cicd/tools/${id}/test_connection/`)
+  async testToolConnection(id: number): Promise<{ 
+    tool_id: number; 
+    tool_name: string; 
+    tool_type: string; 
+    status: string;
+    detailed_status: string;
+    is_healthy: boolean; 
+    last_check: string;
+    message: string 
+  }> {
+    const response = await this.api.post(`/cicd/tools/${id}/health_check/`)
     return response.data
   }
 
@@ -113,36 +122,41 @@ class ApiService {
 
   // Pipelines
   async getPipelines(): Promise<Pipeline[]> {
-    const response = await this.api.get('/pipelines/')
+    const response = await this.api.get('/pipelines/pipelines/')
     return response.data
   }
 
   async getPipeline(id: number): Promise<Pipeline> {
-    const response = await this.api.get(`/pipelines/${id}/`)
+    const response = await this.api.get(`/pipelines/pipelines/${id}/`)
     return response.data
   }
 
   async createPipeline(pipeline: CreatePipelineRequest): Promise<Pipeline> {
-    const response = await this.api.post('/pipelines/', pipeline)
+    const response = await this.api.post('/pipelines/pipelines/', pipeline)
     return response.data
   }
 
   async updatePipeline(id: number, pipeline: UpdatePipelineRequest): Promise<Pipeline> {
-    const response = await this.api.put(`/pipelines/${id}/`, pipeline)
+    const response = await this.api.put(`/pipelines/pipelines/${id}/`, pipeline)
+    return response.data
+  }
+
+  async togglePipelineStatus(id: number, isActive: boolean): Promise<Pipeline> {
+    const response = await this.api.patch(`/pipelines/pipelines/${id}/`, { is_active: isActive })
     return response.data
   }
 
   async deletePipeline(id: number): Promise<void> {
-    await this.api.delete(`/pipelines/${id}/`)
+    await this.api.delete(`/pipelines/pipelines/${id}/`)
   }
 
   async clonePipeline(id: number): Promise<Pipeline> {
-    const response = await this.api.post(`/pipelines/${id}/clone/`)
+    const response = await this.api.post(`/pipelines/pipelines/${id}/clone/`)
     return response.data
   }
 
   async exportPipeline(id: number): Promise<Blob> {
-    const response = await this.api.get(`/pipelines/${id}/export/`, {
+    const response = await this.api.get(`/pipelines/pipelines/${id}/export/`, {
       responseType: 'blob'
     })
     return response.data
@@ -151,7 +165,7 @@ class ApiService {
   async importPipeline(file: File): Promise<Pipeline> {
     const formData = new FormData()
     formData.append('file', file)
-    const response = await this.api.post('/pipelines/import/', formData, {
+    const response = await this.api.post('/pipelines/pipelines/import/', formData, {
       headers: { 'Content-Type': 'multipart/form-data' }
     })
     return response.data
@@ -254,7 +268,9 @@ class ApiService {
   // Jenkins Integration
   async getJenkinsJobs(toolId: number): Promise<JenkinsJob[]> {
     const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/`)
-    return response.data
+    // 后端返回格式: { tool_id, jobs: [...], total_jobs }
+    // 前端需要的是 jobs 数组
+    return response.data.jobs || []
   }
 
   async getJenkinsJob(toolId: number, jobName: string): Promise<JenkinsJob> {
@@ -290,7 +306,8 @@ class ApiService {
   }
 
   async buildJenkinsJob(toolId: number, jobName: string, parameters?: Record<string, any>): Promise<{ queueId: number }> {
-    const response = await this.api.post(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/build/`, {
+    const response = await this.api.post(`/cicd/tools/${toolId}/jenkins/build/`, {
+      job_name: jobName,
       parameters
     })
     return response.data
@@ -301,17 +318,17 @@ class ApiService {
   }
 
   async getJenkinsBuilds(toolId: number, jobName: string): Promise<JenkinsBuild[]> {
-    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/`)
-    return response.data
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/builds/?job_name=${encodeURIComponent(jobName)}`)
+    return response.data.builds || response.data
   }
 
   async getJenkinsBuild(toolId: number, jobName: string, buildNumber: number): Promise<JenkinsBuild> {
-    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/`)
-    return response.data
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/build-info/?job_name=${encodeURIComponent(jobName)}&build_number=${buildNumber}`)
+    return response.data.build_info || response.data
   }
 
   async getJenkinsBuildLogs(toolId: number, jobName: string, buildNumber: number): Promise<string> {
-    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/jobs/${encodeURIComponent(jobName)}/builds/${buildNumber}/logs/`)
+    const response = await this.api.get(`/cicd/tools/${toolId}/jenkins/build-logs/?job_name=${encodeURIComponent(jobName)}&build_number=${buildNumber}`)
     return response.data.logs
   }
 

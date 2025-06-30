@@ -105,6 +105,7 @@ class AtomicStep(models.Model):
     created_by = models.ForeignKey(User, on_delete=models.CASCADE,
                                   related_name='atomic_steps')
     is_public = models.BooleanField(default=False, help_text="是否为公共步骤")
+    is_active = models.BooleanField(default=True, help_text="是否激活")
     
     # 时间戳
     created_at = models.DateTimeField(auto_now_add=True)

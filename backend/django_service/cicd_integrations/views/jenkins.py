@@ -1,20 +1,20 @@
 """
-Jenkins 特定功能视图混入类
-包含所有Jenkins特定的作业管理功能
+Jenkins 特定功能视图混入类 - 简化版本
+包含基本的Jenkins管理功能，使用同步实现
 """
 from rest_framework import status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema
+from requests.auth import HTTPBasicAuth
 import logging
-
-from ..adapters import JenkinsAdapter
+import requests
 
 logger = logging.getLogger(__name__)
 
 
 class JenkinsManagementMixin:
-    """Jenkins管理功能混入类，提供所有Jenkins特定的API端点"""
+    """Jenkins管理功能混入类，提供基本的Jenkins API端点"""
     
     def _validate_jenkins_tool(self, tool):
         """验证工具是否为Jenkins类型"""
@@ -25,14 +25,27 @@ class JenkinsManagementMixin:
             )
         return None
     
-    def _create_jenkins_adapter(self, tool):
-        """创建Jenkins适配器实例"""
-        return JenkinsAdapter(
-            base_url=tool.base_url,
-            username=tool.username,
-            token=tool.token,
-            **tool.config
-        )
+    def _get_jenkins_auth(self, tool):
+        """获取Jenkins认证信息"""
+        if tool.username and tool.token:
+            return requests.auth.HTTPBasicAuth(tool.username, tool.token)
+        return None
+    
+    def _get_jenkins_crumb(self, tool, auth):
+        """获取Jenkins CSRF token"""
+        try:
+            response = requests.get(
+                f"{tool.base_url}/crumbIssuer/api/json",
+                auth=auth,
+                timeout=10,
+                verify=False
+            )
+            if response.status_code == 200:
+                crumb_data = response.json()
+                return {crumb_data['crumbRequestField']: crumb_data['crumb']}
+        except:
+            pass
+        return {}
     
     # ==========================
     # Jenkins作业管理功能
@@ -40,20 +53,11 @@ class JenkinsManagementMixin:
     
     @extend_schema(
         summary="List Jenkins jobs",
-        description="Get a list of all Jenkins jobs (Jenkins only)",
-        parameters=[
-            {
-                'name': 'folder_path',
-                'in': 'query',
-                'required': False,
-                'description': 'Jenkins folder path (for organized jobs)',
-                'schema': {'type': 'string'}
-            }
-        ]
+        description="Get a list of all Jenkins jobs"
     )
     @action(detail=True, methods=['get'], url_path='jenkins/jobs')
-    async def jenkins_list_jobs(self, request, pk=None):
-        """获取Jenkins作业列表 (仅限Jenkins工具)"""
+    def jenkins_jobs(self, request, pk=None):
+        """获取Jenkins作业列表"""
         tool = self.get_object()
         
         validation_error = self._validate_jenkins_tool(tool)
@@ -61,27 +65,128 @@ class JenkinsManagementMixin:
             return validation_error
         
         try:
-            adapter = self._create_jenkins_adapter(tool)
-            folder_path = request.query_params.get('folder_path', '')
-            jobs = await adapter.list_jobs(folder_path)
+            auth = self._get_jenkins_auth(tool)
             
-            return Response({
-                'tool_id': tool.id,
-                'tool_name': tool.name,
-                'folder_path': folder_path,
-                'jobs_count': len(jobs),
-                'jobs': jobs
-            })
+            response = requests.get(
+                f"{tool.base_url}/api/json",
+                auth=auth,
+                timeout=10,
+                verify=False
+            )
             
+            if response.status_code == 200:
+                jenkins_data = response.json()
+                jobs = jenkins_data.get('jobs', [])
+                
+                # 为每个作业获取更详细的信息
+                detailed_jobs = []
+                for job in jobs:
+                    try:
+                        job_response = requests.get(
+                            f"{job['url']}api/json",
+                            auth=auth,
+                            timeout=5,
+                            verify=False
+                        )
+                        if job_response.status_code == 200:
+                            job_detail = job_response.json()
+                            
+                            # 处理 lastBuild 字段，确保其结构完整
+                            last_build = job_detail.get('lastBuild')
+                            if last_build:
+                                # 如果构建结果为空且不在构建中，尝试获取最新状态
+                                if (last_build.get('result') is None and 
+                                    not job_detail.get('color', '').endswith('_anime')):
+                                    try:
+                                        # 主动获取最新构建状态
+                                        build_url = f"{last_build.get('url', '')}api/json"
+                                        if build_url != "api/json":  # 确保URL有效
+                                            build_response = requests.get(build_url, auth=auth, timeout=3)
+                                            if build_response.status_code == 200:
+                                                latest_build = build_response.json()
+                                                last_build = {
+                                                    'number': latest_build.get('number', last_build.get('number')),
+                                                    'url': latest_build.get('url', last_build.get('url')),
+                                                    'timestamp': latest_build.get('timestamp', last_build.get('timestamp', 0)),
+                                                    'result': latest_build.get('result'),  # 使用最新的result
+                                                    'duration': latest_build.get('duration', last_build.get('duration', 0))
+                                                }
+                                    except Exception as e:
+                                        logger.debug(f"Failed to get latest build status for {job['name']}: {e}")
+                                        # 如果获取失败，使用原始数据
+                                        pass
+                                
+                                # 确保 lastBuild 有完整的字段
+                                if not isinstance(last_build, dict):
+                                    last_build = {}
+                                
+                                last_build = {
+                                    'number': last_build.get('number'),
+                                    'url': last_build.get('url'),
+                                    'timestamp': last_build.get('timestamp', 0),  # 默认为0而不是None
+                                    'result': last_build.get('result'),
+                                    'duration': last_build.get('duration', 0)
+                                }
+                            
+                            detailed_jobs.append({
+                                '_class': job_detail.get('_class', ''),
+                                'name': job_detail.get('name', job['name']),
+                                'url': job_detail.get('url', job['url']),
+                                'color': job_detail.get('color', job['color']),
+                                'buildable': job_detail.get('buildable', True),
+                                'inQueue': job_detail.get('inQueue', False),
+                                'description': job_detail.get('description', ''),
+                                'lastBuild': last_build,
+                                'healthReport': job_detail.get('healthReport', [])
+                            })
+                        else:
+                            # 如果无法获取详细信息，使用基本信息并添加默认值
+                            detailed_jobs.append({
+                                '_class': job.get('_class', ''),
+                                'name': job.get('name', ''),
+                                'url': job.get('url', ''),
+                                'color': job.get('color', 'grey'),
+                                'buildable': True,
+                                'inQueue': False,
+                                'description': '',
+                                'lastBuild': None,
+                                'healthReport': []
+                            })
+                    except Exception as e:
+                        logger.warning(f"Failed to get details for job {job.get('name', 'unknown')}: {e}")
+                        # 添加基本信息
+                        detailed_jobs.append({
+                            '_class': job.get('_class', ''),
+                            'name': job.get('name', ''),
+                            'url': job.get('url', ''),
+                            'color': job.get('color', 'grey'),
+                            'buildable': True,
+                            'inQueue': False,
+                            'description': '',
+                            'lastBuild': None,
+                            'healthReport': []
+                        })
+                
+                return Response({
+                    'tool_id': tool.id,
+                    'jobs': detailed_jobs,
+                    'total_jobs': len(detailed_jobs)
+                })
+            else:
+                return Response(
+                    {'error': f'Failed to get Jenkins jobs: HTTP {response.status_code}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
         except Exception as e:
-            logger.error(f"Failed to list Jenkins jobs for tool {tool.id}: {e}")
+            logger.error(f"Failed to get Jenkins jobs for tool {tool.id}: {e}")
             return Response(
-                {'error': f"Failed to list jobs: {str(e)}"},
+                {'error': f"Failed to get jobs: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
     @extend_schema(
-        summary="Get Jenkins job info",
+        summary="Get Jenkins job details",
         description="Get detailed information about a specific Jenkins job",
         parameters=[
             {
@@ -94,7 +199,7 @@ class JenkinsManagementMixin:
         ]
     )
     @action(detail=True, methods=['get'], url_path='jenkins/job-info')
-    async def jenkins_job_info(self, request, pk=None):
+    def jenkins_job_info(self, request, pk=None):
         """获取Jenkins作业详细信息"""
         tool = self.get_object()
         
@@ -110,19 +215,31 @@ class JenkinsManagementMixin:
             )
         
         try:
-            adapter = self._create_jenkins_adapter(tool)
-            job_info = await adapter.get_job_info(job_name)
+            auth = self._get_jenkins_auth(tool)
             
-            if job_info:
+            response = requests.get(
+                f"{tool.base_url}/job/{job_name}/api/json",
+                auth=auth,
+                timeout=10,
+                verify=False
+            )
+            
+            if response.status_code == 200:
+                job_info = response.json()
                 return Response({
                     'tool_id': tool.id,
                     'job_name': job_name,
                     'job_info': job_info
                 })
-            else:
+            elif response.status_code == 404:
                 return Response(
                     {'error': f'Job "{job_name}" not found'},
                     status=status.HTTP_404_NOT_FOUND
+                )
+            else:
+                return Response(
+                    {'error': f'Failed to get job info: HTTP {response.status_code}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
                 
         except Exception as e:
@@ -133,179 +250,22 @@ class JenkinsManagementMixin:
             )
     
     @extend_schema(
-        summary="Create Jenkins job",
-        description="Create a new Jenkins job",
-        request={
-            'application/json': {
-                'type': 'object',
-                'properties': {
-                    'job_name': {'type': 'string', 'description': 'Name of the job to create'},
-                    'job_config': {'type': 'string', 'description': 'Jenkins XML configuration'},
-                    'sample_job': {'type': 'boolean', 'description': 'Create a sample job with default configuration', 'default': False}
-                },
-                'required': ['job_name']
-            }
-        }
-    )
-    @action(detail=True, methods=['post'], url_path='jenkins/create-job')
-    async def jenkins_create_job(self, request, pk=None):
-        """创建Jenkins作业"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
-        job_name = request.data.get('job_name')
-        job_config = request.data.get('job_config')
-        sample_job = request.data.get('sample_job', False)
-        
-        if not job_name:
-            return Response(
-                {'error': 'job_name is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            
-            # 如果没有提供配置且要创建示例作业，使用默认配置
-            if not job_config and sample_job:
-                job_config = '''<?xml version='1.1' encoding='UTF-8'?>
-<flow-definition plugin="workflow-job@2.40">
-  <actions/>
-  <description>Sample job created via AnsFlow API</description>
-  <keepDependencies>false</keepDependencies>
-  <properties/>
-  <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@2.92">
-    <script>
-pipeline {
-    agent any
-    
-    stages {
-        stage('Hello') {
-            steps {
-                echo 'Hello World from AnsFlow!'
-                sh 'echo "Build Number: ${BUILD_NUMBER}"'
-                sh 'echo "Current Date: $(date)"'
-            }
-        }
-    }
-}
-    </script>
-    <sandbox>true</sandbox>
-  </definition>
-  <triggers/>
-  <disabled>false</disabled>
-</flow-definition>'''
-            
-            if not job_config:
-                return Response(
-                    {'error': 'job_config is required or set sample_job=true'},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            success = await adapter.create_job(job_name, job_config)
-            
-            if success:
-                return Response({
-                    'tool_id': tool.id,
-                    'job_name': job_name,
-                    'message': f'Job "{job_name}" created successfully',
-                    'job_url': f"{tool.base_url}/job/{job_name}"
-                })
-            else:
-                return Response(
-                    {'error': f'Failed to create job "{job_name}"'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-                
-        except Exception as e:
-            logger.error(f"Failed to create Jenkins job {job_name}: {e}")
-            return Response(
-                {'error': f"Failed to create job: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @extend_schema(
-        summary="Delete Jenkins job",
-        description="Delete a Jenkins job",
-        request={
-            'application/json': {
-                'type': 'object',
-                'properties': {
-                    'job_name': {'type': 'string', 'description': 'Name of the job to delete'},
-                    'confirm': {'type': 'boolean', 'description': 'Confirmation flag', 'default': False}
-                },
-                'required': ['job_name', 'confirm']
-            }
-        }
-    )
-    @action(detail=True, methods=['delete'], url_path='jenkins/delete-job')
-    async def jenkins_delete_job(self, request, pk=None):
-        """删除Jenkins作业"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
-        job_name = request.data.get('job_name')
-        confirm = request.data.get('confirm', False)
-        
-        if not job_name:
-            return Response(
-                {'error': 'job_name is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        if not confirm:
-            return Response(
-                {'error': 'confirm=true is required for job deletion'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            success = await adapter.delete_job(job_name)
-            
-            if success:
-                return Response({
-                    'tool_id': tool.id,
-                    'job_name': job_name,
-                    'message': f'Job "{job_name}" deleted successfully'
-                })
-            else:
-                return Response(
-                    {'error': f'Failed to delete job "{job_name}"'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-                
-        except Exception as e:
-            logger.error(f"Failed to delete Jenkins job {job_name}: {e}")
-            return Response(
-                {'error': f"Failed to delete job: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @extend_schema(
-        summary="Start Jenkins build",
-        description="Start a new build for a Jenkins job",
+        summary="Trigger Jenkins build",
+        description="Trigger a build for a specific Jenkins job",
         request={
             'application/json': {
                 'type': 'object',
                 'properties': {
                     'job_name': {'type': 'string', 'description': 'Name of the job to build'},
-                    'parameters': {'type': 'object', 'description': 'Build parameters (key-value pairs)'},
-                    'wait_for_start': {'type': 'boolean', 'description': 'Wait for build to start', 'default': True}
+                    'parameters': {'type': 'object', 'description': 'Build parameters (optional)'}
                 },
                 'required': ['job_name']
             }
         }
     )
-    @action(detail=True, methods=['post'], url_path='jenkins/start-build')
-    async def jenkins_start_build(self, request, pk=None):
-        """启动Jenkins构建"""
+    @action(detail=True, methods=['post'], url_path='jenkins/build')
+    def jenkins_build(self, request, pk=None):
+        """触发Jenkins作业构建"""
         tool = self.get_object()
         
         validation_error = self._validate_jenkins_tool(tool)
@@ -313,9 +273,6 @@ pipeline {
             return validation_error
         
         job_name = request.data.get('job_name')
-        parameters = request.data.get('parameters', {})
-        wait_for_start = request.data.get('wait_for_start', True)
-        
         if not job_name:
             return Response(
                 {'error': 'job_name is required'},
@@ -323,115 +280,49 @@ pipeline {
             )
         
         try:
-            adapter = self._create_jenkins_adapter(tool)
-            build_info = await adapter.start_build(job_name, parameters, wait_for_start)
+            auth = self._get_jenkins_auth(tool)
+            headers = self._get_jenkins_crumb(tool, auth)
             
-            return Response({
-                'tool_id': tool.id,
-                'job_name': job_name,
-                'build_info': build_info,
-                'message': f'Build started for job "{job_name}"'
-            })
+            # 触发构建
+            build_url = f"{tool.base_url}/job/{job_name}/build"
+            parameters = request.data.get('parameters', {})
+            
+            if parameters:
+                # 如果有参数，使用带参数的构建URL
+                build_url = f"{tool.base_url}/job/{job_name}/buildWithParameters"
                 
-        except Exception as e:
-            logger.error(f"Failed to start Jenkins build for {job_name}: {e}")
-            return Response(
-                {'error': f"Failed to start build: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            response = requests.post(
+                build_url,
+                auth=auth,
+                headers=headers,
+                data=parameters,
+                timeout=10,
+                verify=False
             )
-    
-    @extend_schema(
-        summary="Stop Jenkins build",
-        description="Stop a running Jenkins build",
-        request={
-            'application/json': {
-                'type': 'object',
-                'properties': {
-                    'job_name': {'type': 'string', 'description': 'Name of the job'},
-                    'build_number': {'type': 'string', 'description': 'Build number to stop'}
-                },
-                'required': ['job_name', 'build_number']
-            }
-        }
-    )
-    @action(detail=True, methods=['post'], url_path='jenkins/stop-build')
-    async def jenkins_stop_build(self, request, pk=None):
-        """停止Jenkins构建"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
-        job_name = request.data.get('job_name')
-        build_number = request.data.get('build_number')
-        
-        if not job_name or not build_number:
-            return Response(
-                {'error': 'job_name and build_number are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            success = await adapter.stop_build(job_name, build_number)
             
-            if success:
+            if response.status_code in [200, 201]:
                 return Response({
                     'tool_id': tool.id,
                     'job_name': job_name,
-                    'build_number': build_number,
-                    'message': f'Build #{build_number} stopped for job "{job_name}"'
+                    'message': 'Build triggered successfully',
+                    'build_triggered': True
                 })
             else:
                 return Response(
-                    {'error': f'Failed to stop build #{build_number} for job "{job_name}"'},
+                    {'error': f'Failed to trigger build: HTTP {response.status_code}'},
                     status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
                 
         except Exception as e:
-            logger.error(f"Failed to stop Jenkins build {job_name}#{build_number}: {e}")
+            logger.error(f"Failed to trigger Jenkins build for {job_name}: {e}")
             return Response(
-                {'error': f"Failed to stop build: {str(e)}"},
+                {'error': f"Failed to trigger build: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
     
-    @extend_schema(
-        summary="Get Jenkins job builds",
-        description="Get build history for a Jenkins job",
-        parameters=[
-            {
-                'name': 'job_name',
-                'in': 'query',
-                'required': True,
-                'description': 'Name of the Jenkins job',
-                'schema': {'type': 'string'}
-            },
-            {
-                'name': 'limit',
-                'in': 'query',
-                'required': False,
-                'description': 'Maximum number of builds to return',
-                'schema': {'type': 'integer', 'default': 20}
-            },
-            {
-                'name': 'offset',
-                'in': 'query',
-                'required': False,
-                'description': 'Number of builds to skip',
-                'schema': {'type': 'integer', 'default': 0}
-            }
-        ]
-    )
-    @action(detail=True, methods=['get'], url_path='jenkins/job-builds')
-    async def jenkins_job_builds(self, request, pk=None):
-        """获取Jenkins作业构建历史"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
+    @action(detail=True, methods=['get'], url_path='jenkins/builds')
+    def jenkins_job_builds(self, request, pk=None):
+        """获取Jenkins作业构建历史（需要作业名称参数）"""
         job_name = request.query_params.get('job_name')
         if not job_name:
             return Response(
@@ -439,71 +330,79 @@ pipeline {
                 status=status.HTTP_400_BAD_REQUEST
             )
         
+        tool = self.get_object()
         try:
-            limit = int(request.query_params.get('limit', 20))
-            offset = int(request.query_params.get('offset', 0))
-        except ValueError:
-            return Response(
-                {'error': 'limit and offset must be integers'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            builds = await adapter.get_job_builds(job_name, limit, offset)
+            auth = HTTPBasicAuth(tool.username, tool.token)
             
-            return Response({
-                'tool_id': tool.id,
-                'job_name': job_name,
-                'limit': limit,
-                'offset': offset,
-                'builds_count': len(builds),
-                'builds': builds
-            })
+            # 获取作业的构建历史
+            url = f"{tool.base_url}/job/{job_name}/api/json?tree=builds[number,url,timestamp,result,duration,description,estimatedDuration]"
+            response = requests.get(url, auth=auth, timeout=10, verify=False)
+            
+            if response.status_code == 200:
+                data = response.json()
+                builds = data.get('builds', [])
+                
+                # 处理构建数据，确保字段完整，并智能更新状态
+                processed_builds = []
+                for build in builds:
+                    processed_build = {
+                        'number': build.get('number'),
+                        'url': build.get('url'),
+                        'timestamp': build.get('timestamp', 0),
+                        'result': build.get('result'),
+                        'duration': build.get('duration', 0),
+                        'description': build.get('description', ''),
+                        'estimatedDuration': build.get('estimatedDuration', 0)
+                    }
+                    
+                    # 如果构建结果为空，尝试获取最新状态
+                    if (processed_build['result'] is None and 
+                        processed_build.get('url')):
+                        try:
+                            # 获取单个构建的最新状态
+                            build_detail_url = f"{processed_build['url']}api/json"
+                            build_response = requests.get(build_detail_url, auth=auth, timeout=3)
+                            if build_response.status_code == 200:
+                                build_detail = build_response.json()
+                                # 更新结果，但保持其他字段不变
+                                if build_detail.get('result') is not None:
+                                    processed_build['result'] = build_detail.get('result')
+                                    processed_build['duration'] = build_detail.get('duration', processed_build['duration'])
+                                    logger.info(f"Updated build {processed_build['number']} status to {processed_build['result']}")
+                        except Exception as e:
+                            logger.debug(f"Failed to get latest status for build {processed_build['number']}: {e}")
+                    
+                    processed_builds.append(processed_build)
+                
+                return Response({
+                    'tool_id': tool.id,
+                    'job_name': job_name,
+                    'builds': processed_builds
+                })
+            else:
+                return Response(
+                    {'error': f'Failed to get builds: HTTP {response.status_code}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
                 
         except Exception as e:
-            logger.error(f"Failed to get Jenkins job builds for {job_name}: {e}")
+            logger.error(f"Failed to get Jenkins builds for tool {tool.id}, job {job_name}: {e}")
             return Response(
-                {'error': f"Failed to get job builds: {str(e)}"},
+                {'error': f"Failed to get builds: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @action(detail=True, methods=['delete'], url_path='jenkins/delete-job')
+    def jenkins_delete_job(self, request, pk=None):
+        """删除Jenkins作业 - 简化版本"""
+        return Response(
+            {'message': 'This feature is under development. Please use Jenkins web interface.'},
+            status=status.HTTP_501_NOT_IMPLEMENTED
+        )
     
-    @extend_schema(
-        summary="Get Jenkins build logs",
-        description="Get console logs for a specific Jenkins build",
-        parameters=[
-            {
-                'name': 'job_name',
-                'in': 'query',
-                'required': True,
-                'description': 'Name of the Jenkins job',
-                'schema': {'type': 'string'}
-            },
-            {
-                'name': 'build_number',
-                'in': 'query',
-                'required': True,
-                'description': 'Build number',
-                'schema': {'type': 'string'}
-            },
-            {
-                'name': 'start',
-                'in': 'query',
-                'required': False,
-                'description': 'Start position for incremental log retrieval',
-                'schema': {'type': 'integer', 'default': 0}
-            }
-        ]
-    )
     @action(detail=True, methods=['get'], url_path='jenkins/build-logs')
-    async def jenkins_build_logs(self, request, pk=None):
+    def jenkins_build_logs(self, request, pk=None):
         """获取Jenkins构建日志"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
         job_name = request.query_params.get('job_name')
         build_number = request.query_params.get('build_number')
         
@@ -513,224 +412,81 @@ pipeline {
                 status=status.HTTP_400_BAD_REQUEST
             )
         
-        try:
-            start = int(request.query_params.get('start', 0))
-        except ValueError:
-            return Response(
-                {'error': 'start must be an integer'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            log_data = await adapter.get_build_console_log(job_name, build_number, start)
-            
-            return Response({
-                'tool_id': tool.id,
-                'job_name': job_name,
-                'build_number': build_number,
-                'log_data': log_data
-            })
-                
-        except Exception as e:
-            logger.error(f"Failed to get Jenkins build logs for {job_name}#{build_number}: {e}")
-            return Response(
-                {'error': f"Failed to get build logs: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @extend_schema(
-        summary="Get Jenkins queue info",
-        description="Get information about Jenkins build queue"
-    )
-    @action(detail=True, methods=['get'], url_path='jenkins/queue')
-    async def jenkins_queue_info(self, request, pk=None):
-        """获取Jenkins构建队列信息"""
         tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
         try:
-            adapter = self._create_jenkins_adapter(tool)
-            queue_info = await adapter.get_queue_info()
+            auth = HTTPBasicAuth(tool.username, tool.token)
             
-            return Response({
-                'tool_id': tool.id,
-                'tool_name': tool.name,
-                'queue_count': len(queue_info),
-                'queue_items': queue_info
-            })
-                
-        except Exception as e:
-            logger.error(f"Failed to get Jenkins queue info for tool {tool.id}: {e}")
-            return Response(
-                {'error': f"Failed to get queue info: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @extend_schema(
-        summary="Enable Jenkins job",
-        description="Enable a Jenkins job",
-        request={
-            'application/json': {
-                'type': 'object',
-                'properties': {
-                    'job_name': {'type': 'string', 'description': 'Name of the job to enable'}
-                },
-                'required': ['job_name']
-            }
-        }
-    )
-    @action(detail=True, methods=['post'], url_path='jenkins/enable-job')
-    async def jenkins_enable_job(self, request, pk=None):
-        """启用Jenkins作业"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
-        job_name = request.data.get('job_name')
-        if not job_name:
-            return Response(
-                {'error': 'job_name is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            success = await adapter.enable_job(job_name)
+            # 获取构建的控制台日志
+            url = f"{tool.base_url}/job/{job_name}/{build_number}/consoleText"
+            response = requests.get(url, auth=auth, timeout=30, verify=False)
             
-            if success:
-                return Response({
-                    'tool_id': tool.id,
-                    'job_name': job_name,
-                    'message': f'Job "{job_name}" enabled successfully'
-                })
-            else:
-                return Response(
-                    {'error': f'Failed to enable job "{job_name}"'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-                
-        except Exception as e:
-            logger.error(f"Failed to enable Jenkins job {job_name}: {e}")
-            return Response(
-                {'error': f"Failed to enable job: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @extend_schema(
-        summary="Disable Jenkins job",
-        description="Disable a Jenkins job",
-        request={
-            'application/json': {
-                'type': 'object',
-                'properties': {
-                    'job_name': {'type': 'string', 'description': 'Name of the job to disable'}
-                },
-                'required': ['job_name']
-            }
-        }
-    )
-    @action(detail=True, methods=['post'], url_path='jenkins/disable-job')
-    async def jenkins_disable_job(self, request, pk=None):
-        """禁用Jenkins作业"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
-        job_name = request.data.get('job_name')
-        if not job_name:
-            return Response(
-                {'error': 'job_name is required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            success = await adapter.disable_job(job_name)
-            
-            if success:
-                return Response({
-                    'tool_id': tool.id,
-                    'job_name': job_name,
-                    'message': f'Job "{job_name}" disabled successfully'
-                })
-            else:
-                return Response(
-                    {'error': f'Failed to disable job "{job_name}"'},
-                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
-                )
-                
-        except Exception as e:
-            logger.error(f"Failed to disable Jenkins job {job_name}: {e}")
-            return Response(
-                {'error': f"Failed to disable job: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR
-            )
-    
-    @extend_schema(
-        summary="Get Jenkins build info",
-        description="Get detailed information about a specific Jenkins build",
-        parameters=[
-            {
-                'name': 'job_name',
-                'in': 'query',
-                'required': True,
-                'description': 'Name of the Jenkins job',
-                'schema': {'type': 'string'}
-            },
-            {
-                'name': 'build_number',
-                'in': 'query',
-                'required': True,
-                'description': 'Build number',
-                'schema': {'type': 'string'}
-            }
-        ]
-    )
-    @action(detail=True, methods=['get'], url_path='jenkins/build-info')
-    async def jenkins_build_info(self, request, pk=None):
-        """获取Jenkins构建详细信息"""
-        tool = self.get_object()
-        
-        validation_error = self._validate_jenkins_tool(tool)
-        if validation_error:
-            return validation_error
-        
-        job_name = request.query_params.get('job_name')
-        build_number = request.query_params.get('build_number')
-        
-        if not job_name or not build_number:
-            return Response(
-                {'error': 'job_name and build_number parameters are required'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
-        try:
-            adapter = self._create_jenkins_adapter(tool)
-            build_info = await adapter.get_build_info(job_name, build_number)
-            
-            if build_info:
+            if response.status_code == 200:
                 return Response({
                     'tool_id': tool.id,
                     'job_name': job_name,
                     'build_number': build_number,
-                    'build_info': build_info
+                    'logs': response.text
                 })
             else:
                 return Response(
-                    {'error': f'Build #{build_number} not found for job "{job_name}"'},
-                    status=status.HTTP_404_NOT_FOUND
+                    {'error': f'Failed to get build logs: HTTP {response.status_code}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
                 )
                 
         except Exception as e:
-            logger.error(f"Failed to get Jenkins build info for {job_name}#{build_number}: {e}")
+            logger.error(f"Failed to get Jenkins build logs for tool {tool.id}, job {job_name}, build {build_number}: {e}")
+            return Response(
+                {'error': f"Failed to get build logs: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+
+    @action(detail=True, methods=['get'], url_path='jenkins/build-info')
+    def jenkins_build_info(self, request, pk=None):
+        """获取Jenkins构建详细信息"""
+        job_name = request.query_params.get('job_name')
+        build_number = request.query_params.get('build_number')
+        
+        if not job_name or not build_number:
+            return Response(
+                {'error': 'job_name and build_number parameters are required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        tool = self.get_object()
+        try:
+            auth = HTTPBasicAuth(tool.username, tool.token)
+            
+            # 获取构建详细信息
+            url = f"{tool.base_url}/job/{job_name}/{build_number}/api/json"
+            response = requests.get(url, auth=auth, timeout=10, verify=False)
+            
+            if response.status_code == 200:
+                data = response.json()
+                return Response({
+                    'tool_id': tool.id,
+                    'job_name': job_name,
+                    'build_number': build_number,
+                    'build_info': {
+                        'number': data.get('number'),
+                        'url': data.get('url'),
+                        'timestamp': data.get('timestamp', 0),
+                        'result': data.get('result'),
+                        'duration': data.get('duration', 0),
+                        'description': data.get('description', ''),
+                        'estimatedDuration': data.get('estimatedDuration', 0),
+                        'builtOn': data.get('builtOn', ''),
+                        'changeSet': data.get('changeSet', {}),
+                        'actions': data.get('actions', [])
+                    }
+                })
+            else:
+                return Response(
+                    {'error': f'Failed to get build info: HTTP {response.status_code}'},
+                    status=status.HTTP_500_INTERNAL_SERVER_ERROR
+                )
+                
+        except Exception as e:
+            logger.error(f"Failed to get Jenkins build info for tool {tool.id}, job {job_name}, build {build_number}: {e}")
             return Response(
                 {'error': f"Failed to get build info: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR

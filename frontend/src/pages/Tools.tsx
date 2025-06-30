@@ -92,11 +92,24 @@ const Tools: React.FC = () => {
   const handleTestConnection = async (tool: Tool) => {
     try {
       const result = await apiService.testToolConnection(tool.id!)
-      if (result.success) {
-        message.success('连接测试成功')
-      } else {
-        message.error(`连接测试失败: ${result.message}`)
+      
+      // 根据详细状态显示不同的消息
+      switch (result.detailed_status) {
+        case 'authenticated':
+          message.success(`连接测试成功: ${result.message}`)
+          break
+        case 'needs_auth':
+          message.warning(`连接测试: ${result.message}`)
+          break
+        case 'offline':
+          message.error(`连接测试失败: ${result.message}`)
+          break
+        default:
+          message.info(`连接测试: ${result.message}`)
       }
+      
+      // 重新加载工具列表以更新状态
+      loadTools()
     } catch (error) {
       console.error('Connection test failed:', error)
       message.error('连接测试失败')
@@ -106,6 +119,7 @@ const Tools: React.FC = () => {
   const handleFormSubmit = async () => {
     try {
       const values = await form.validateFields()
+      console.log('Form values:', values)
       
       // 映射字段名
       const toolData = {
@@ -113,6 +127,8 @@ const Tools: React.FC = () => {
         token: values.password // 将 password 字段映射为 token
       }
       delete toolData.password // 删除原 password 字段
+      
+      console.log('Tool data to be sent:', toolData)
       
       if (editingTool) {
         await apiService.updateTool(editingTool.id!, toolData)
@@ -131,10 +147,22 @@ const Tools: React.FC = () => {
   }
 
   const getStatusTag = (tool: Tool) => {
-    if (tool.is_active) {
-      return <Tag color="green" icon={<CheckCircleOutlined />}>活跃</Tag>
-    } else {
-      return <Tag color="red" icon={<CloseCircleOutlined />}>离线</Tag>
+    // 优先使用详细状态，如果没有则使用基本状态
+    const status = tool.detailed_status || tool.status;
+    
+    switch (status) {
+      case 'authenticated':
+        return <Tag color="green" icon={<CheckCircleOutlined />}>在线已认证</Tag>
+      case 'needs_auth':
+        return <Tag color="orange" icon={<ApiOutlined />}>在线需认证</Tag>
+      case 'offline':
+        return <Tag color="red" icon={<CloseCircleOutlined />}>离线</Tag>
+      case 'active':
+        return <Tag color="green" icon={<CheckCircleOutlined />}>活跃</Tag>
+      case 'error':
+        return <Tag color="red" icon={<CloseCircleOutlined />}>错误</Tag>
+      default:
+        return <Tag color="gray">未知</Tag>
     }
   }
 

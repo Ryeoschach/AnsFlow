@@ -1,0 +1,1 @@
+window.localStorage.setItem('authToken', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMjY2MjE5LCJpYXQiOjE3NTEyNjI2MTksImp0aSI6ImI3YWUzYzE0OTAyODQ1YTY4MTViMjY5NTcxZWM0ZjA2IiwidXNlcl9pZCI6MX0.ZQwbVpuITkFuVUpqzzKyQ6WTnRJlxztqomwe-feTwR4'); console.log('Auth token set for testing');

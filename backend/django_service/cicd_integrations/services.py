@@ -359,6 +359,53 @@ class UnifiedCICDEngine:
         except Exception as e:
             logger.error(f"Failed to get execution logs {execution_id}: {e}")
             return f"Error getting logs: {str(e)}"
+    
+    async def test_tool_connection(self, tool: CICDTool) -> Dict[str, Any]:
+        """测试工具连接"""
+        try:
+            adapter = AdapterFactory.create_adapter(
+                tool.tool_type,
+                base_url=tool.base_url,
+                username=tool.username,
+                token=tool.token,
+                **tool.config
+            )
+            
+            async with adapter:
+                is_connected = await adapter.health_check()
+                
+                if is_connected:
+                    # 更新工具状态
+                    tool.status = 'active'
+                    tool.last_health_check = timezone.now()
+                    await sync_to_async(tool.save)(update_fields=['status', 'last_health_check'])
+                    
+                    return {
+                        'success': True,
+                        'message': f'Successfully connected to {tool.tool_type} at {tool.base_url}',
+                        'status': 'online',
+                        'response_time': 'OK'
+                    }
+                else:
+                    tool.status = 'error'
+                    await sync_to_async(tool.save)(update_fields=['status'])
+                    return {
+                        'success': False,
+                        'message': f'Failed to connect to {tool.tool_type} at {tool.base_url}',
+                        'status': 'offline',
+                        'error': 'Connection failed'
+                    }
+        
+        except Exception as e:
+            logger.error(f"Connection test failed for tool {tool.name}: {e}")
+            tool.status = 'error'
+            await sync_to_async(tool.save)(update_fields=['status'])
+            return {
+                'success': False,
+                'message': f'Connection test failed: {str(e)}',
+                'status': 'error',
+                'error': str(e)
+            }
 
 
 # Celery 任务

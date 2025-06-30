@@ -18,7 +18,8 @@ import {
   StopOutlined,
   ReloadOutlined,
   EyeOutlined,
-  DownloadOutlined
+  DownloadOutlined,
+  SyncOutlined
 } from '@ant-design/icons'
 import { ColumnsType } from 'antd/es/table'
 import { Tool, JenkinsJob, JenkinsBuild } from '../../types'
@@ -72,6 +73,22 @@ const JenkinsJobDetail: React.FC<JenkinsJobDetailProps> = ({
     }
   }, [visible, tool.id, job.name])
 
+  // 自动刷新逻辑 - 当有构建进行中时
+  useEffect(() => {
+    if (!visible) return
+    
+    const hasRunningBuilds = job.color?.includes('_anime') || 
+                           builds.some(build => build.result === null)
+    
+    if (hasRunningBuilds) {
+      const interval = setInterval(() => {
+        loadBuilds()
+      }, 5000) // 每5秒刷新一次
+      
+      return () => clearInterval(interval)
+    }
+  }, [visible, job.color, builds])
+
   const loadBuilds = async () => {
     setBuildsLoading(true)
     try {
@@ -123,7 +140,7 @@ const JenkinsJobDetail: React.FC<JenkinsJobDetailProps> = ({
     }
   }
 
-  const getBuildStatusTag = (build: JenkinsBuild) => {
+  const getBuildStatusTag = (build: JenkinsBuild, jobColor?: string) => {
     switch (build.result) {
       case 'SUCCESS':
         return <Tag color="green">成功</Tag>
@@ -134,7 +151,16 @@ const JenkinsJobDetail: React.FC<JenkinsJobDetailProps> = ({
       case 'ABORTED':
         return <Tag color="default">已取消</Tag>
       case null:
-        return <Tag color="blue">进行中</Tag>
+        // 结合作业颜色判断是否真的在进行中
+        if (jobColor && jobColor.includes('_anime')) {
+          return <Tag color="blue" icon={<SyncOutlined spin />}>构建中</Tag>
+        } else if (jobColor === 'blue') {
+          return <Tag color="green">成功</Tag>
+        } else if (jobColor === 'red') {
+          return <Tag color="red">失败</Tag>
+        } else {
+          return <Tag color="orange">数据同步中</Tag>
+        }
       default:
         return <Tag color="default">未知</Tag>
     }
@@ -168,7 +194,7 @@ const JenkinsJobDetail: React.FC<JenkinsJobDetailProps> = ({
       dataIndex: 'result',
       key: 'result',
       width: 100,
-      render: (_, record: JenkinsBuild) => getBuildStatusTag(record),
+      render: (_, record: JenkinsBuild) => getBuildStatusTag(record, job.color),
     },
     {
       title: '开始时间',
@@ -250,7 +276,7 @@ const JenkinsJobDetail: React.FC<JenkinsJobDetailProps> = ({
                   {job.lastBuild ? (
                     <Space>
                       <span>#{job.lastBuild.number}</span>
-                      {getBuildStatusTag({ result: job.lastBuild.result } as JenkinsBuild)}
+                      {getBuildStatusTag({ result: job.lastBuild.result } as JenkinsBuild, job.color)}
                     </Space>
                   ) : (
                     '无构建记录'
