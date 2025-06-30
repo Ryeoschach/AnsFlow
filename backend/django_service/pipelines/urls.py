@@ -7,6 +7,7 @@ from . import views
 
 router = DefaultRouter()
 router.register(r'pipelines', views.PipelineViewSet)
+router.register(r'pipeline-mappings', views.PipelineToolMappingViewSet)
 
 urlpatterns = [
     path('', include(router.urls)),

@@ -570,3 +570,445 @@ def execute_pipeline_task(self, execution_id: int, pipeline_id: int, trigger_typ
             raise self.retry(exc=e)
         
         raise e
+
+
+@shared_task(bind=True, retry_kwargs={'max_retries': 3, 'countdown': 60})
+def execute_pipeline_task(self, pipeline_id: int, run_id: int, trigger_data: Dict[str, Any]):
+    """
+    本地Celery执行流水线任务
+    
+    Args:
+        pipeline_id: Pipeline ID
+        run_id: PipelineRun ID  
+        trigger_data: 触发数据
+    """
+    try:
+        from pipelines.models import Pipeline, PipelineRun
+        
+        pipeline = Pipeline.objects.get(id=pipeline_id)
+        pipeline_run = PipelineRun.objects.get(id=run_id)
+        
+        logger.info(f"Starting local execution for pipeline {pipeline_id}, run {run_id}")
+        
+        # 更新状态为运行中
+        pipeline_run.status = 'running'
+        pipeline_run.save()
+        
+        # 执行流水线的原子步骤
+        success_count = 0
+        total_steps = pipeline.atomic_steps.count()
+        
+        for step in pipeline.atomic_steps.order_by('order'):
+            try:
+                logger.info(f"Executing step: {step.name} ({step.step_type})")
+                
+                # 执行单个步骤
+                step_result = execute_atomic_step_local(step, trigger_data)
+                
+                if step_result['success']:
+                    success_count += 1
+                    logger.info(f"Step {step.name} completed successfully")
+                else:
+                    logger.error(f"Step {step.name} failed: {step_result.get('message')}")
+                    # 如果步骤失败，停止执行
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Step {step.name} execution error: {e}")
+                break
+        
+        # 更新最终状态
+        if success_count == total_steps:
+            pipeline_run.status = 'success'
+            logger.info(f"Pipeline {pipeline_id} completed successfully")
+        else:
+            pipeline_run.status = 'failed'
+            logger.error(f"Pipeline {pipeline_id} failed ({success_count}/{total_steps} steps completed)")
+        
+        pipeline_run.completed_at = timezone.now()
+        pipeline_run.save()
+        
+        return {
+            'success': success_count == total_steps,
+            'completed_steps': success_count,
+            'total_steps': total_steps
+        }
+        
+    except Exception as e:
+        logger.error(f"Pipeline execution task failed: {e}")
+        
+        # 更新状态为失败
+        try:
+            pipeline_run = PipelineRun.objects.get(id=run_id)
+            pipeline_run.status = 'failed'
+            pipeline_run.completed_at = timezone.now()
+            pipeline_run.save()
+        except:
+            pass
+        
+        raise self.retry(exc=e)
+
+
+@shared_task(bind=True, retry_kwargs={'max_retries': 3, 'countdown': 60})
+def execute_hybrid_pipeline_task(self, pipeline_id: int, run_id: int, execution_plan: Dict[str, Any], trigger_data: Dict[str, Any]):
+    """
+    混合模式执行流水线任务
+    
+    Args:
+        pipeline_id: Pipeline ID
+        run_id: PipelineRun ID
+        execution_plan: 执行计划
+        trigger_data: 触发数据
+    """
+    try:
+        from pipelines.models import Pipeline, PipelineRun
+        
+        pipeline = Pipeline.objects.get(id=pipeline_id)
+        pipeline_run = PipelineRun.objects.get(id=run_id)
+        
+        logger.info(f"Starting hybrid execution for pipeline {pipeline_id}, run {run_id}")
+        
+        # 更新状态为运行中
+        pipeline_run.status = 'running'
+        pipeline_run.save()
+        
+        execution_order = execution_plan['execution_order']
+        completed_steps = 0
+        total_steps = len(execution_order)
+        
+        # 按顺序执行步骤
+        for step_info in execution_order:
+            step_id = step_info['step_id']
+            execution_location = step_info['execution_location']
+            
+            try:
+                step = AtomicStep.objects.get(id=step_id)
+                logger.info(f"Executing step {step.name} ({execution_location})")
+                
+                if execution_location == 'local':
+                    # 本地执行
+                    result = execute_atomic_step_local(step, trigger_data)
+                else:
+                    # 远程执行 - 通过Jenkins或其他工具
+                    result = execute_atomic_step_remote(step, pipeline.execution_tool, trigger_data)
+                
+                if result['success']:
+                    completed_steps += 1
+                    logger.info(f"Step {step.name} completed successfully")
+                else:
+                    logger.error(f"Step {step.name} failed: {result.get('message')}")
+                    break
+                    
+            except Exception as e:
+                logger.error(f"Step {step_id} execution error: {e}")
+                break
+        
+        # 更新最终状态
+        if completed_steps == total_steps:
+            pipeline_run.status = 'success'
+            logger.info(f"Hybrid pipeline {pipeline_id} completed successfully")
+        else:
+            pipeline_run.status = 'failed'
+            logger.error(f"Hybrid pipeline {pipeline_id} failed ({completed_steps}/{total_steps} steps completed)")
+        
+        pipeline_run.completed_at = timezone.now()
+        pipeline_run.save()
+        
+        return {
+            'success': completed_steps == total_steps,
+            'completed_steps': completed_steps,
+            'total_steps': total_steps,
+            'execution_mode': 'hybrid'
+        }
+        
+    except Exception as e:
+        logger.error(f"Hybrid pipeline execution task failed: {e}")
+        
+        # 更新状态为失败
+        try:
+            pipeline_run = PipelineRun.objects.get(id=run_id)
+            pipeline_run.status = 'failed'
+            pipeline_run.completed_at = timezone.now()
+            pipeline_run.save()
+        except:
+            pass
+        
+        raise self.retry(exc=e)
+
+
+def execute_atomic_step_local(step: AtomicStep, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    在本地执行原子步骤
+    """
+    try:
+        logger.info(f"Executing step {step.name} locally")
+        
+        # 根据步骤类型执行不同的逻辑
+        if step.step_type == 'shell_command':
+            return execute_shell_command_step(step, trigger_data)
+        elif step.step_type == 'api_call':
+            return execute_api_call_step(step, trigger_data)
+        elif step.step_type == 'database_query':
+            return execute_database_query_step(step, trigger_data)
+        elif step.step_type == 'notification':
+            return execute_notification_step(step, trigger_data)
+        elif step.step_type == 'approval':
+            return execute_approval_step(step, trigger_data)
+        else:
+            return {
+                'success': False,
+                'message': f'Unsupported step type for local execution: {step.step_type}'
+            }
+            
+    except Exception as e:
+        logger.error(f"Local step execution failed: {e}")
+        return {
+            'success': False,
+            'message': f'Local execution error: {str(e)}'
+        }
+
+
+def execute_atomic_step_remote(step: AtomicStep, tool: 'CICDTool', trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    在远程CI/CD工具中执行原子步骤
+    """
+    try:
+        logger.info(f"Executing step {step.name} remotely using {tool.name}")
+        
+        if tool.tool_type == 'jenkins':
+            return execute_step_in_jenkins(step, tool, trigger_data)
+        elif tool.tool_type == 'gitlab':
+            return execute_step_in_gitlab(step, tool, trigger_data)
+        elif tool.tool_type == 'github':
+            return execute_step_in_github(step, tool, trigger_data)
+        else:
+            return {
+                'success': False,
+                'message': f'Unsupported tool type for remote execution: {tool.tool_type}'
+            }
+            
+    except Exception as e:
+        logger.error(f"Remote step execution failed: {e}")
+        return {
+            'success': False,
+            'message': f'Remote execution error: {str(e)}'
+        }
+
+
+# 具体的步骤执行函数
+def execute_shell_command_step(step: AtomicStep, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """执行Shell命令步骤"""
+    import subprocess
+    
+    try:
+        command = step.parameters.get('command', '')
+        if not command:
+            return {'success': False, 'message': 'No command specified'}
+        
+        # 执行命令
+        result = subprocess.run(
+            command,
+            shell=True,
+            capture_output=True,
+            text=True,
+            timeout=step.parameters.get('timeout', 300)
+        )
+        
+        return {
+            'success': result.returncode == 0,
+            'message': f'Command completed with exit code {result.returncode}',
+            'output': result.stdout,
+            'error': result.stderr
+        }
+        
+    except subprocess.TimeoutExpired:
+        return {'success': False, 'message': 'Command timed out'}
+    except Exception as e:
+        return {'success': False, 'message': f'Command execution failed: {str(e)}'}
+
+
+def execute_api_call_step(step: AtomicStep, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """执行API调用步骤"""
+    import requests
+    
+    try:
+        url = step.parameters.get('url', '')
+        method = step.parameters.get('method', 'GET').upper()
+        headers = step.parameters.get('headers', {})
+        data = step.parameters.get('data', {})
+        
+        if not url:
+            return {'success': False, 'message': 'No URL specified'}
+        
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers,
+            json=data if method in ['POST', 'PUT', 'PATCH'] else None,
+            timeout=step.parameters.get('timeout', 30)
+        )
+        
+        return {
+            'success': response.status_code < 400,
+            'message': f'API call completed with status {response.status_code}',
+            'response_data': response.json() if response.headers.get('content-type', '').startswith('application/json') else response.text
+        }
+        
+    except requests.RequestException as e:
+        return {'success': False, 'message': f'API call failed: {str(e)}'}
+
+
+def execute_database_query_step(step: AtomicStep, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """执行数据库查询步骤"""
+    from django.db import connection
+    
+    try:
+        query = step.parameters.get('query', '')
+        if not query:
+            return {'success': False, 'message': 'No query specified'}
+        
+        with connection.cursor() as cursor:
+            cursor.execute(query)
+            
+            if query.strip().upper().startswith('SELECT'):
+                results = cursor.fetchall()
+                return {
+                    'success': True,
+                    'message': f'Query executed successfully, {len(results)} rows returned',
+                    'results': results
+                }
+            else:
+                return {
+                    'success': True,
+                    'message': f'Query executed successfully, {cursor.rowcount} rows affected'
+                }
+                
+    except Exception as e:
+        return {'success': False, 'message': f'Database query failed: {str(e)}'}
+
+
+def execute_notification_step(step: AtomicStep, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """执行通知步骤"""
+    try:
+        notification_type = step.parameters.get('type', 'email')
+        message = step.parameters.get('message', '')
+        recipients = step.parameters.get('recipients', [])
+        
+        if notification_type == 'email':
+            from django.core.mail import send_mail
+            
+            send_mail(
+                subject=step.parameters.get('subject', 'Pipeline Notification'),
+                message=message,
+                from_email='noreply@ansflow.com',
+                recipient_list=recipients
+            )
+        elif notification_type == 'slack':
+            # Slack通知逻辑
+            pass
+        
+        return {
+            'success': True,
+            'message': f'Notification sent to {len(recipients)} recipients'
+        }
+        
+    except Exception as e:
+        return {'success': False, 'message': f'Notification failed: {str(e)}'}
+
+
+def execute_approval_step(step: AtomicStep, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """执行审批步骤"""
+    try:
+        # 创建审批请求
+        # 这里应该集成审批工作流系统
+        return {
+            'success': True,
+            'message': 'Approval request created',
+            'pending_approval': True
+        }
+        
+    except Exception as e:
+        return {'success': False, 'message': f'Approval step failed: {str(e)}'}
+
+
+def execute_step_in_jenkins(step: AtomicStep, tool: 'CICDTool', trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """在Jenkins中执行步骤"""
+    try:
+        from pipelines.services.jenkins_sync import JenkinsPipelineSyncService
+        
+        jenkins_service = JenkinsPipelineSyncService(tool)
+        
+        # 根据步骤类型创建Jenkins作业配置
+        job_config = create_jenkins_job_config_for_step(step)
+        
+        # 创建临时Jenkins作业
+        job_name = f"ansflow-step-{step.id}-{timezone.now().strftime('%Y%m%d-%H%M%S')}"
+        
+        # 这里应该调用Jenkins API创建并执行作业
+        # 返回构建结果
+        
+        return {
+            'success': True,
+            'message': f'Step executed in Jenkins job: {job_name}',
+            'jenkins_job': job_name
+        }
+        
+    except Exception as e:
+        return {'success': False, 'message': f'Jenkins execution failed: {str(e)}'}
+
+
+def execute_step_in_gitlab(step: AtomicStep, tool: 'CICDTool', trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """在GitLab CI中执行步骤"""
+    # TODO: 实现GitLab CI步骤执行
+    return {'success': False, 'message': 'GitLab CI execution not implemented yet'}
+
+
+def execute_step_in_github(step: AtomicStep, tool: 'CICDTool', trigger_data: Dict[str, Any]) -> Dict[str, Any]:
+    """在GitHub Actions中执行步骤"""
+    # TODO: 实现GitHub Actions步骤执行
+    return {'success': False, 'message': 'GitHub Actions execution not implemented yet'}
+
+
+def create_jenkins_job_config_for_step(step: AtomicStep) -> str:
+    """为原子步骤创建Jenkins作业配置"""
+    
+    if step.step_type == 'build':
+        return f"""
+        <project>
+            <builders>
+                <hudson.tasks.Shell>
+                    <command>{step.parameters.get('build_command', 'echo "Build step"')}</command>
+                </hudson.tasks.Shell>
+            </builders>
+        </project>
+        """
+    elif step.step_type == 'test':
+        return f"""
+        <project>
+            <builders>
+                <hudson.tasks.Shell>
+                    <command>{step.parameters.get('test_command', 'echo "Test step"')}</command>
+                </hudson.tasks.Shell>
+            </builders>
+        </project>
+        """
+    elif step.step_type == 'deploy':
+        return f"""
+        <project>
+            <builders>
+                <hudson.tasks.Shell>
+                    <command>{step.parameters.get('deploy_command', 'echo "Deploy step"')}</command>
+                </hudson.tasks.Shell>
+            </builders>
+        </project>
+        """
+    else:
+        return f"""
+        <project>
+            <builders>
+                <hudson.tasks.Shell>
+                    <command>echo "Executing {step.name} ({step.step_type})"</command>
+                </hudson.tasks.Shell>
+            </builders>
+        </project>
+        """

@@ -25,6 +25,40 @@ class Pipeline(models.Model):
     project = models.ForeignKey('project_management.Project', on_delete=models.CASCADE, related_name='pipelines')
     created_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name='created_pipelines')
     
+    # 新增：CI/CD工具关联
+    execution_tool = models.ForeignKey(
+        'cicd_integrations.CICDTool', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        related_name='pipelines',
+        help_text="执行此流水线的CI/CD工具"
+    )
+    
+    # 新增：工具特定配置
+    tool_job_name = models.CharField(
+        max_length=255, 
+        blank=True,
+        help_text="在CI/CD工具中对应的作业名称"
+    )
+    
+    tool_job_config = models.JSONField(
+        default=dict,
+        help_text="工具特定的作业配置"
+    )
+    
+    # 新增：执行模式
+    EXECUTION_MODES = [
+        ('local', 'Local Execution'),      # 本地Celery执行
+        ('remote', 'Remote Tool'),         # 远程CI/CD工具执行
+        ('hybrid', 'Hybrid'),              # 混合模式
+    ]
+    execution_mode = models.CharField(
+        max_length=20, 
+        choices=EXECUTION_MODES, 
+        default='local'
+    )
+    
     # Metadata
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -107,3 +141,49 @@ class PipelineRun(models.Model):
         
     def __str__(self):
         return f"{self.pipeline.name} - Run #{self.run_number}"
+
+
+class PipelineToolMapping(models.Model):
+    """流水线与工具作业的映射关系"""
+    
+    pipeline = models.OneToOneField(
+        Pipeline, 
+        on_delete=models.CASCADE,
+        related_name='tool_mapping'
+    )
+    
+    tool = models.ForeignKey(
+        'cicd_integrations.CICDTool',
+        on_delete=models.CASCADE,
+        related_name='pipeline_mappings'
+    )
+    
+    # 工具特定标识
+    external_job_id = models.CharField(
+        max_length=255,
+        help_text="在外部工具中的作业ID"
+    )
+    external_job_name = models.CharField(
+        max_length=255,
+        help_text="在外部工具中的作业名称"
+    )
+    
+    # 同步配置
+    auto_sync = models.BooleanField(
+        default=True,
+        help_text="是否自动同步状态"
+    )
+    
+    last_sync_at = models.DateTimeField(null=True, blank=True)
+    sync_status = models.CharField(max_length=50, default='pending')
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Pipeline Tool Mapping"
+        verbose_name_plural = "Pipeline Tool Mappings"
+        unique_together = ['pipeline', 'tool']
+        
+    def __str__(self):
+        return f"{self.pipeline.name} → {self.tool.name} ({self.external_job_name})"

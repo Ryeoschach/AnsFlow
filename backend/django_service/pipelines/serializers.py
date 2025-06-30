@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Pipeline, PipelineStep, PipelineRun
+from .models import Pipeline, PipelineStep, PipelineRun, PipelineToolMapping
 from cicd_integrations.models import AtomicStep
 
 
@@ -42,12 +42,19 @@ class PipelineSerializer(serializers.ModelSerializer):
     project_name = serializers.CharField(source='project.name', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
     
+    # 新增：工具关联字段
+    execution_tool_name = serializers.CharField(source='execution_tool.name', read_only=True)
+    execution_tool_type = serializers.CharField(source='execution_tool.tool_type', read_only=True)
+    
     class Meta:
         model = Pipeline
         fields = [
             'id', 'name', 'description', 'status', 'is_active', 'config',
             'project', 'project_name', 'created_by', 'created_by_username',
             'created_at', 'updated_at', 'started_at', 'completed_at',
+            # 新增字段
+            'execution_tool', 'execution_tool_name', 'execution_tool_type',
+            'tool_job_name', 'tool_job_config', 'execution_mode',
             'steps', 'runs'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at', 'started_at', 'completed_at']
@@ -96,3 +103,20 @@ class PipelineListSerializer(serializers.ModelSerializer):
             'project', 'project_name', 'created_by_username',
             'created_at', 'updated_at', 'steps_count', 'runs_count'
         ]
+
+
+class PipelineToolMappingSerializer(serializers.ModelSerializer):
+    """流水线与工具映射序列化器"""
+    
+    pipeline_name = serializers.CharField(source='pipeline.name', read_only=True)
+    tool_name = serializers.CharField(source='tool.name', read_only=True)
+    tool_type = serializers.CharField(source='tool.tool_type', read_only=True)
+    
+    class Meta:
+        model = PipelineToolMapping
+        fields = [
+            'id', 'pipeline', 'pipeline_name', 'tool', 'tool_name', 'tool_type',
+            'external_job_id', 'external_job_name', 'auto_sync', 'last_sync_at',
+            'sync_status', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'last_sync_at', 'created_at', 'updated_at']

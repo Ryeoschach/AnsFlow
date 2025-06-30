@@ -4,7 +4,7 @@ import {
   JenkinsJob, JenkinsBuild, User,
   CreatePipelineRequest, UpdatePipelineRequest,
   CreateExecutionRequest, UpdateExecutionRequest,
-  AtomicStep
+  AtomicStep, PipelineRun, PipelineToolMapping
 } from '../types'
 
 class ApiService {
@@ -339,6 +339,62 @@ class ApiService {
 
   async cancelJenkinsQueueItem(toolId: number, queueId: number): Promise<void> {
     await this.api.delete(`/cicd/tools/${toolId}/jenkins/queue/${queueId}/`)
+  }
+
+  // 新增：流水线工具同步相关方法
+  async syncPipelineToTool(pipelineId: number, toolId: number): Promise<{
+    success: boolean
+    message: string
+    external_job_id?: string
+    external_job_name?: string
+  }> {
+    const response = await this.api.post(`/pipelines/pipelines/${pipelineId}/sync_to_tool/`, {
+      tool_id: toolId
+    })
+    return response.data
+  }
+
+  async getPipelineToolMappings(pipelineId: number): Promise<PipelineToolMapping[]> {
+    const response = await this.api.get(`/pipelines/pipelines/${pipelineId}/tool_mappings/`)
+    return response.data
+  }
+
+  async triggerExternalBuild(pipelineId: number, toolId: number, parameters: Record<string, any> = {}): Promise<{
+    success: boolean
+    message: string
+    build_number?: number
+    build_url?: string
+  }> {
+    const response = await this.api.post(`/pipelines/pipelines/${pipelineId}/trigger_external_build/`, {
+      tool_id: toolId,
+      parameters
+    })
+    return response.data
+  }
+
+  async runPipeline(pipelineId: number): Promise<PipelineRun> {
+    const response = await this.api.post(`/pipelines/pipelines/${pipelineId}/run/`)
+    return response.data
+  }
+
+  // 流水线工具映射管理
+  async getAllPipelineToolMappings(params?: { pipeline?: number, tool?: number }): Promise<PipelineToolMapping[]> {
+    const response = await this.api.get('/pipelines/pipeline-mappings/', { params })
+    return response.data.results || response.data
+  }
+
+  async createPipelineToolMapping(mapping: Partial<PipelineToolMapping>): Promise<PipelineToolMapping> {
+    const response = await this.api.post('/pipelines/pipeline-mappings/', mapping)
+    return response.data
+  }
+
+  async updatePipelineToolMapping(id: number, mapping: Partial<PipelineToolMapping>): Promise<PipelineToolMapping> {
+    const response = await this.api.put(`/pipelines/pipeline-mappings/${id}/`, mapping)
+    return response.data
+  }
+
+  async deletePipelineToolMapping(id: number): Promise<void> {
+    await this.api.delete(`/pipelines/pipeline-mappings/${id}/`)
   }
 }
 

@@ -61,30 +61,75 @@ export interface CICDTool {
 // Tool 类型别名，用于兼容
 export type Tool = CICDTool
 
+// 流水线运行记录类型
+export interface PipelineRun {
+  id: number
+  run_number: number
+  status: string
+  triggered_by: number
+  trigger_type: string
+  trigger_data: Record<string, any>
+  started_at?: string
+  completed_at?: string
+  created_at: string
+  artifacts: any[]
+}
+
 // 流水线类型
 export interface Pipeline {
   id: number
   name: string
   description: string
-  tool?: number
-  tool_name?: string
-  tool_type?: string
-  steps?: AtomicStep[]  // 详情API返回
-  steps_count?: number  // 列表API返回
+  status: string
   is_active: boolean
-  metadata?: Record<string, any>
-  created_at: string
-  updated_at: string
+  config?: Record<string, any>
+  
+  // 项目关联
   project: number
   project_name?: string
   created_by?: number
   created_by_username?: string
-  status?: string
-  runs?: any[]
+  
+  // 新增：CI/CD工具关联
+  execution_tool?: number
+  execution_tool_name?: string
+  execution_tool_type?: string
+  tool_job_name?: string
+  tool_job_config?: Record<string, any>
+  execution_mode?: 'local' | 'remote' | 'hybrid'
+  
+  // 兼容字段
+  tool?: number
+  tool_name?: string
+  tool_type?: string
+  
+  steps?: AtomicStep[]  // 详情API返回
+  steps_count?: number  // 列表API返回
+  runs?: PipelineRun[]  // 运行历史
   runs_count?: number
-  started_at?: string | null
-  completed_at?: string | null
-  config?: Record<string, any>
+  
+  metadata?: Record<string, any>
+  created_at: string
+  updated_at: string
+  started_at?: string
+  completed_at?: string
+}
+
+// 流水线工具映射类型
+export interface PipelineToolMapping {
+  id: number
+  pipeline: number
+  pipeline_name?: string
+  tool: number
+  tool_name?: string
+  tool_type?: string
+  external_job_id: string
+  external_job_name: string
+  auto_sync: boolean
+  last_sync_at?: string
+  sync_status: string
+  created_at: string
+  updated_at: string
 }
 
 // 原子步骤类型

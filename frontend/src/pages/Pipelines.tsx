@@ -106,7 +106,10 @@ const Pipelines: React.FC = () => {
       name: pipeline.name,
       description: pipeline.description,
       project: pipeline.project,
-      is_active: pipeline.is_active
+      is_active: pipeline.is_active,
+      execution_mode: pipeline.execution_mode || 'local',
+      execution_tool: pipeline.execution_tool,
+      tool_job_name: pipeline.tool_job_name
     })
     setFormVisible(true)
   }
@@ -250,6 +253,20 @@ const Pipelines: React.FC = () => {
       render: (_, record: Pipeline) => (
         <span>{record.steps_count ?? record.steps?.length ?? 0}</span>
       ),
+    },
+    {
+      title: 'CI/CD工具',
+      key: 'execution_tool',
+      render: (_, record: Pipeline) => {
+        if (record.execution_tool_name) {
+          return (
+            <Tag color={record.execution_tool_type === 'jenkins' ? 'blue' : 'default'}>
+              {record.execution_tool_name}
+            </Tag>
+          )
+        }
+        return <span style={{ color: '#999' }}>本地执行</span>
+      },
     },
     {
       title: '状态',
@@ -443,6 +460,58 @@ const Pipelines: React.FC = () => {
           </Form.Item>
 
           <Form.Item
+            name="execution_mode"
+            label="执行模式"
+            initialValue="local"
+          >
+            <Select placeholder="选择执行模式">
+              <Option value="local">
+                <div>
+                  <div>本地执行</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>使用本地Celery执行所有步骤</div>
+                </div>
+              </Option>
+              <Option value="remote">
+                <div>
+                  <div>远程工具</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>在CI/CD工具中执行</div>
+                </div>
+              </Option>
+              <Option value="hybrid">
+                <div>
+                  <div>混合模式</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>部分本地、部分远程执行</div>
+                </div>
+              </Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="execution_tool"
+            label="执行工具"
+            tooltip="选择用于远程或混合模式执行的CI/CD工具"
+          >
+            <Select placeholder="选择CI/CD工具（可选）" allowClear>
+              {tools.map(tool => (
+                <Option key={tool.id} value={tool.id}>
+                  <div>
+                    <div>{tool.name}</div>
+                    <div style={{ fontSize: 12, color: '#999' }}>{tool.tool_type} - {tool.base_url}</div>
+                  </div>
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="tool_job_name"
+            label="工具作业名称"
+            tooltip="在CI/CD工具中的作业名称"
+          >
+            <Input placeholder="输入工具中的作业名称（可选）" />
+          </Form.Item>
+
+          <Form.Item
             name="is_active"
             label="状态"
             initialValue={true}
@@ -474,9 +543,27 @@ const Pipelines: React.FC = () => {
                 </Card>
               </Col>
               <Col span={12}>
-                <Card size="small" title="统计信息">
+                <Card size="small" title="执行配置">
                   <p><strong>步骤数:</strong> {selectedPipeline.steps_count ?? selectedPipeline.steps?.length ?? 0}</p>
                   <p><strong>项目ID:</strong> {selectedPipeline.project}</p>
+                  <p><strong>执行模式:</strong> 
+                    <Tag color={selectedPipeline.execution_mode === 'remote' ? 'green' : 'blue'}>
+                      {selectedPipeline.execution_mode === 'remote' ? '远程工具' : 
+                       selectedPipeline.execution_mode === 'hybrid' ? '混合模式' : '本地执行'}
+                    </Tag>
+                  </p>
+                  {selectedPipeline.execution_tool_name && (
+                    <>
+                      <p><strong>CI/CD工具:</strong> 
+                        <Tag color={selectedPipeline.execution_tool_type === 'jenkins' ? 'blue' : 'default'}>
+                          {selectedPipeline.execution_tool_name}
+                        </Tag>
+                      </p>
+                      {selectedPipeline.tool_job_name && (
+                        <p><strong>作业名称:</strong> {selectedPipeline.tool_job_name}</p>
+                      )}
+                    </>
+                  )}
                 </Card>
               </Col>
             </Row>
