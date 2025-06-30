@@ -10,7 +10,7 @@ import logging
 
 from ..models import CICDTool
 from ..serializers import (
-    CICDToolSerializer, CICDToolCreateSerializer,
+    CICDToolSerializer, CICDToolUpdateSerializer,
     PipelineExecutionCreateSerializer, PipelineExecutionSerializer
 )
 from ..services import cicd_engine
@@ -35,7 +35,9 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
     
     def get_serializer_class(self):
         if self.action == 'create':
-            return CICDToolCreateSerializer
+            return CICDToolSerializer
+        elif self.action in ['update', 'partial_update']:
+            return CICDToolUpdateSerializer
         return CICDToolSerializer
     
     def get_queryset(self):
@@ -103,23 +105,32 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
                         verify=False
                     )
                     
-                    # Jenkins响应说明：
+                    # Jenkins响应分析：
                     # 200: 认证成功，服务健康
-                    # 403: 服务正常运行但需要认证
-                    # 401: 认证失败但服务正常运行  
+                    # 401: 认证失败，需要正确的认证信息
+                    # 403: 认证失败或权限不足
                     # 其他: 服务不可用
-                    is_healthy = response.status_code in [200, 401, 403]
                     
                     if response.status_code == 200:
                         tool.status = 'authenticated'  # 在线已认证
+                        is_healthy = True
                         message = 'Jenkins service is healthy and authenticated'
                         detailed_status = 'authenticated'
                     elif response.status_code in [401, 403]:
-                        tool.status = 'needs_auth'  # 在线需认证
-                        message = f'Jenkins service is running but requires authentication (HTTP {response.status_code})'
-                        detailed_status = 'needs_auth'
+                        # 如果提供了认证信息但仍然401/403，说明认证失败
+                        if tool.username and tool.token:
+                            tool.status = 'needs_auth'  # 认证失败
+                            is_healthy = False
+                            message = f'Authentication failed - please check credentials (HTTP {response.status_code})'
+                            detailed_status = 'needs_auth'
+                        else:
+                            tool.status = 'needs_auth'  # 需要认证
+                            is_healthy = True  # 服务在线，只是需要认证
+                            message = f'Jenkins service is running but requires authentication (HTTP {response.status_code})'
+                            detailed_status = 'needs_auth'
                     else:
                         tool.status = 'offline'  # 离线
+                        is_healthy = False
                         message = f'Jenkins service is not responding correctly (HTTP {response.status_code})'
                         detailed_status = 'offline'
                     

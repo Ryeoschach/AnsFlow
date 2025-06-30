@@ -384,3 +384,27 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
                 {'error': f"Failed to get execution timeline: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+    
+    def create(self, request, *args, **kwargs):
+        """创建流水线执行 - 添加调试日志"""
+        logger.warning(f"[DEBUG] PipelineExecutionViewSet.create called")
+        logger.warning(f"[DEBUG] Request method: {request.method}")
+        logger.warning(f"[DEBUG] Request path: {request.path}")
+        logger.warning(f"[DEBUG] Request data: {request.data}")
+        logger.warning(f"[DEBUG] User: {request.user}")
+        
+        # 检查是否是误调用
+        if not request.data.get('pipeline_id') or not request.data.get('cicd_tool_id'):
+            logger.error(f"[DEBUG] Missing required fields in execution create request!")
+            logger.error(f"[DEBUG] This might be a misdirected pipeline edit request")
+        
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """更新流水线执行 - 添加调试日志"""
+        logger.warning(f"[DEBUG] PipelineExecutionViewSet.update called")
+        logger.warning(f"[DEBUG] Request method: {request.method}")
+        logger.warning(f"[DEBUG] Request path: {request.path}")
+        logger.warning(f"[DEBUG] Request data: {request.data}")
+        
+        return super().update(request, *args, **kwargs)

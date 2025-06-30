@@ -45,7 +45,8 @@ export interface CICDTool {
   tool_type: 'jenkins' | 'gitlab' | 'github' | 'azure_devops'
   base_url: string
   username: string
-  token: string
+  token?: string  // 前端不会收到实际token值
+  has_token?: boolean  // 新增：指示是否已设置token
   config: Record<string, any>
   metadata: Record<string, any>
   status: string  // 数据库状态字段

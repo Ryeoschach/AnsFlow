@@ -5,6 +5,7 @@
 .PHONY: db-init db-migrate db-seed db-backup db-restore
 .PHONY: test test-backend test-frontend lint format
 .PHONY: build prod-deploy prod-logs prod-backup superuser
+.PHONY: check verify health
 
 # 默认目标
 .DEFAULT_GOAL := help
@@ -196,3 +197,39 @@ monitor: ## 打开监控面板
 	@echo "Grafana: http://localhost:3001 (admin/admin123)"
 	@echo "Prometheus: http://localhost:9090"
 	@echo "RabbitMQ: http://localhost:15672 (ansflow/ansflow_rabbitmq_123)"
+
+# ===========================================
+# 系统检查和验证
+# ===========================================
+
+check: ## 运行完整系统状态检查
+	@echo "$(YELLOW)🔍 运行完整系统状态检查...$(RESET)"
+	@if [ -x "./scripts/check_system_status.sh" ]; then \
+		./scripts/check_system_status.sh; \
+	else \
+		echo "$(RED)❌ 系统检查脚本不存在或无执行权限$(RESET)"; \
+		echo "请运行: chmod +x scripts/check_system_status.sh"; \
+	fi
+
+verify: ## 运行核心功能快速验证
+	@echo "$(YELLOW)🧪 运行核心功能快速验证...$(RESET)"
+	@if command -v python3 >/dev/null 2>&1; then \
+		python3 scripts/quick_verify.py; \
+	elif command -v python >/dev/null 2>&1; then \
+		python scripts/quick_verify.py; \
+	else \
+		echo "$(RED)❌ Python 未安装$(RESET)"; \
+	fi
+
+health: ## 快速健康检查
+	@echo "$(BLUE)💓 AnsFlow 健康检查:$(RESET)"
+	@echo "🔍 检查容器状态..."
+	@docker-compose ps
+	@echo ""
+	@echo "🔍 检查服务可用性..."
+	@echo -n "前端服务 (3000): "; curl -s -o /dev/null -w "%{http_code}" http://localhost:3000 || echo "无法连接"
+	@echo -n "Django服务 (8000): "; curl -s -o /dev/null -w "%{http_code}" http://localhost:8000 || echo "无法连接"
+	@echo -n "FastAPI服务 (8001): "; curl -s -o /dev/null -w "%{http_code}" http://localhost:8001 || echo "无法连接"
+
+dev-start: dev-up check ## 启动开发环境并进行系统检查
+	@echo "$(GREEN)🎉 开发环境启动完成，系统检查已完成！$(RESET)"

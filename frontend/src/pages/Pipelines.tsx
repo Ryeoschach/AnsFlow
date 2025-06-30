@@ -193,6 +193,18 @@ const Pipelines: React.FC = () => {
     try {
       // 重新加载流水线列表以获取最新数据
       await loadPipelines()
+      
+      // 如果当前有选中的流水线且是相同的流水线，则更新选中状态
+      if (selectedPipeline && selectedPipeline.id === pipeline.id) {
+        try {
+          // 重新获取最新的流水线详情
+          const updatedPipeline = await apiService.getPipeline(pipeline.id)
+          setSelectedPipeline(updatedPipeline)
+        } catch (error) {
+          console.error('Failed to reload pipeline details:', error)
+        }
+      }
+      
       message.success('流水线保存成功')
     } catch (error) {
       console.error('Failed to reload pipelines:', error)
@@ -200,8 +212,7 @@ const Pipelines: React.FC = () => {
     } finally {
       // 关闭编辑器
       setEditorVisible(false)
-      // 清理选中状态
-      setSelectedPipeline(null)
+      // 不要清理选中状态，让用户继续查看更新后的详情
     }
   }
 

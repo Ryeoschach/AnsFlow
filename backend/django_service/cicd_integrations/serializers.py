@@ -14,6 +14,11 @@ class CICDToolSerializer(serializers.ModelSerializer):
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     is_active = serializers.SerializerMethodField()
     detailed_status = serializers.SerializerMethodField()
+    # 添加一个只读的token状态字段，用于前端判断是否已设置token
+    has_token = serializers.SerializerMethodField()
+    
+    # token字段在创建时也是可选的
+    token = serializers.CharField(required=False, allow_blank=True, help_text="密码或访问令牌，可选")
     
     def get_is_active(self, obj):
         """根据状态确定是否活跃"""
@@ -23,12 +28,16 @@ class CICDToolSerializer(serializers.ModelSerializer):
         """返回详细状态信息"""
         return obj.status
     
+    def get_has_token(self, obj):
+        """返回是否已设置token"""
+        return bool(obj.token)
+    
     class Meta:
         model = CICDTool
         fields = [
-            'id', 'name', 'tool_type', 'tool_type_display', 'base_url',
-            'username', 'config', 'metadata', 'status', 'status_display',
-            'is_active', 'detailed_status', 'last_health_check', 'project', 'project_name',
+            'id', 'name', 'tool_type', 'tool_type_display', 'base_url', 'description',
+            'username', 'token', 'config', 'metadata', 'status', 'status_display',
+            'is_active', 'detailed_status', 'has_token', 'last_health_check', 'project', 'project_name',
             'created_by', 'created_by_username', 'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -43,31 +52,52 @@ class CICDToolSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
-class CICDToolCreateSerializer(serializers.ModelSerializer):
-    """CI/CD 工具创建序列化器"""
+class CICDToolUpdateSerializer(serializers.ModelSerializer):
+    """CI/CD 工具更新序列化器"""
+    
+    # token字段在更新时是可选的，如果不提供则保持原值
+    token = serializers.CharField(required=False, allow_blank=True, help_text="如果不修改则留空")
     
     class Meta:
         model = CICDTool
         fields = [
-            'name', 'tool_type', 'base_url', 'username', 'token',
-            'config', 'metadata', 'project'
+            'name', 'tool_type', 'base_url', 'description', 'username', 'token',
+            'config', 'metadata'
         ]
     
-    def validate(self, data):
-        # 添加调试日志
-        import logging
-        logger = logging.getLogger(__name__)
-        logger.info(f"CICDToolCreateSerializer validating data: {data}")
-        logger.info(f"Project field: {data.get('project')}")
+    def update(self, instance, validated_data):
+        # 如果token字段为空或未提供，则不更新token
+        token = validated_data.get('token')
+        token_updated = False
         
-        # 验证同一项目下工具名称唯一
-        if CICDTool.objects.filter(
-            project=data['project'],
-            name=data['name']
-        ).exists():
-            raise serializers.ValidationError(
-                "A tool with this name already exists in the project."
-            )
+        if not token:
+            validated_data.pop('token', None)
+        else:
+            # 检查token是否真的发生了变化
+            token_updated = token != instance.token
+        
+        # 执行更新
+        instance = super().update(instance, validated_data)
+        
+        # 如果token被更新了，重置状态为待检查
+        if token_updated:
+            instance.status = 'inactive'  # 重置状态，等待健康检查
+            instance.save(update_fields=['status'])
+        
+        return instance
+    
+    def validate(self, data):
+        # 验证同一项目下工具名称唯一（排除当前实例）
+        if 'name' in data:
+            existing_tool = CICDTool.objects.filter(
+                project=self.instance.project,
+                name=data['name']
+            ).exclude(id=self.instance.id)
+            
+            if existing_tool.exists():
+                raise serializers.ValidationError(
+                    "A tool with this name already exists in the project."
+                )
         return data
 
 

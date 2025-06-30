@@ -37,7 +37,7 @@ class PipelineRunSerializer(serializers.ModelSerializer):
 
 
 class PipelineSerializer(serializers.ModelSerializer):
-    steps = AtomicStepInPipelineSerializer(source='atomic_steps', many=True, read_only=False)
+    steps = AtomicStepInPipelineSerializer(source='atomic_steps', many=True, required=False)
     runs = PipelineRunSerializer(many=True, read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
@@ -96,12 +96,19 @@ class PipelineListSerializer(serializers.ModelSerializer):
     steps_count = serializers.IntegerField(source='atomic_steps.count', read_only=True)
     runs_count = serializers.IntegerField(source='runs.count', read_only=True)
     
+    # 新增：执行模式相关字段
+    execution_tool_name = serializers.CharField(source='execution_tool.name', read_only=True)
+    execution_tool_type = serializers.CharField(source='execution_tool.tool_type', read_only=True)
+    
     class Meta:
         model = Pipeline
         fields = [
             'id', 'name', 'description', 'status', 'is_active',
             'project', 'project_name', 'created_by_username',
-            'created_at', 'updated_at', 'steps_count', 'runs_count'
+            'created_at', 'updated_at', 'steps_count', 'runs_count',
+            # 新增：执行模式相关字段
+            'execution_mode', 'execution_tool', 'execution_tool_name', 
+            'execution_tool_type', 'tool_job_name'
         ]
 
 

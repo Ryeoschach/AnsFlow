@@ -19,6 +19,7 @@ import {
   DeleteOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
+  ExclamationCircleOutlined,
   ReloadOutlined,
   ApiOutlined
 } from '@ant-design/icons'
@@ -62,7 +63,14 @@ const Tools: React.FC = () => {
 
   const handleEditTool = (tool: Tool) => {
     setEditingTool(tool)
-    form.setFieldsValue(tool)
+    
+    // 设置表单值，添加空的password字段用于编辑
+    const formValues = {
+      ...tool,
+      password: '' // 密码字段总是为空，用户需要重新输入
+    }
+    
+    form.setFieldsValue(formValues)
     setFormVisible(true)
   }
 
@@ -128,11 +136,28 @@ const Tools: React.FC = () => {
       }
       delete toolData.password // 删除原 password 字段
       
+      // 如果是编辑模式且password为空，则不发送token字段
+      if (editingTool && !values.password) {
+        delete toolData.token
+      }
+      
       console.log('Tool data to be sent:', toolData)
       
       if (editingTool) {
         await apiService.updateTool(editingTool.id!, toolData)
         message.success('工具更新成功')
+        
+        // 如果更新了密码，自动进行健康检查
+        if (values.password) {
+          try {
+            message.info('正在验证新的认证信息...')
+            await apiService.testToolConnection(editingTool.id!)
+            message.success('认证信息验证成功')
+          } catch (error) {
+            console.error('Auto health check failed:', error)
+            message.warning('工具已更新，但认证验证失败，请手动测试连接')
+          }
+        }
       } else {
         await apiService.createTool(toolData)
         message.success('工具创建成功')
@@ -210,6 +235,15 @@ const Tools: React.FC = () => {
       dataIndex: 'is_active',
       key: 'is_active',
       render: (_, record: Tool) => getStatusTag(record),
+    },
+    {
+      title: '认证状态',
+      key: 'auth_status',
+      render: (_, record: Tool) => (
+        record.has_token ? 
+        <Tag color="green" icon={<CheckCircleOutlined />}>已配置</Tag> : 
+        <Tag color="red" icon={<ExclamationCircleOutlined />}>未配置</Tag>
+      ),
     },
     {
       title: '操作',
@@ -364,9 +398,19 @@ const Tools: React.FC = () => {
           <Form.Item
             name="password"
             label="密码/Token"
-            rules={[{ required: true, message: '请输入密码或访问令牌' }]}
+            rules={[
+              { 
+                required: !editingTool, // 创建时必填，编辑时可选
+                message: editingTool ? '' : '请输入密码或访问令牌' 
+              }
+            ]}
+            extra={editingTool ? "留空表示不修改当前密码/Token" : ""}
           >
-            <Input.Password placeholder="输入密码或访问令牌" />
+            <Input.Password placeholder={
+              editingTool 
+                ? "留空保持不变，输入新值进行修改" 
+                : "输入密码或访问令牌"
+            } />
           </Form.Item>
 
           <Form.Item

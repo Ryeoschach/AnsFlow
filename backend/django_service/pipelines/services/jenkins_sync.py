@@ -426,3 +426,331 @@ class JenkinsPipelineSyncService:
                 'success': False,
                 'error': str(e)
             }
+    
+    def _parse_jenkins_config_to_pipeline(self, jenkins_config: str, job_name: str) -> Dict[str, Any]:
+        """解析Jenkins配置XML并转换为Pipeline数据"""
+        import xml.etree.ElementTree as ET
+        from pipelines.models import AtomicStep
+        
+        try:
+            # 解析XML配置
+            root = ET.fromstring(jenkins_config)
+            
+            # 提取基本信息
+            description_elem = root.find('description')
+            description = description_elem.text if description_elem is not None else f"Imported from Jenkins job: {job_name}"
+            
+            # 提取Pipeline脚本
+            script_elem = root.find('.//script')
+            script_content = script_elem.text if script_elem is not None else ""
+            
+            # 生成Pipeline名称
+            pipeline_name = job_name.replace('_', ' ').title()
+            if pipeline_name.startswith('Ansflow '):
+                pipeline_name = pipeline_name[8:]  # 移除 "Ansflow " 前缀
+            
+            # 基本Pipeline数据
+            pipeline_data = {
+                'name': pipeline_name,
+                'description': description,
+                'project': self.tool.project,
+                'created_by': None,  # 需要在调用时设置
+                'execution_tool': self.tool,
+                'tool_job_name': job_name,
+                'execution_mode': 'remote',
+                'trigger_type': 'manual',
+                'status': 'pending'
+            }
+            
+            return pipeline_data
+            
+        except ET.ParseError as e:
+            logger.error(f"Failed to parse Jenkins XML config: {e}")
+            # 返回基本的Pipeline数据
+            return {
+                'name': job_name.replace('_', ' ').title(),
+                'description': f"Imported from Jenkins job: {job_name} (parsing failed)",
+                'project': self.tool.project,
+                'created_by': None,
+                'execution_tool': self.tool,
+                'tool_job_name': job_name,
+                'execution_mode': 'remote',
+                'trigger_type': 'manual',
+                'status': 'pending'
+            }
+        except Exception as e:
+            logger.error(f"Exception parsing Jenkins config: {e}")
+            raise
+    
+    def _parse_jenkins_script_to_steps(self, script_content: str) -> list:
+        """解析Jenkins Pipeline脚本并提取步骤（可选的高级功能）"""
+        steps = []
+        
+        try:
+            # 简单的脚本解析 - 查找常见的步骤模式
+            lines = script_content.split('\\n') if '\\n' in script_content else script_content.split('\n')
+            
+            current_stage = None
+            step_order = 1
+            
+            for line in lines:
+                line = line.strip()
+                
+                # 检测stage定义
+                if line.startswith("stage("):
+                    # 提取stage名称
+                    import re
+                    match = re.search(r"stage\(['\"](.*?)['\"]\)", line)
+                    if match:
+                        current_stage = match.group(1)
+                
+                # 检测各种步骤类型
+                elif line.startswith("sh "):
+                    # Shell命令步骤
+                    command = self._extract_shell_command(line)
+                    if command and current_stage:
+                        steps.append({
+                            'name': current_stage,
+                            'step_type': 'shell_command',
+                            'description': f'Execute: {command[:50]}...' if len(command) > 50 else f'Execute: {command}',
+                            'parameters': {'command': command},
+                            'order': step_order
+                        })
+                        step_order += 1
+                
+                elif line.startswith("git "):
+                    # Git步骤
+                    git_params = self._extract_git_params(line)
+                    if git_params and current_stage:
+                        steps.append({
+                            'name': f"{current_stage} - Git Clone",
+                            'step_type': 'git_clone',
+                            'description': f'Clone repository: {git_params.get("url", "unknown")}',
+                            'parameters': git_params,
+                            'order': step_order
+                        })
+                        step_order += 1
+                
+                elif "archiveArtifacts" in line:
+                    # 归档构件步骤
+                    artifacts = self._extract_archive_artifacts(line)
+                    if artifacts and current_stage:
+                        steps.append({
+                            'name': f"{current_stage} - Archive Artifacts",
+                            'step_type': 'artifact_upload',
+                            'description': f'Archive artifacts: {artifacts}',
+                            'parameters': {'artifacts': artifacts},
+                            'order': step_order
+                        })
+                        step_order += 1
+        
+        except Exception as e:
+            logger.warning(f"Failed to parse Jenkins script steps: {e}")
+        
+        return steps
+    
+    def _extract_shell_command(self, line: str) -> str:
+        """从Jenkins脚本行中提取shell命令"""
+        import re
+        # 匹配 sh 'command' 或 sh "command" 格式
+        match = re.search(r"sh\s+['\"](.+?)['\"]", line)
+        return match.group(1) if match else ""
+    
+    def _extract_git_params(self, line: str) -> Dict[str, str]:
+        """从Jenkins脚本行中提取git参数"""
+        import re
+        params = {}
+        
+        # 提取URL
+        url_match = re.search(r"url:\s*['\"](.+?)['\"]", line)
+        if url_match:
+            params['repository_url'] = url_match.group(1)
+        
+        # 提取分支
+        branch_match = re.search(r"branch:\s*['\"](.+?)['\"]", line)
+        if branch_match:
+            params['branch'] = branch_match.group(1)
+        else:
+            params['branch'] = 'main'  # 默认分支
+        
+        return params
+    
+    def _extract_archive_artifacts(self, line: str) -> str:
+        """从Jenkins脚本行中提取归档构件路径"""
+        import re
+        # 匹配 archiveArtifacts artifacts: 'pattern' 格式
+        match = re.search(r"artifacts:\s*['\"](.+?)['\"]", line)
+        return match.group(1) if match else "**/*"
+    
+    def get_jenkins_jobs_list(self) -> Dict[str, Any]:
+        """获取Jenkins中的作业列表"""
+        try:
+            url = f"{self.base_url}/api/json?tree=jobs[name,url,description,buildable]"
+            
+            response = requests.get(
+                url,
+                auth=self.auth,
+                timeout=30,
+                verify=False
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                jobs = []
+                
+                for job in data.get('jobs', []):
+                    jobs.append({
+                        'name': job.get('name'),
+                        'url': job.get('url'),
+                        'description': job.get('description', ''),
+                        'buildable': job.get('buildable', False)
+                    })
+                
+                return {
+                    'success': True,
+                    'jobs': jobs,
+                    'total_count': len(jobs)
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"Failed to get jobs list: {response.status_code}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Exception getting Jenkins jobs list: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def delete_jenkins_job(self, job_name: str) -> Dict[str, Any]:
+        """删除Jenkins作业"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/doDelete"
+            
+            response = requests.post(
+                url,
+                auth=self.auth,
+                timeout=30,
+                verify=False
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Successfully deleted Jenkins job: {job_name}")
+                return {
+                    'success': True,
+                    'message': f'Job {job_name} deleted successfully'
+                }
+            else:
+                logger.error(f"Failed to delete Jenkins job: {response.status_code} - {response.text}")
+                return {
+                    'success': False,
+                    'error': f"Jenkins API error: {response.status_code}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Exception deleting Jenkins job: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def get_job_build_history(self, job_name: str, limit: int = 10) -> Dict[str, Any]:
+        """获取Jenkins作业的构建历史"""
+        try:
+            url = f"{self.base_url}/job/{job_name}/api/json?tree=builds[number,url,result,timestamp,duration,displayName]{{,{limit}}}"
+            
+            response = requests.get(
+                url,
+                auth=self.auth,
+                timeout=30,
+                verify=False
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                builds = []
+                
+                for build in data.get('builds', []):
+                    builds.append({
+                        'number': build.get('number'),
+                        'url': build.get('url'),
+                        'result': build.get('result'),
+                        'timestamp': build.get('timestamp'),
+                        'duration': build.get('duration'),
+                        'display_name': build.get('displayName')
+                    })
+                
+                return {
+                    'success': True,
+                    'job_name': job_name,
+                    'builds': builds,
+                    'total_builds': len(builds)
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"Failed to get build history: {response.status_code}"
+                }
+                
+        except Exception as e:
+            logger.error(f"Exception getting Jenkins build history: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }
+    
+    def test_jenkins_connection(self) -> Dict[str, Any]:
+        """测试Jenkins连接"""
+        try:
+            url = f"{self.base_url}/api/json"
+            
+            response = requests.get(
+                url,
+                auth=self.auth,
+                timeout=10,
+                verify=False
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return {
+                    'success': True,
+                    'message': 'Jenkins connection successful',
+                    'jenkins_version': data.get('version', 'unknown'),
+                    'node_name': data.get('nodeName', 'unknown'),
+                    'num_executors': data.get('numExecutors', 0)
+                }
+            elif response.status_code == 401:
+                return {
+                    'success': False,
+                    'error': 'Authentication failed - invalid username or token'
+                }
+            elif response.status_code == 403:
+                return {
+                    'success': False,
+                    'error': 'Access forbidden - insufficient permissions'
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f"Jenkins API error: {response.status_code}"
+                }
+                
+        except requests.exceptions.ConnectTimeout:
+            return {
+                'success': False,
+                'error': 'Connection timeout - Jenkins server unreachable'
+            }
+        except requests.exceptions.ConnectionError:
+            return {
+                'success': False,
+                'error': 'Connection error - Jenkins server unreachable'
+            }
+        except Exception as e:
+            logger.error(f"Exception testing Jenkins connection: {e}")
+            return {
+                'success': False,
+                'error': str(e)
+            }

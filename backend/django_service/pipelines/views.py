@@ -1,3 +1,5 @@
+import logging
+
 from rest_framework import viewsets, status, permissions
 from rest_framework.decorators import action, api_view
 from rest_framework.response import Response
@@ -13,6 +15,9 @@ from .serializers import (
 )
 from .services.jenkins_sync import JenkinsPipelineSyncService
 from cicd_integrations.models import CICDTool
+
+
+logger = logging.getLogger(__name__)
 
 
 @api_view(['GET'])
@@ -91,6 +96,7 @@ class PipelineViewSet(viewsets.ModelViewSet):
             return Response(serializer.data, status=status.HTTP_201_CREATED)
             
         except Exception as e:
+            logger.error(f"Failed to execute pipeline {pipeline.id}: {str(e)}", exc_info=True)
             return Response(
                 {'error': f'Failed to execute pipeline: {str(e)}'}, 
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
@@ -193,6 +199,82 @@ class PipelineViewSet(viewsets.ModelViewSet):
             return Response(result, status=status.HTTP_200_OK)
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
+
+    def create(self, request, *args, **kwargs):
+        """创建流水线 - 添加调试日志"""
+        logger.warning(f"[DEBUG] PipelineViewSet.create called")
+        logger.warning(f"[DEBUG] Request method: {request.method}")
+        logger.warning(f"[DEBUG] Request path: {request.path}")
+        logger.warning(f"[DEBUG] Request data keys: {list(request.data.keys())}")
+        logger.warning(f"[DEBUG] Request data: {request.data}")
+        logger.warning(f"[DEBUG] User: {request.user}")
+        
+        # 检查steps字段
+        if 'steps' in request.data:
+            logger.warning(f"[DEBUG] Steps data found: {len(request.data['steps'])} steps")
+            for i, step in enumerate(request.data['steps']):
+                logger.warning(f"[DEBUG] Step {i}: {step}")
+        else:
+            logger.error(f"[DEBUG] No 'steps' field in request data!")
+            logger.error(f"[DEBUG] Available fields: {list(request.data.keys())}")
+        
+        return super().create(request, *args, **kwargs)
+
+    def update(self, request, *args, **kwargs):
+        """更新流水线 - 添加调试日志"""
+        logger.warning(f"[DEBUG] PipelineViewSet.update called")
+        logger.warning(f"[DEBUG] Request method: {request.method}")
+        logger.warning(f"[DEBUG] Request path: {request.path}")
+        logger.warning(f"[DEBUG] Pipeline ID: {kwargs.get('pk')}")
+        logger.warning(f"[DEBUG] Request data keys: {list(request.data.keys())}")
+        logger.warning(f"[DEBUG] Request data: {request.data}")
+        
+        # 检查steps字段
+        if 'steps' in request.data:
+            logger.warning(f"[DEBUG] Steps data found: {len(request.data['steps'])} steps")
+            for i, step in enumerate(request.data['steps']):
+                logger.warning(f"[DEBUG] Step {i}: {step}")
+        else:
+            logger.error(f"[DEBUG] No 'steps' field in update request!")
+            logger.error(f"[DEBUG] Available fields: {list(request.data.keys())}")
+            
+            # 获取当前流水线的步骤信息用于对比
+            try:
+                pipeline = self.get_object()
+                current_steps = pipeline.atomic_steps.all()
+                logger.warning(f"[DEBUG] Current pipeline has {len(current_steps)} steps")
+            except Exception as e:
+                logger.error(f"[DEBUG] Error getting current pipeline: {e}")
+        
+        return super().update(request, *args, **kwargs)
+
+    def partial_update(self, request, *args, **kwargs):
+        """部分更新流水线 - 添加调试日志"""
+        logger.warning(f"[DEBUG] PipelineViewSet.partial_update called")
+        logger.warning(f"[DEBUG] Request method: {request.method}")
+        logger.warning(f"[DEBUG] Request path: {request.path}")
+        logger.warning(f"[DEBUG] Pipeline ID: {kwargs.get('pk')}")
+        logger.warning(f"[DEBUG] Request data keys: {list(request.data.keys())}")
+        logger.warning(f"[DEBUG] Request data: {request.data}")
+        
+        # 检查steps字段
+        if 'steps' in request.data:
+            logger.warning(f"[DEBUG] Steps data found in partial update: {len(request.data['steps'])} steps")
+        else:
+            logger.warning(f"[DEBUG] No 'steps' field in partial update (this might be OK)")
+            logger.warning(f"[DEBUG] Available fields: {list(request.data.keys())}")
+        
+        return super().partial_update(request, *args, **kwargs)
+
+    def perform_create(self, serializer):
+        """创建时设置创建者"""
+        logger.warning(f"[DEBUG] perform_create called with validated_data keys: {list(serializer.validated_data.keys())}")
+        serializer.save(created_by=self.request.user)
+
+    def perform_update(self, serializer):
+        """更新时的额外处理"""
+        logger.warning(f"[DEBUG] perform_update called with validated_data keys: {list(serializer.validated_data.keys())}")
+        serializer.save()
 
 
 class PipelineToolMappingViewSet(viewsets.ModelViewSet):

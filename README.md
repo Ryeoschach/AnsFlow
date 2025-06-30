@@ -5,7 +5,35 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![React](https://img.shields.io/badge/react-18+-blue.svg)](https://reactjs.org/)
-[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
+[![Docker](htt## 🤝 贡献指南
+
+我们欢迎所有形式的贡献！在开始之前，请阅读我们的 [贡献指南](CONTRIBUTING.md)。
+
+### 快速参与
+
+1. **Fork** 本仓库
+2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 开启 **Pull Request**
+
+### 开发规范
+
+- 遵循 [PEP 8](https://www.python.org/dev/peps/pep-0008/) Python 代码规范
+- 遵循 [ESLint](https://eslint.org/) JavaScript/TypeScript 代码规范
+- 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)
+- 确保所有测试通过
+- 更新相关文档
+
+### 贡献领域
+
+- 🐛 **Bug 修复** - 解决已知问题
+- ✨ **新功能开发** - 实现计划中的功能  
+- 📚 **文档改进** - 完善文档和教程
+- 🧪 **测试完善** - 增加测试覆盖率
+- 🎨 **UI/UX 优化** - 改进用户界面和体验
+
+> 💡 详细信息请查看 [CONTRIBUTING.md](CONTRIBUTING.md)io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 [![WebSocket](https://img.shields.io/badge/websocket-realtime-green.svg)](https://websockets.spec.whatwg.org/)
 
 ## 🎯 当前项目状态 
@@ -86,6 +114,8 @@ graph TB
 
 ## 🚀 快速开始
 
+> **⚡ 5分钟极速体验**: 查看 [快速启动指南](QUICK_START_GUIDE.md) 获得最佳上手体验
+
 ### 环境要求
 
 - **Docker**: 20.10+
@@ -111,6 +141,10 @@ make db-init
 
 # 5. 创建超级用户
 make superuser
+
+# 6. 验证系统状态 (可选)
+./scripts/check_system_status.sh    # 完整系统检查
+python scripts/quick_verify.py      # 快速功能验证
 ```
 
 ### 访问服务
@@ -126,6 +160,8 @@ make superuser
 默认登录凭据：
 - **用户名**: admin
 - **密码**: admin123
+
+> 💡 **提示**: 首次启动建议运行 `./scripts/check_system_status.sh` 验证所有服务正常运行
 
 ## 📚 项目结构
 
@@ -215,7 +251,19 @@ make prod-backup     # 生产环境备份
 
 ## 📋 开发路线图 / TODO List
 
-### 🎉 最新完成：拖拽式流水线编辑器完整修复 ✅
+### 🎉 最新完成：流水线执行模式编辑功能完善 ✅
+**完成日期**: 2025年6月30日 | **阶段**: Phase 3 核心功能完善
+- ✅ **流水线执行模式保存修复** - 修复PipelineEditor中执行模式更新后页面显示不变的问题
+- ✅ **PipelineListSerializer字段完善** - 列表API增加execution_mode等执行配置字段
+- ✅ **前端数据同步优化** - 保存后正确刷新selectedPipeline状态，实时显示更新结果
+- ✅ **PipelineEditor功能增强** - 新增流水线基本信息编辑功能，支持执行模式、执行工具等配置
+- ✅ **执行模式显示完善** - 统一列表页面和详情页面的执行模式显示逻辑
+- ✅ **后端序列化器优化** - steps字段支持可选更新，兼容不同前端更新路径
+- ✅ **API字段一致性保证** - 确保列表API和详情API返回字段完全一致
+
+> 🎯 **修复内容**: 用户现在可以在PipelineEditor中正确编辑和保存执行模式(local/remote/hybrid)，更改会立即在页面上正确显示
+
+### 🎉 已完成：拖拽式流水线编辑器完整修复 ✅
 **完成日期**: 2025年6月30日 | **阶段**: Phase 3 核心功能完善
 - ✅ **原子步骤状态隔离** - 修复不同流水线编辑器间的状态污染问题
 - ✅ **数据持久化修复** - 解决页面刷新后拖拽内容丢失问题
@@ -321,6 +369,9 @@ make prod-backup     # 生产环境备份
 - [ ] ⏳ **安全加固** - 安全漏洞扫描和修复
 
 ### 🔍 已知问题修复
+- [x] ✅ **流水线执行模式编辑完整修复** - 解决PipelineEditor保存执行模式后页面显示不更新的问题
+- [x] ✅ **前端数据同步机制优化** - 修复保存后selectedPipeline状态未正确刷新的问题
+- [x] ✅ **PipelineListSerializer字段补齐** - 列表API增加执行模式相关字段，确保前端正确显示
 - [x] ✅ **拖拽式编辑器完整修复** - 解决状态污染、数据持久化、详情显示等全部问题
 - [x] ✅ **流水线详情数据获取修复** - 修复查看详情和编辑器中步骤显示为空的问题
 - [x] ✅ **前端数据获取逻辑优化** - 详情和编辑器自动获取完整流水线数据
@@ -345,16 +396,31 @@ make prod-backup     # 生产环境备份
 
 ## 📖 文档导航
 
+### 🚀 快速上手文档
+- [⚡ 快速启动指南](./QUICK_START_GUIDE.md) - 5分钟快速体验完整功能
+- [📊 项目状态总结](./PROJECT_STATUS_SUMMARY.md) - 当前进度与技术指标
+- [🔍 系统状态检查](./scripts/check_system_status.sh) - 一键检查所有服务状态
+- [🧪 功能快速验证](./scripts/quick_verify.py) - 核心功能验证脚本
+
+### 📋 技术文档
 - [🏗️ 项目结构](./PROJECT_STRUCTURE.md) - 详细的项目组织结构
 - [🎯 技术架构分析](./项目说明/技术架构分析报告.md) - 深度技术架构解析
-- [🎨 拖拽式流水线编辑器修复报告](./PIPELINE_EDITOR_FIX_REPORT.md) - 完整修复过程与验证结果
+- [🔧 API 文档](./docs/api/) - RESTful API 接口文档
+- [👨‍💻 开发指南](./docs/development/) - 开发环境配置与规范
+
+### 🎯 功能修复报告
+- [� 执行模式编辑功能修复](./EXECUTION_MODE_FIX_REPORT.md) - 最新完成的重大修复
+- [�🎨 拖拽式流水线编辑器修复报告](./PIPELINE_EDITOR_FIX_REPORT.md) - 完整修复过程与验证结果
 - [🔧 Jenkins工具状态系统完善](./STATUS_SYSTEM_DEMO.md) - 工具集成与状态管理完整方案
 - [🎉 WebSocket监控系统完成报告](./WEBSOCKET_MONITORING_COMPLETION_REPORT.md) - Phase 2 完成总结
+
+### 📈 项目规划
 - [🚀 下一阶段开发计划](./NEXT_PHASE_DEVELOPMENT_PLAN.md) - Phase 3 详细规划
-- [🔧 API 文档](./docs/api/) - RESTful API 接口文档
-- [🚀 部署指南](./docs/deployment/) - 生产环境部署指南
-- [👨‍💻 开发指南](./docs/development/) - 开发环境配置与规范
-- [📊 监控指南](./docs/monitoring/) - 系统监控与运维
+- [🚀 部署指南](./docs/deployment/) - 生产环境部署指南  
+- [� 监控指南](./docs/monitoring/) - 系统监控与运维
+
+### 🧪 测试与验证
+- [� 归档测试脚本](./tests/archive/) - 完整的功能测试脚本集合
 
 ## 🤝 贡献指南
 

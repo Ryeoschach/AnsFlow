@@ -28,6 +28,7 @@ class CICDTool(models.Model):
     name = models.CharField(max_length=255, help_text="工具实例名称")
     tool_type = models.CharField(max_length=50, choices=TOOL_TYPES, help_text="工具类型")
     base_url = models.URLField(help_text="工具服务器基础URL")
+    description = models.TextField(blank=True, help_text="工具描述")
     
     # 认证配置
     username = models.CharField(max_length=255, blank=True, help_text="用户名")

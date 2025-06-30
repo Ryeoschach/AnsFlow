@@ -32,7 +32,7 @@ interface PipelineEditorProps {
   pipeline?: Pipeline
   onSave?: (pipeline: Pipeline) => void
   onClose?: () => void
-  tools?: any[]
+  tools?: { id: number; name: string; tool_type: string; base_url: string }[]
 }
 
 interface StepFormData {
@@ -64,6 +64,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   const [stepFormVisible, setStepFormVisible] = useState(false)
   const [editingStep, setEditingStep] = useState<AtomicStep | null>(null)
   const [form] = Form.useForm()
+  // 添加流水线基本信息编辑表单
+  const [pipelineForm] = Form.useForm()
+  const [pipelineInfoVisible, setPipelineInfoVisible] = useState(false)
 
   // 清理状态的effect
   useEffect(() => {
@@ -73,12 +76,24 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         pipeline.steps.map(step => ({ ...step })).sort((a, b) => a.order - b.order) : 
         []
       setSteps(initialSteps)
+      
+      // 初始化流水线基本信息表单
+      pipelineForm.setFieldsValue({
+        name: pipeline.name,
+        description: pipeline.description,
+        execution_mode: pipeline.execution_mode || 'local',
+        execution_tool: pipeline.execution_tool,
+        tool_job_name: pipeline.tool_job_name,
+        is_active: pipeline.is_active
+      })
     } else if (!visible) {
       // 关闭编辑器时清理状态
       setSteps([])
       setStepFormVisible(false)
       setEditingStep(null)
+      setPipelineInfoVisible(false)
       form.resetFields()
+      pipelineForm.resetFields()
     }
   }, [visible, pipeline?.id]) // 只监听visible和pipeline.id的变化
 
@@ -176,6 +191,38 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
     }
   }
 
+  // 处理流水线基本信息编辑
+  const handleEditPipelineInfo = () => {
+    setPipelineInfoVisible(true)
+  }
+
+  const handlePipelineInfoSubmit = async () => {
+    if (!pipeline) return
+
+    try {
+      const values = await pipelineForm.validateFields()
+      
+      // 更新本地 pipeline 状态
+      const updatedPipelineData = {
+        ...pipeline,
+        ...values
+      }
+      
+      console.log('Updating pipeline info:', values)
+      
+      // 通知父组件 pipeline 数据已更新
+      if (onSave) {
+        onSave(updatedPipelineData)
+      }
+      
+      setPipelineInfoVisible(false)
+      message.success('流水线信息更新成功')
+    } catch (error) {
+      console.error('Failed to update pipeline info:', error)
+      message.error('更新流水线信息失败')
+    }
+  }
+
   const handleSavePipeline = async () => {
     if (!pipeline) {
       message.error('请先选择或创建流水线')
@@ -183,13 +230,21 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
     }
 
     try {
+      // 获取最新的流水线基本信息
+      const pipelineInfo = await pipelineForm.validateFields()
+      
       // 准备更新数据，确保每个步骤都有唯一的临时ID（用于前端显示）
       // 后端保存时会重新生成正确的ID
+      // 确保 steps 字段始终存在，即使是空数组
       const updateData = {
-        name: pipeline.name,
-        description: pipeline.description,
+        name: pipelineInfo.name || pipeline.name,
+        description: pipelineInfo.description || pipeline.description,
         project: pipeline.project,
-        is_active: pipeline.is_active,
+        is_active: pipelineInfo.is_active !== undefined ? pipelineInfo.is_active : pipeline.is_active,
+        execution_mode: pipelineInfo.execution_mode || pipeline.execution_mode,
+        execution_tool: pipelineInfo.execution_tool || pipeline.execution_tool,
+        tool_job_name: pipelineInfo.tool_job_name || pipeline.tool_job_name,
+        tool_job_config: pipeline.tool_job_config,
         steps: steps.map((step, index) => ({
           name: step.name,
           step_type: step.step_type,
@@ -201,6 +256,7 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       }
 
       console.log('Saving pipeline with data:', updateData)
+      console.log('Steps being sent:', updateData.steps)
 
       // 使用API服务保存流水线
       const updatedPipeline = await apiService.updatePipeline(pipeline.id, updateData)
@@ -262,6 +318,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       extra={
         <Space>
           <Button onClick={onClose}>取消</Button>
+          <Button icon={<SettingOutlined />} onClick={handleEditPipelineInfo}>
+            编辑信息
+          </Button>
           <Button icon={<PlusOutlined />} onClick={handleAddStep}>
             添加步骤
           </Button>
@@ -410,6 +469,103 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
               placeholder='输入JSON格式的参数，例如: {"timeout": 300, "retry": 3}'
               rows={6}
             />
+          </Form.Item>
+        </Form>
+      </Drawer>
+
+      {/* 流水线基本信息编辑 Drawer */}
+      <Drawer
+        title="编辑流水线信息"
+        open={pipelineInfoVisible}
+        onClose={() => setPipelineInfoVisible(false)}
+        width={500}
+        footer={
+          <Space style={{ float: 'right' }}>
+            <Button onClick={() => setPipelineInfoVisible(false)}>取消</Button>
+            <Button type="primary" onClick={handlePipelineInfoSubmit}>
+              保存
+            </Button>
+          </Space>
+        }
+      >
+        <Form form={pipelineForm} layout="vertical">
+          <Form.Item
+            name="name"
+            label="流水线名称"
+            rules={[{ required: true, message: '请输入流水线名称' }]}
+          >
+            <Input placeholder="输入流水线名称" />
+          </Form.Item>
+
+          <Form.Item
+            name="description"
+            label="描述"
+          >
+            <Input.TextArea 
+              placeholder="输入流水线描述（可选）" 
+              rows={3} 
+            />
+          </Form.Item>
+
+          <Form.Item
+            name="execution_mode"
+            label="执行模式"
+          >
+            <Select placeholder="选择执行模式">
+              <Select.Option value="local">
+                <div>
+                  <div>本地执行</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>使用本地Celery执行所有步骤</div>
+                </div>
+              </Select.Option>
+              <Select.Option value="remote">
+                <div>
+                  <div>远程工具</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>在CI/CD工具中执行</div>
+                </div>
+              </Select.Option>
+              <Select.Option value="hybrid">
+                <div>
+                  <div>混合模式</div>
+                  <div style={{ fontSize: 12, color: '#999' }}>部分本地、部分远程执行</div>
+                </div>
+              </Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="execution_tool"
+            label="执行工具"
+            tooltip="选择用于远程或混合模式执行的CI/CD工具"
+          >
+            <Select placeholder="选择CI/CD工具（可选）" allowClear>
+              {tools.map((tool: any) => (
+                <Select.Option key={tool.id} value={tool.id}>
+                  <div>
+                    <div>{tool.name}</div>
+                    <div style={{ fontSize: 12, color: '#999' }}>{tool.tool_type} - {tool.base_url}</div>
+                  </div>
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            name="tool_job_name"
+            label="工具作业名称"
+            tooltip="在CI/CD工具中的作业名称"
+          >
+            <Input placeholder="输入工具中的作业名称（可选）" />
+          </Form.Item>
+
+          <Form.Item
+            name="is_active"
+            label="状态"
+          >
+            <Select>
+              <Select.Option value={true}>活跃</Select.Option>
+              <Select.Option value={false}>停用</Select.Option>
+            </Select>
           </Form.Item>
         </Form>
       </Drawer>
