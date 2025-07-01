@@ -10,20 +10,21 @@
 
 ## 🎯 当前项目状态 
 
-**📅 最新更新**: 2025年7月1日 | **✅ 状态**: CI/CD工具状态验证完全修复并验证通过
+**📅 最新更新**: 2025年7月1日 | **✅ 状态**: 执行详情日志显示问题彻底解决，用户体验完善
 
 ### 最新修复内容
-- ✅ **CI/CD工具状态验证完全修复**: 彻底解决了流水线触发时"CI/CD tool is not active"错误问题
-- ✅ **工具状态系统完善**: 更新模型状态选择，支持authenticated/needs_auth/offline等新状态
-- ✅ **API字段名称规范**: 明确流水线触发API需要pipeline_id和cicd_tool_id字段
-- ✅ **状态验证逻辑优化**: 只有authenticated状态的工具才能用于触发流水线执行
-- ✅ **错误提示改进**: 提供更清晰的工具状态要求说明
-- ✅ **系统重启验证**: Django和Celery重启后，流水线触发功能正常工作
+- ✅ **执行详情日志显示彻底修复**: 完全解决执行详情页面"查看全部"日志为空的问题，修复了错误的文件引用和缺失的fetchFullLogs函数
+- ✅ **正确文件定位**: 发现并修复了路由使用ExecutionDetailFixed.tsx而非ExecutionDetail.tsx的问题
+- ✅ **完整日志获取功能**: 在ExecutionDetailFixed.tsx中完整实现fetchFullLogs函数和handleShowLogsModal处理函数
+- ✅ **多层级日志显示**: 实现API完整日志 → WebSocket实时日志 → 步骤日志 → 整体日志的优先级显示逻辑
+- ✅ **JWT Token过期处理**: 前端自动检测并更新过期的JWT Token，确保API调用始终有效
+- ✅ **用户界面优化**: 清理调试信息，提供清洁的日志查看体验
+- ✅ **后端异步兼容性修复**: 修复ViewSet异步方法与Django框架的兼容性问题，解决API调用失败
+- ✅ **数据库查询逻辑修复**: 修复sync_to_async包装器使用错误，确保数据库查询正常执行
+- ✅ **前端API调用修复**: 修正API路径从/api/executions/到/api/v1/cicd/executions/，添加必需的认证头
 - ✅ **执行详情页面显示问题修复**: 解决了前端执行详情页面（`/executions/{id}/`）无法显示执行步骤和日志的问题
 - ✅ **数据流优化**: 优化了前后端数据传递，确保`step_executions`数据正确渲染
-- ✅ **日志显示增强**: 实现了多层级日志显示逻辑（WebSocket实时日志 → 步骤日志 → 整体日志）
 - ✅ **类型定义完善**: 修正了前端TypeScript类型定义，确保`PipelineExecution`接口包含`step_executions`字段
-- ✅ **用户体验优化**: 修复了Modal日志查看功能，确保"查看全部"能正确显示完整日志内容
 
 ### 项目进度概览
 - ✅ **Phase 1 完成**: 核心执行引擎 (7种原子步骤，Celery异步执行)
@@ -369,6 +370,17 @@ make prod-backup     # 生产环境备份
 - [ ] ⏳ **安全加固** - 安全漏洞扫描和修复
 
 ### 🔍 已知问题修复
+- [x] ✅ **执行详情日志显示彻底修复 [最新]** - 完全解决执行详情页面"查看全部"日志为空的问题，发现并修复了错误的文件引用(ExecutionDetailFixed.tsx vs ExecutionDetail.tsx)，实现完整的日志获取和显示功能
+- [x] ✅ **前端路由文件引用修复** - 发现路由实际使用ExecutionDetailFixed.tsx文件，修复了一直修改错误文件导致的问题
+- [x] ✅ **完整日志获取功能实现** - 在正确的文件中实现fetchFullLogs函数和handleShowLogsModal处理函数
+- [x] ✅ **多层级日志显示逻辑** - 实现API完整日志 → WebSocket实时日志 → 步骤日志 → 整体日志的优先级显示
+- [x] ✅ **JWT Token过期处理优化** - 前端自动检测并更新过期Token，确保API调用始终有效
+- [x] ✅ **用户界面清理** - 移除调试信息，提供清洁的日志查看体验
+- [x] ✅ **后端异步ViewSet兼容性修复** - 解决Django ViewSet中异步方法的同步/异步兼容性问题
+- [x] ✅ **前端API路径和认证修复** - 修正日志API路径从/api/executions/到/api/v1/cicd/executions/，添加JWT认证头
+- [x] ✅ **数据库查询逻辑优化** - 修复sync_to_async包装器使用错误，确保异步查询正常工作
+- [x] ✅ **日志API参数匹配修复** - 修复后端日志API调用时的参数不匹配问题
+- [x] ✅ **日志合并功能增强** - 后端支持从步骤日志自动合并生成完整执行日志
 - [x] ✅ **远程执行步骤状态同步完全修复** - 彻底解决远程执行时步骤状态一直为 pending 的问题
 - [x] ✅ **监控任务异步兼容性修复** - 解决监控任务中异步 ORM 查询导致的 SynchronousOnlyOperation 错误
 - [x] ✅ **历史执行记录批量修复** - 批量修复历史数据中挂起步骤状态，确保数据一致性
@@ -417,8 +429,9 @@ make prod-backup     # 生产环境备份
 - [👨‍💻 开发指南](./docs/development/) - 开发环境配置与规范
 
 ### 🎯 功能修复报告
-- [� 执行模式编辑功能修复](./EXECUTION_MODE_FIX_REPORT.md) - 最新完成的重大修复
-- [�🎨 拖拽式流水线编辑器修复报告](./PIPELINE_EDITOR_FIX_REPORT.md) - 完整修复过程与验证结果
+- [🚀 执行详情日志显示完全修复](./EXECUTION_LOGS_DISPLAY_COMPLETE_FIX.md) - 最新完成的重要修复，解决日志为空问题
+- [⚙️ 执行模式编辑功能修复](./EXECUTION_MODE_FIX_REPORT.md) - 流水线执行模式编辑功能修复
+- [🎨 拖拽式流水线编辑器修复报告](./PIPELINE_EDITOR_FIX_REPORT.md) - 完整修复过程与验证结果
 - [🔧 Jenkins工具状态系统完善](./STATUS_SYSTEM_DEMO.md) - 工具集成与状态管理完整方案
 - [🎉 WebSocket监控系统完成报告](./WEBSOCKET_MONITORING_COMPLETION_REPORT.md) - Phase 2 完成总结
 

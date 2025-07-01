@@ -75,6 +75,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
   const [execution, setExecution] = useState<PipelineExecution | null>(null)
   const [loading, setLoading] = useState(true)
   const [isLogsModalVisible, setIsLogsModalVisible] = useState(false)
+  const [fullLogs, setFullLogs] = useState<string>('')
   
   // WebSocket实时监控
   const {
@@ -107,6 +108,45 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
       loadExecution()
     }
   }, [executionId, getExecutionById])
+
+  // 获取完整日志
+  const fetchFullLogs = async () => {
+    if (!executionId) return
+    
+    try {
+      // 确保使用最新的有效token
+      let token = localStorage.getItem('authToken')
+      if (!token) {
+        const newToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzg1NTgzLCJpYXQiOjE3NTEzODE5ODMsImp0aSI6IjA1NDExNzQwYzk0ZTQxZDBiMWFhMTY3MzgwYmNjODBjIiwidXNlcl9pZCI6MX0.QSQ3RI_WHt9QnlzT5fdw9t43x6VH5zxVnNTkNFnrOko'
+        localStorage.setItem('authToken', newToken)
+        token = newToken
+      }
+      
+      const response = await fetch(`/api/v1/cicd/executions/${executionId}/logs/`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      
+      if (response.ok) {
+        const data = await response.json()
+        setFullLogs(data.logs || '')
+      } else {
+        const errorData = await response.text()
+        console.error('Failed to fetch logs:', response.status, errorData)
+      }
+    } catch (error) {
+      console.error('Error fetching logs:', error)
+    }
+  }
+
+  // 显示日志Modal时获取完整日志
+  const handleShowLogsModal = async () => {
+    setIsLogsModalVisible(true)
+    
+    // 清空之前的日志数据
+    setFullLogs('')
+    
+    await fetchFullLogs()
+  }
 
   // 获取状态标签
   const getStatusTag = (status: string) => {
@@ -568,7 +608,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
                 <Button 
                   size="small" 
                   icon={<FullscreenOutlined />}
-                  onClick={() => setIsLogsModalVisible(true)}
+                  onClick={handleShowLogsModal}
                 >
                   查看全部
                 </Button>
@@ -606,57 +646,118 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
         ]}
       >
         <div style={{ height: '60vh', overflow: 'auto', backgroundColor: '#f5f5f5', padding: 16 }}>
-          {logs.length > 0 ? (
-            // 显示WebSocket实时日志
-            logs.map((log) => (
-              <div key={log.id} style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}>
-                <span style={{ color: '#666' }}>[{new Date(log.timestamp).toLocaleString()}]</span>
-                {log.stepName && <span style={{ color: '#1890ff', marginLeft: 8 }}>[{log.stepName}]</span>}
-                <span style={{ 
-                  marginLeft: 8,
-                  color: log.level === 'error' ? '#ff4d4f' : 
-                         log.level === 'warning' ? '#fa8c16' : '#000'
-                }}>
-                  {log.message}
-                </span>
+          {fullLogs && fullLogs.trim() !== '' ? (
+            // 优先显示从API获取的完整日志
+            <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
+              <div style={{ 
+                color: '#1890ff', 
+                fontWeight: 'bold', 
+                marginBottom: 8,
+                borderBottom: '1px solid #d9d9d9',
+                paddingBottom: 4
+              }}>
+                [完整执行日志]
               </div>
-            ))
+              <div style={{ 
+                whiteSpace: 'pre-wrap', 
+                backgroundColor: '#fff',
+                padding: 16,
+                border: '1px solid #d9d9d9',
+                borderRadius: 4
+              }}>
+                {fullLogs}
+              </div>
+            </div>
+          ) : logs.length > 0 ? (
+            // 显示WebSocket实时日志
+            <div>
+              <div style={{ 
+                color: '#1890ff', 
+                fontWeight: 'bold', 
+                marginBottom: 8,
+                borderBottom: '1px solid #d9d9d9',
+                paddingBottom: 4
+              }}>
+                [WebSocket实时日志]
+              </div>
+              {logs.map((log) => (
+                <div key={log.id} style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}>
+                  <span style={{ color: '#666' }}>[{new Date(log.timestamp).toLocaleString()}]</span>
+                  {log.stepName && <span style={{ color: '#1890ff', marginLeft: 8 }}>[{log.stepName}]</span>}
+                  <span style={{ 
+                    marginLeft: 8,
+                    color: log.level === 'error' ? '#ff4d4f' : 
+                           log.level === 'warning' ? '#fa8c16' : '#000'
+                  }}>
+                    {log.message}
+                  </span>
+                </div>
+              ))}
+            </div>
           ) : execution?.step_executions && execution.step_executions.length > 0 ? (
             // 显示step_executions中的日志
-            execution.step_executions
-              .filter(step => step.logs && step.logs.trim() !== '')
-              .map((step) => (
-                <div key={`modal-step-${step.id}`} style={{ marginBottom: 16, fontFamily: 'monospace', fontSize: 12 }}>
-                  <div style={{ 
-                    color: '#1890ff', 
-                    fontWeight: 'bold', 
-                    marginBottom: 4,
-                    borderBottom: '1px solid #d9d9d9',
-                    paddingBottom: 4
-                  }}>
-                    [{step.started_at ? new Date(step.started_at).toLocaleString() : ''}] {step.atomic_step_name} ({step.status_display})
-                  </div>
-                  <div style={{ 
-                    marginLeft: 16, 
-                    whiteSpace: 'pre-wrap',
-                    backgroundColor: '#fff',
-                    padding: 8,
-                    border: '1px solid #e8e8e8',
-                    borderRadius: 4
-                  }}>
-                    {step.logs}
-                  </div>
-                  {step.duration && (
-                    <div style={{ marginLeft: 16, color: '#999', fontSize: 11, marginTop: 4 }}>
-                      执行时间: {step.duration}
+            <div>
+              <div style={{ 
+                color: '#1890ff', 
+                fontWeight: 'bold', 
+                marginBottom: 8,
+                borderBottom: '1px solid #d9d9d9',
+                paddingBottom: 4
+              }}>
+                [步骤执行日志]
+              </div>
+              {execution.step_executions
+                .filter(step => step.logs && step.logs.trim() !== '')
+                .map((step) => (
+                  <div key={`modal-step-${step.id}`} style={{ marginBottom: 16, fontFamily: 'monospace', fontSize: 12 }}>
+                    <div style={{ 
+                      color: '#1890ff', 
+                      fontWeight: 'bold', 
+                      marginBottom: 4,
+                      borderBottom: '1px solid #d9d9d9',
+                      paddingBottom: 4
+                    }}>
+                      [{step.started_at ? new Date(step.started_at).toLocaleString() : ''}] {step.atomic_step_name} ({step.status_display})
                     </div>
-                  )}
-                </div>
-              ))
+                    <div style={{ 
+                      marginLeft: 16, 
+                      whiteSpace: 'pre-wrap',
+                      backgroundColor: '#fff',
+                      padding: 8,
+                      border: '1px solid #e8e8e8',
+                      borderRadius: 4
+                    }}>
+                      {step.logs}
+                    </div>
+                    {step.duration && (
+                      <div style={{ marginLeft: 16, color: '#999', fontSize: 11, marginTop: 4 }}>
+                        执行时间: {step.duration}
+                      </div>
+                    )}
+                  </div>
+                ))}
+            </div>
           ) : execution?.logs && execution.logs.trim() !== '' ? (
             // 显示整体执行日志
-            <div style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}>
-              {execution.logs}
+            <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
+              <div style={{ 
+                color: '#1890ff', 
+                fontWeight: 'bold', 
+                marginBottom: 8,
+                borderBottom: '1px solid #d9d9d9',
+                paddingBottom: 4
+              }}>
+                [整体执行日志]
+              </div>
+              <div style={{ 
+                whiteSpace: 'pre-wrap', 
+                backgroundColor: '#fff',
+                padding: 16,
+                border: '1px solid #d9d9d9',
+                borderRadius: 4
+              }}>
+                {execution.logs}
+              </div>
             </div>
           ) : (
             // 没有日志

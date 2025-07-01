@@ -479,33 +479,57 @@ class UnifiedCICDEngine:
     async def get_execution_logs(self, execution_id: int) -> str:
         """获取执行日志"""
         try:
-            execution = await sync_to_async(PipelineExecution.objects.select_related)(
-                'cicd_tool'
-            ).aget(id=execution_id)
+            execution = await sync_to_async(
+                lambda: PipelineExecution.objects.select_related('cicd_tool').get(id=execution_id)
+            )()
             
             # 如果已有日志，直接返回
             if execution.logs:
                 return execution.logs
             
-            # 否则从外部工具获取
-            tool = execution.cicd_tool
-            adapter = AdapterFactory.create_adapter(
-                tool.tool_type,
-                base_url=tool.base_url,
-                username=tool.username,
-                token=tool.token,
-                **tool.config
-            )
+            # 如果是远程执行且有外部ID，从外部工具获取
+            if execution.cicd_tool and execution.external_id:
+                tool = execution.cicd_tool
+                adapter = AdapterFactory.create_adapter(
+                    tool.tool_type,
+                    base_url=tool.base_url,
+                    username=tool.username,
+                    token=tool.token,
+                    **tool.config
+                )
+                
+                async with adapter:
+                    logs = await adapter.get_logs(execution.external_id)
+                    
+                    # 更新日志
+                    execution.logs = logs
+                    await sync_to_async(execution.save)(update_fields=['logs'])
+                    
+                    return logs
             
-            async with adapter:
-                logs = await adapter.get_logs(execution.external_id)
+            # 如果没有外部日志，尝试合并步骤日志
+            step_executions = await sync_to_async(
+                lambda: list(execution.step_executions.all().order_by('order'))
+            )()
+            
+            if step_executions:
+                combined_logs = []
+                for step in step_executions:
+                    if step.logs and step.logs.strip():
+                        step_name = step.atomic_step.name if step.atomic_step else f"步骤 {step.order}"
+                        combined_logs.append(f"=== {step_name} ===")
+                        combined_logs.append(step.logs.strip())
+                        combined_logs.append("")
                 
-                # 更新日志
-                execution.logs = logs
-                await sync_to_async(execution.save)(update_fields=['logs'])
+                if combined_logs:
+                    logs = "\n".join(combined_logs)
+                    # 保存合并后的日志
+                    execution.logs = logs
+                    await sync_to_async(execution.save)(update_fields=['logs'])
+                    return logs
+            
+            return "暂无日志信息"
                 
-                return logs
-        
         except Exception as e:
             logger.error(f"Failed to get execution logs {execution_id}: {e}")
             return f"Error getting logs: {str(e)}"

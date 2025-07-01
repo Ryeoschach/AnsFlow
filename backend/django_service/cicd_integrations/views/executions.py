@@ -171,8 +171,11 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
         ]
     )
     @action(detail=True, methods=['get'])
-    async def logs(self, request, pk=None):
+    def logs(self, request, pk=None):
         """获取流水线执行日志"""
+        import asyncio
+        from asgiref.sync import async_to_sync
+        
         execution = self.get_object()
         step_id = request.query_params.get('step_id')
         follow = request.query_params.get('follow', 'false').lower() == 'true'
@@ -181,8 +184,8 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
             if step_id:
                 # 获取特定步骤的日志
                 try:
-                    step_execution = execution.steps.get(id=step_id)
-                    logs = await cicd_engine.get_step_logs(step_execution, follow)
+                    step_execution = execution.step_executions.get(id=step_id)
+                    logs = async_to_sync(cicd_engine.get_step_logs)(step_execution, follow)
                 except StepExecution.DoesNotExist:
                     return Response(
                         {'error': f'Step execution {step_id} not found'},
@@ -190,7 +193,7 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
                     )
             else:
                 # 获取整个执行的日志
-                logs = await cicd_engine.get_execution_logs(execution, follow)
+                logs = async_to_sync(cicd_engine.get_execution_logs)(execution.id)
             
             return Response({
                 'execution_id': execution.id,

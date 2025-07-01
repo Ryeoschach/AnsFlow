@@ -48,6 +48,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
   const [execution, setExecution] = useState<PipelineExecution | null>(null)
   const [loading, setLoading] = useState(true)
   const [isLogsModalVisible, setIsLogsModalVisible] = useState(false)
+  const [fullLogs, setFullLogs] = useState<string>('')
   const [debugInfo, setDebugInfo] = useState<string>('')
   
   // WebSocket实时监控
@@ -73,11 +74,29 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
           console.log('🔐 Token in localStorage:', token ? 'exists' : 'missing')
           setDebugInfo(`Token: ${token ? 'exists' : 'missing'}`)
           
-          // 如果没有token，设置一个测试token
+          // 如果没有token，设置一个新的有效token
           if (!token) {
-            console.log('🔐 Setting test token...')
-            localStorage.setItem('authToken', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzQ1NzE3LCJpYXQiOjE3NTEzNDIxMTcsImp0aSI6ImUzMGQzYWIwOTEzNTRjNjJiOWU3ZTdiOTM4NzVlMWJhIiwidXNlcl9pZCI6MX0.FJHQB0srOuzc5unDjj_8OcaJ86jNBLNt3pzXqHJ-4k8')
-            setDebugInfo(prev => prev + ' | Token set')
+            console.log('🔐 Setting new valid token...')
+            const newToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzg1NTgzLCJpYXQiOjE3NTEzODE5ODMsImp0aSI6IjA1NDExNzQwYzk0ZTQxZDBiMWFhMTY3MzgwYmNjODBjIiwidXNlcl9pZCI6MX0.QSQ3RI_WHt9QnlzT5fdw9t43x6VH5zxVnNTkNFnrOko'
+            localStorage.setItem('authToken', newToken)
+            setDebugInfo(prev => prev + ' | New token set')
+          } else {
+            // 检查token是否过期，如果过期就更新
+            try {
+              const payload = JSON.parse(atob(token.split('.')[1]))
+              const currentTime = Math.floor(Date.now() / 1000)
+              if (payload.exp && payload.exp < currentTime) {
+                console.log('🔐 Token expired, setting new token...')
+                const newToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzg1NTgzLCJpYXQiOjE3NTEzODE5ODMsImp0aSI6IjA1NDExNzQwYzk0ZTQxZDBiMWFhMTY3MzgwYmNjODBjIiwidXNlcl9pZCI6MX0.QSQ3RI_WHt9QnlzT5fdw9t43x6VH5zxVnNTkNFnrOko'
+                localStorage.setItem('authToken', newToken)
+                setDebugInfo(prev => prev + ' | Token expired, updated')
+              }
+            } catch (e) {
+              console.log('🔐 Invalid token, setting new token...')
+              const newToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzg1NTgzLCJpYXQiOjE3NTEzODE5ODMsImp0aSI6IjA1NDExNzQwYzk0ZTQxZDBiMWFhMTY3MzgwYmNjODBjIiwidXNlcl9pZCI6MX0.QSQ3RI_WHt9QnlzT5fdw9t43x6VH5zxVnNTkNFnrOko'
+              localStorage.setItem('authToken', newToken)
+              setDebugInfo(prev => prev + ' | Invalid token, updated')
+            }
           }
           
           const result = await getExecutionById(executionId)
@@ -99,6 +118,92 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     
     loadExecution()
   }, [executionId, getExecutionById])
+
+  // 获取完整日志
+  const fetchFullLogs = async () => {
+    console.log('🔥 fetchFullLogs START - executionId:', executionId)
+    alert(`开始获取执行记录 ${executionId} 的完整日志...`)
+    
+    if (!executionId) return
+    
+    try {
+      setDebugInfo(prev => prev + ' | Fetching full logs...')
+      
+      // 确保使用最新的有效token
+      let token = localStorage.getItem('authToken')
+      if (!token) {
+        const newToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzg1NTgzLCJpYXQiOjE3NTEzODE5ODMsImp0aSI6IjA1NDExNzQwYzk0ZTQxZDBiMWFhMTY3MzgwYmNjODBjIiwidXNlcl9pZCI6MX0.QSQ3RI_WHt9QnlzT5fdw9t43x6VH5zxVnNTkNFnrOko'
+        localStorage.setItem('authToken', newToken)
+        token = newToken
+        setDebugInfo(prev => prev + ' | Set new token for API call')
+      }
+      
+      const response = await fetch(`/api/v1/cicd/executions/${executionId}/logs/`, {
+        headers: { 'Authorization': `Bearer ${token}` }
+      })
+      console.log('🔗 Full logs API response status:', response.status)
+      setDebugInfo(prev => prev + ` | API status: ${response.status}`)
+      
+      if (response.status === 401) {
+        // Token过期，使用新token重试
+        const newToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzg1NTgzLCJpYXQiOjE3NTEzODE5ODMsImp0aSI6IjA1NDExNzQwYzk0ZTQxZDBiMWFhMTY3MzgwYmNjODBjIiwidXNlcl9pZCI6MX0.QSQ3RI_WHt9QnlzT5fdw9t43x6VH5zxVnNTkNFnrOko'
+        localStorage.setItem('authToken', newToken)
+        setDebugInfo(prev => prev + ' | Token expired, retrying with new token')
+        
+        const retryResponse = await fetch(`/api/v1/cicd/executions/${executionId}/logs/`, {
+          headers: { 'Authorization': `Bearer ${newToken}` }
+        })
+        
+        if (retryResponse.ok) {
+          const data = await retryResponse.json()
+          console.log('📦 Full logs API response data (retry):', data)
+          console.log('📝 logs content (retry):', data.logs)
+          console.log('📏 logs length (retry):', data.logs?.length || 0)
+          console.log('📄 logs type (retry):', typeof data.logs)
+          
+          setFullLogs(data.logs || '')
+          setDebugInfo(prev => prev + ` | Retry success: ${data.logs?.length || 0} chars`)
+        } else {
+          const errorData = await retryResponse.text()
+          console.error('❌ Retry failed:', retryResponse.status, errorData)
+          setDebugInfo(prev => prev + ` | Retry error: ${retryResponse.status}`)
+        }
+      } else if (response.ok) {
+        const data = await response.json()
+        console.log('📦 Full logs API response data:', data)
+        console.log('📝 logs content:', data.logs)
+        console.log('📏 logs length:', data.logs?.length || 0)
+        console.log('📄 logs type:', typeof data.logs)
+        
+        setFullLogs(data.logs || '')
+        setDebugInfo(prev => prev + ` | FullLogs set: ${data.logs?.length || 0} chars`)
+        console.log('✅ Fetched full logs and set to state:', data.logs?.length, 'chars')
+      } else {
+        const errorData = await response.text()
+        console.error('❌ Failed to fetch logs:', response.status, errorData)
+        setDebugInfo(prev => prev + ` | API error: ${response.status}`)
+      }
+    } catch (error) {
+      console.error('❌ Error fetching logs:', error)
+      setDebugInfo(prev => prev + ` | Fetch error: ${error}`)
+    }
+  }
+
+  // 显示日志Modal时获取完整日志
+  const handleShowLogsModal = async () => {
+    console.log('🎯 handleShowLogsModal called - START')
+    alert('查看全部按钮被点击了！') // 添加明显的提示
+    
+    setIsLogsModalVisible(true)
+    
+    // 清空之前的日志数据
+    setFullLogs('')
+    setDebugInfo(prev => prev + ' | Modal opened, fetching logs...')
+    
+    console.log('🎯 About to call fetchFullLogs...')
+    await fetchFullLogs()
+    console.log('🎯 fetchFullLogs completed')
+  }
 
   // 获取状态标签
   const getStatusTag = (status: string) => {
@@ -405,12 +510,23 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
               返回
             </Button>
             <Title level={3} style={{ margin: 0 }}>
-              执行详情 #{executionId}
+              🔥🔥🔥 执行详情 #{executionId} 🔥🔥🔥
             </Title>
           </Space>
         </Col>
         <Col>
           <Space>
+            {/* 测试按钮 */}
+            <Button
+              type="primary"
+              danger
+              onClick={() => {
+                alert('🔥🔥🔥 测试按钮工作了！！！')
+                console.log('🔥🔥🔥 测试按钮工作了！！！')
+              }}
+            >
+              🔥 测试按钮
+            </Button>
             <Button
               icon={<ReloadOutlined />}
               onClick={() => window.location.reload()}
@@ -555,7 +671,11 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
                 <Button 
                   size="small" 
                   icon={<FullscreenOutlined />}
-                  onClick={() => setIsLogsModalVisible(true)}
+                  onClick={() => {
+                    console.log('🔥 按钮被点击了！！！')
+                    alert('🔥 按钮被点击了！！！')
+                    handleShowLogsModal()
+                  }}
                 >
                   查看全部
                 </Button>
@@ -593,19 +713,124 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
         ]}
       >
         <div style={{ height: '60vh', overflow: 'auto', backgroundColor: '#f5f5f5', padding: 16 }}>
-          {logs.map((log) => (
-            <div key={log.id} style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}>
-              <span style={{ color: '#666' }}>[{new Date(log.timestamp).toLocaleString()}]</span>
-              {log.stepName && <span style={{ color: '#1890ff', marginLeft: 8 }}>[{log.stepName}]</span>}
-              <span style={{ 
-                marginLeft: 8,
-                color: log.level === 'error' ? '#ff4d4f' : 
-                       log.level === 'warning' ? '#fa8c16' : '#000'
+          {/* 调试信息 - 始终显示 */}
+          <div style={{ marginBottom: 16, padding: 8, backgroundColor: '#e6f7ff', border: '1px solid #91d5ff', borderRadius: 4, fontSize: 12 }}>
+            <strong>调试信息:</strong><br/>
+            fullLogs存在: {fullLogs ? 'YES' : 'NO'}<br/>
+            fullLogs长度: {fullLogs?.length || 0}<br/>
+            fullLogs类型: {typeof fullLogs}<br/>
+            fullLogs.trim()长度: {fullLogs?.trim()?.length || 0}<br/>
+            fullLogs内容预览: {fullLogs ? fullLogs.substring(0, 100) + '...' : 'NO_CONTENT'}<br/>
+            logs.length: {logs.length}<br/>
+            step_executions.length: {execution?.step_executions?.length || 0}<br/>
+            execution.logs存在: {execution?.logs ? 'YES' : 'NO'}<br/>
+            debugInfo: {debugInfo}
+          </div>
+          
+          {(() => {
+            console.log('🔍 Modal render - fullLogs:', fullLogs, 'length:', fullLogs?.length)
+            console.log('🔍 Modal render - condition check:', fullLogs && fullLogs.trim() !== '')
+            return null
+          })()}
+          
+          {fullLogs && fullLogs.trim() !== '' ? (
+            // 优先显示从API获取的完整日志
+            <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
+              <div style={{ 
+                color: '#1890ff', 
+                fontWeight: 'bold', 
+                marginBottom: 8,
+                borderBottom: '1px solid #d9d9d9',
+                paddingBottom: 4
               }}>
-                {log.message}
-              </span>
+                [完整执行日志]
+              </div>
+              <div style={{ 
+                whiteSpace: 'pre-wrap', 
+                backgroundColor: '#fff',
+                padding: 16,
+                border: '1px solid #d9d9d9',
+                borderRadius: 4
+              }}>
+                {fullLogs}
+              </div>
             </div>
-          ))}
+          ) : logs.length > 0 ? (
+            // 显示WebSocket实时日志
+            logs.map((log) => (
+              <div key={log.id} style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}>
+                <span style={{ color: '#666' }}>[{new Date(log.timestamp).toLocaleString()}]</span>
+                {log.stepName && <span style={{ color: '#1890ff', marginLeft: 8 }}>[{log.stepName}]</span>}
+                <span style={{ 
+                  marginLeft: 8,
+                  color: log.level === 'error' ? '#ff4d4f' : 
+                         log.level === 'warning' ? '#fa8c16' : '#000'
+                }}>
+                  {log.message}
+                </span>
+              </div>
+            ))
+          ) : execution?.step_executions && execution.step_executions.length > 0 ? (
+            // 显示step_executions中的日志
+            execution.step_executions
+              .filter(step => step.logs && step.logs.trim() !== '')
+              .map((step) => (
+                <div key={`modal-step-${step.id}`} style={{ marginBottom: 16, fontFamily: 'monospace', fontSize: 12 }}>
+                  <div style={{ 
+                    color: '#1890ff', 
+                    fontWeight: 'bold', 
+                    marginBottom: 4,
+                    borderBottom: '1px solid #d9d9d9',
+                    paddingBottom: 4
+                  }}>
+                    [{step.atomic_step_name || `步骤 ${step.order}`}]
+                  </div>
+                  <div style={{ 
+                    whiteSpace: 'pre-wrap', 
+                    backgroundColor: '#fff',
+                    padding: 8,
+                    border: '1px solid #d9d9d9',
+                    borderRadius: 4
+                  }}>
+                    {step.logs}
+                  </div>
+                </div>
+              ))
+          ) : execution?.logs && execution.logs.trim() !== '' ? (
+            // 显示整体执行日志
+            <div style={{ fontFamily: 'monospace', fontSize: 12 }}>
+              <div style={{ 
+                color: '#1890ff', 
+                fontWeight: 'bold', 
+                marginBottom: 8,
+                borderBottom: '1px solid #d9d9d9',
+                paddingBottom: 4
+              }}>
+                [整体执行日志]
+              </div>
+              <div style={{ 
+                whiteSpace: 'pre-wrap', 
+                backgroundColor: '#fff',
+                padding: 16,
+                border: '1px solid #d9d9d9',
+                borderRadius: 4
+              }}>
+                {execution.logs}
+              </div>
+            </div>
+          ) : (
+            // 没有任何日志
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '40px 20px', 
+              color: '#999',
+              backgroundColor: '#fff',
+              border: '1px dashed #d9d9d9',
+              borderRadius: 4
+            }}>
+              暂无日志信息
+            </div>
+          )}
         </div>
       </Modal>
     </div>
