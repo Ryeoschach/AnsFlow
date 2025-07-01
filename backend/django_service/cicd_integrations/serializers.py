@@ -228,8 +228,12 @@ class PipelineExecutionCreateSerializer(serializers.Serializer):
     def validate_cicd_tool_id(self, value):
         try:
             tool = CICDTool.objects.get(id=value)
-            if tool.status != 'active':
-                raise serializers.ValidationError("CI/CD tool is not active.")
+            # 只有 authenticated 状态的工具才能被用于触发流水线
+            if tool.status != 'authenticated':
+                raise serializers.ValidationError(
+                    f"CI/CD tool is not ready for execution. Current status: {tool.status}. "
+                    f"Tool must be in 'authenticated' status to trigger pipelines."
+                )
             return value
         except CICDTool.DoesNotExist:
             raise serializers.ValidationError("CI/CD tool not found.")

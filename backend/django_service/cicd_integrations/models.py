@@ -20,9 +20,14 @@ class CICDTool(models.Model):
     ]
     
     STATUSES = [
-        ('active', 'Active'),
+        ('authenticated', 'Authenticated'),  # 已认证，可以正常使用
+        ('needs_auth', 'Needs Authentication'),  # 需要认证
+        ('offline', 'Offline'),  # 离线或不可访问
+        ('unknown', 'Unknown'),  # 状态未知
+        ('error', 'Error'),  # 出错
+        # 保留向后兼容
+        ('active', 'Active'),  # 保留旧状态以避免数据问题
         ('inactive', 'Inactive'),
-        ('error', 'Error'),
     ]
     
     name = models.CharField(max_length=255, help_text="工具实例名称")
