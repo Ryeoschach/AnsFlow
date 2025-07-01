@@ -10,6 +10,7 @@ import PipelineDetail from './pages/PipelineDetail'
 import Tools from './pages/Tools'
 import Executions from './pages/Executions'
 import ExecutionDetailFixed from '@pages/ExecutionDetailFixed'
+import ExecutionDetailTest from '@pages/ExecutionDetailTest'
 import Settings from '@pages/Settings'
 
 const { Content } = Layout
@@ -47,6 +48,7 @@ function App() {
         <Content>
           <Routes>
             <Route path="/login" element={<Login />} />
+            <Route path="/test" element={<ExecutionDetailTest />} />
             <Route path="*" element={<Navigate to="/login" replace />} />
           </Routes>
         </Content>
@@ -64,6 +66,7 @@ function App() {
         <Route path="/tools" element={<Tools />} />
         <Route path="/executions" element={<Executions />} />
         <Route path="/executions/:id" element={<ExecutionDetailFixed />} />
+        <Route path="/executions/:id/test" element={<ExecutionDetailTest />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

@@ -37,7 +37,7 @@ const Executions: React.FC = () => {
   }
 
   const getProgressPercent = (execution: PipelineExecution) => {
-    if (execution.status === 'completed') return 100
+    if (execution.status === 'success') return 100
     if (execution.status === 'failed' || execution.status === 'cancelled') return 100
     if (execution.status === 'running') {
       // 简单估算，实际应该根据步骤进度计算
@@ -74,7 +74,7 @@ const Executions: React.FC = () => {
       render: (_, record: PipelineExecution) => {
         const percent = getProgressPercent(record)
         const status = record.status === 'failed' ? 'exception' : 
-                      record.status === 'completed' ? 'success' : 'active'
+                      record.status === 'success' ? 'success' : 'active'
         
         return (
           <Progress 

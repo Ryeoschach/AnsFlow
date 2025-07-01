@@ -146,23 +146,54 @@ export interface AtomicStep {
   created_at: string
 }
 
+// 步骤执行类型
+export interface StepExecution {
+  id: number
+  atomic_step: number
+  atomic_step_name: string
+  external_id: string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled' | 'skipped'
+  status_display: string
+  order: number
+  logs: string
+  output: Record<string, any>
+  error_message: string
+  started_at: string | null
+  completed_at: string | null
+  duration: string
+  created_at: string
+  updated_at: string
+}
+
 // 流水线执行类型
 export interface PipelineExecution {
   id: number
   pipeline: number
   pipeline_name?: string
-  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled' | 'timeout'
-  trigger_type: 'manual' | 'webhook' | 'schedule' | 'api'
-  triggered_by?: string
-  parameters: Record<string, any>
-  result?: Record<string, any>  // 添加result字段用于存储步骤执行结果
-  logs?: string
+  cicd_tool?: number
+  cicd_tool_name?: string
+  cicd_tool_type?: string
   external_id?: string
   external_url?: string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled' | 'timeout'
+  status_display: string
+  trigger_type: 'manual' | 'webhook' | 'schedule' | 'api'
+  trigger_type_display: string
+  triggered_by?: number
+  triggered_by_username?: string
+  definition: Record<string, any>
+  parameters: Record<string, any>
+  logs: string
+  artifacts: any[]
+  test_results: Record<string, any>
+  result?: Record<string, any>  // 添加result字段用于存储步骤执行结果
   started_at?: string
   completed_at?: string
+  duration?: string
+  trigger_data: Record<string, any>
+  step_executions: StepExecution[]  // 添加步骤执行列表
   created_at: string
-  duration?: number
+  updated_at: string
 }
 
 // 执行日志类型
@@ -174,19 +205,6 @@ export interface ExecutionLog {
   message: string
   timestamp: string
   metadata?: Record<string, any>
-}
-
-// 执行步骤类型
-export interface ExecutionStep {
-  id: number
-  execution: number
-  step: number
-  step_name: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
-  started_at?: string
-  completed_at?: string
-  logs?: string
-  output?: Record<string, any>
 }
 
 // WebSocket 消息类型

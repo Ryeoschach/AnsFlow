@@ -62,12 +62,14 @@ class SyncPipelineExecutor:
         context = None
         
         try:
-            # 初始化WebSocket通知器
-            if WEBSOCKET_AVAILABLE and WebSocketNotifier:
-                self.notifier = WebSocketNotifier(execution_id)
-                self.notifier.send_execution_update('starting', {
-                    'message': '流水线执行开始准备'
-                })
+            # 初始化WebSocket通知器（暂时禁用以避免错误）
+            # TODO: 修复WebSocket消息处理器错误后重新启用
+            self.notifier = None
+            # if WEBSOCKET_AVAILABLE and WebSocketNotifier:
+            #     self.notifier = WebSocketNotifier(execution_id)
+            #     self.notifier.send_execution_update('starting', {
+            #         'message': '流水线执行开始准备'
+            #     })
             
             # 获取流水线执行记录
             try:

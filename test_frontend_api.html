@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Frontend API Test</title>
+</head>
+<body>
+    <h1>AnsFlow Frontend API Test</h1>
+    <button onclick="testLogin()">Test Login & Set Token</button>
+    <button onclick="testGetExecution()">Test Get Execution 15</button>
+    <div id="output"></div>
+
+    <script>
+        const output = document.getElementById('output');
+        
+        async function testLogin() {
+            try {
+                const response = await fetch('/api/v1/auth/token/', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username: 'admin', password: 'admin123' })
+                });
+                const data = await response.json();
+                localStorage.setItem('authToken', data.access);
+                output.innerHTML = '<pre>Login Success! Token set: ' + data.access + '</pre>';
+            } catch (error) {
+                output.innerHTML = '<pre>Login Error: ' + error.message + '</pre>';
+            }
+        }
+        
+        async function testGetExecution() {
+            try {
+                const token = localStorage.getItem('authToken');
+                const response = await fetch('/api/v1/cicd/executions/15/', {
+                    headers: { 'Authorization': 'Bearer ' + token }
+                });
+                const data = await response.json();
+                output.innerHTML = '<pre>Execution Data:\n' + JSON.stringify(data, null, 2) + '</pre>';
+            } catch (error) {
+                output.innerHTML = '<pre>Get Execution Error: ' + error.message + '</pre>';
+            }
+        }
+    </script>
+</body>
+</html>

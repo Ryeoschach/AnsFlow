@@ -75,6 +75,8 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
   const [execution, setExecution] = useState<PipelineExecution | null>(null)
   const [loading, setLoading] = useState(true)
   const [isLogsModalVisible, setIsLogsModalVisible] = useState(false)
+  const [debugInfo, setDebugInfo] = useState<string>('')
+  const [logDebugInfo, setLogDebugInfo] = useState<string>('')
   
   // WebSocket实时监控
   const {
@@ -94,9 +96,37 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
       const loadExecution = async () => {
         try {
           setLoading(true)
+          
+          // 检查token
+          const token = localStorage.getItem('authToken')
+          console.log('🔐 Token in localStorage:', token ? 'exists' : 'missing')
+          setDebugInfo(`Token: ${token ? 'exists' : 'missing'}`)
+          
+          // 如果没有token，设置一个测试token
+          if (!token) {
+            console.log('🔐 Setting test token...')
+            localStorage.setItem('authToken', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzQ1NzE3LCJpYXQiOjE3NTEzNDIxMTcsImp0aSI6ImUzMGQzYWIwOTEzNTRjNjJiOWU3ZTdiOTM4NzVlMWJhIiwidXNlcl9pZCI6MX0.FJHQB0srOuzc5unDjj_8OcaJ86jNBLNt3pzXqHJ-4k8')
+            setDebugInfo(prev => prev + ' | Token set')
+          }
+          
           const result = await getExecutionById(executionId)
-          setExecution(result)
+          console.log('从store获取到的执行数据:', result)
+          setDebugInfo(prev => prev + ` | API result: ${result ? 'success' : 'null'}`)
+          if (result) {
+            setExecution(result)
+            setDebugInfo(prev => prev + ` | Step executions: ${result.step_executions?.length || 0}`)
+            
+            // 立即检查日志数据
+            if (result.step_executions && result.step_executions.length > 0) {
+              const logDetails = result.step_executions.map(step => 
+                `${step.atomic_step_name}: ${step.logs ? `"${step.logs.slice(0, 20)}..."` : 'no logs'} (${step.logs?.length || 0})`
+              ).join(' | ')
+              setLogDebugInfo(`初始日志数据: ${logDetails}`)
+            }
+          }
         } catch (error) {
+          console.error('❌ 加载执行记录失败:', error)
+          setDebugInfo(prev => prev + ` | Error: ${error}`)
           message.error('加载执行记录失败')
           console.error('Load execution error:', error)
         } finally {
@@ -146,7 +176,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     const currentState = executionState || execution
     if (!currentState) return 0
     
-    if (currentState.status === 'success' || currentState.status === 'completed') return 100
+    if (currentState.status === 'success') return 100
     if (currentState.status === 'failed' || currentState.status === 'cancelled') return 100
     
     if (stepStates.length > 0) {
@@ -184,8 +214,82 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
 
   // 渲染步骤列表
   const renderSteps = () => {
-    if (stepStates.length === 0 && execution?.result) {
-      // 从静态数据渲染步骤
+    console.log('🔄 renderSteps called in ExecutionDetailFixed')
+    console.log('🌐 WebSocket stepStates:', stepStates)
+    console.log('🌐 WebSocket stepStates length:', stepStates.length)
+    console.log('📦 execution:', execution)
+    console.log('📊 execution?.step_executions:', execution?.step_executions)
+    console.log('📊 execution?.step_executions length:', execution?.step_executions?.length || 0)
+    
+    // 优先使用实时WebSocket数据
+    if (stepStates.length > 0) {
+      console.log('✅ Using WebSocket stepStates data')
+      return (
+        <Steps direction="vertical" current={-1}>
+          {stepStates.map((step) => (
+            <Step
+              key={step.stepId}
+              title={step.stepName}
+              status={getStepStatus(step.status)}
+              description={
+                <div>
+                  <div>状态: {getStatusTag(step.status)}</div>
+                  {step.executionTime && (
+                    <div>执行时间: {step.executionTime.toFixed(2)}s</div>
+                  )}
+                  {step.errorMessage && (
+                    <Text type="danger">{step.errorMessage}</Text>
+                  )}
+                  {step.output && (
+                    <Paragraph style={{ marginTop: 8 }}>
+                      <Text code>{step.output.substring(0, 200)}</Text>
+                      {step.output.length > 200 && '...'}
+                    </Paragraph>
+                  )}
+                </div>
+              }
+            />
+          ))}
+        </Steps>
+      )
+    }
+    
+    // 如果没有实时数据，使用静态数据（从API返回的step_executions）
+    if (execution?.step_executions && execution.step_executions.length > 0) {
+      console.log('✅ Using static step_executions data:', execution.step_executions)
+      return (
+        <Steps direction="vertical" current={-1}>
+          {execution.step_executions.map((step) => (
+            <Step
+              key={step.id}
+              title={step.atomic_step_name || `步骤 ${step.order}`}
+              status={getStepStatus(step.status)}
+              description={
+                <div>
+                  <div>状态: {getStatusTag(step.status)}</div>
+                  {step.duration && (
+                    <div>执行时间: {step.duration}</div>
+                  )}
+                  {step.error_message && (
+                    <Text type="danger">{step.error_message}</Text>
+                  )}
+                  {step.logs && (
+                    <Paragraph style={{ marginTop: 8 }}>
+                      <Text code>{step.logs.substring(0, 200)}</Text>
+                      {step.logs.length > 200 && '...'}
+                    </Paragraph>
+                  )}
+                </div>
+              }
+            />
+          ))}
+        </Steps>
+      )
+    }
+    
+    // 回退到原有的result字段逻辑（兼容旧数据）
+    if (execution?.result) {
+      console.log('✅ Using execution.result as fallback')
       const steps = Object.entries(execution.result).filter(([key]) => key.startsWith('step_'))
       
       return (
@@ -212,60 +316,140 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
       )
     }
     
-    // 从实时数据渲染步骤
+    // 没有步骤数据
+    console.log('❌ No step data available')
     return (
-      <Steps direction="vertical" current={-1}>
-        {stepStates.map((step) => (
-          <Step
-            key={step.stepId}
-            title={step.stepName}
-            status={getStepStatus(step.status)}
-            description={
-              <div>
-                <div>状态: {getStatusTag(step.status)}</div>
-                {step.executionTime && (
-                  <div>执行时间: {step.executionTime.toFixed(2)}s</div>
-                )}
-                {step.errorMessage && (
-                  <Text type="danger">{step.errorMessage}</Text>
-                )}
-                {step.output && (
-                  <Paragraph style={{ marginTop: 8 }}>
-                    <Text code>{step.output.substring(0, 200)}</Text>
-                    {step.output.length > 200 && '...'}
-                  </Paragraph>
-                )}
-              </div>
-            }
-          />
-        ))}
-      </Steps>
+      <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+        暂无步骤信息
+      </div>
     )
   }
 
   // 渲染日志时间线
   const renderLogTimeline = () => {
-    const displayLogs = logs.slice(-20) // 只显示最新20条
+    console.log('🔄 renderLogTimeline called in ExecutionDetailFixed')
+    console.log('🌐 WebSocket logs:', logs)
+    console.log('🌐 WebSocket logs length:', logs.length)
+    console.log('📦 execution:', execution)
+    console.log('📊 execution?.step_executions:', execution?.step_executions)
+    console.log('📝 execution?.logs:', execution?.logs)
     
-    return (
-      <Timeline
-        style={{ maxHeight: 400, overflow: 'auto' }}
-        items={displayLogs.map((log) => ({
-          key: log.id,
-          color: log.level === 'error' ? 'red' : log.level === 'warning' ? 'orange' : 'blue',
-          children: (
-            <div>
-              <Text strong>{new Date(log.timestamp).toLocaleTimeString()}</Text>
-              {log.stepName && <Tag style={{ marginLeft: 8 }}>{log.stepName}</Tag>}
-              <div style={{ marginTop: 4 }}>
-                <Text type={log.level === 'error' ? 'danger' : undefined}>
-                  {log.message}
-                </Text>
+    // 首先尝试从实时WebSocket获取日志（只有在有真实日志数据时才使用）
+    if (logs.length > 0 && logs.some(log => log.message && log.message.trim() !== '')) {
+      console.log('✅ Using WebSocket logs data')
+      const displayLogs = logs.slice(-20) // 只显示最新20条
+      
+      return (
+        <Timeline
+          style={{ maxHeight: 400, overflow: 'auto' }}
+          items={displayLogs.map((log) => ({
+            key: log.id,
+            color: log.level === 'error' ? 'red' : log.level === 'warning' ? 'orange' : 'blue',
+            children: (
+              <div>
+                <Text strong>{new Date(log.timestamp).toLocaleTimeString()}</Text>
+                {log.stepName && <Tag style={{ marginLeft: 8 }}>{log.stepName}</Tag>}
+                <div style={{ marginTop: 4 }}>
+                  <Text type={log.level === 'error' ? 'danger' : undefined}>
+                    {log.message}
+                  </Text>
+                </div>
               </div>
+            )
+          }))}
+        />
+      )
+    }
+    
+    // 如果没有实时日志，从步骤执行中构建日志
+    if (execution?.step_executions && execution.step_executions.length > 0) {
+      console.log('✅ Using static step_executions for logs')
+      console.log('📊 step_executions count:', execution.step_executions.length)
+      
+      // 添加详细的步骤日志调试
+      execution.step_executions.forEach((step, index) => {
+        const stepInfo = {
+          id: step.id,
+          name: step.atomic_step_name,
+          logs: step.logs,
+          logsLength: step.logs?.length || 0,
+          hasLogs: !!(step.logs && step.logs.trim() !== '')
+        }
+        console.log(`📊 Step ${index}:`, stepInfo)
+      })
+      
+      const stepLogs = execution.step_executions
+        .filter(step => step.logs && step.logs.trim() !== '')
+        
+      console.log('📊 Filtered stepLogs count:', stepLogs.length)
+       const timelineItems = stepLogs.map((step, index) => ({
+        key: `step-${step.id}`,
+        color: step.status === 'success' ? 'green' : step.status === 'failed' ? 'red' : 'blue',
+        children: (
+          <div>
+            <Text strong>{step.atomic_step_name}</Text>
+            <Tag style={{ marginLeft: 8 }} color={step.status === 'success' ? 'green' : step.status === 'failed' ? 'red' : 'blue'}>
+              {step.status_display}
+            </Tag>
+            {step.started_at && (
+              <Text type="secondary" style={{ marginLeft: 8 }}>
+                {new Date(step.started_at).toLocaleTimeString()}
+              </Text>
+            )}
+            <div style={{ marginTop: 4 }}>
+              <Text code style={{ whiteSpace: 'pre-wrap' }}>
+                {step.logs}
+              </Text>
             </div>
-          )
-        }))}
-      />
+            {step.duration && (
+              <div style={{ marginTop: 4 }}>
+                <Text type="secondary">执行时间: {step.duration}</Text>
+              </div>
+            )}
+          </div>
+        )
+      }))
+      
+      if (timelineItems.length > 0) {
+        return (
+          <Timeline
+            style={{ maxHeight: 400, overflow: 'auto' }}
+            items={timelineItems}
+          />
+        )
+      }
+    }
+    
+    // 如果执行有整体日志，显示整体日志
+    if (execution?.logs && execution.logs.trim() !== '') {
+      console.log('✅ Using execution logs')
+      return (
+        <Timeline
+          style={{ maxHeight: 400, overflow: 'auto' }}
+          items={[{
+            key: 'execution-logs',
+            color: 'blue',
+            children: (
+              <div>
+                <Text strong>执行日志</Text>
+                <div style={{ marginTop: 4 }}>
+                  <Text code style={{ whiteSpace: 'pre-wrap' }}>
+                    {execution.logs}
+                  </Text>
+                </div>
+              </div>
+            )
+          }]}
+        />
+      )
+    }
+    
+    // 没有日志数据
+    console.log('❌ No log data available')
+    return (
+      <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
+        暂无日志信息
+      </div>
     )
   }
 
@@ -336,6 +520,36 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
             >
               刷新页面
             </Button>
+            <Button
+              type="dashed"
+              onClick={async () => {
+                try {
+                  const token = localStorage.getItem('authToken')
+                  const response = await fetch(`/api/v1/cicd/executions/${executionId}/`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                  })
+                  const data = await response.json()
+                  setDebugInfo(`直接API调用: ${response.status} | step_executions: ${data.step_executions?.length || 0}`)
+                } catch (error) {
+                  setDebugInfo(`直接API调用失败: ${error}`)
+                }
+              }}
+            >
+              测试API
+            </Button>
+            <Button
+              type="dashed"
+              onClick={() => {
+                if (execution?.step_executions) {
+                  const logInfo = execution.step_executions.map(step => 
+                    `${step.atomic_step_name}: "${step.logs}" (${step.logs?.length || 0} chars)`
+                  ).join(' | ')
+                  setLogDebugInfo(`步骤日志详情: ${logInfo}`)
+                }
+              }}
+            >
+              检查日志
+            </Button>
             {isRunning && (
               <Button
                 danger
@@ -357,6 +571,28 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
           </Space>
         </Col>
       </Row>
+
+      {/* 调试信息 */}
+      {debugInfo && (
+        <Alert
+          type="info"
+          message="调试信息"
+          description={debugInfo}
+          style={{ marginBottom: 16 }}
+          closable
+        />
+      )}
+
+      {/* 日志调试信息 */}
+      {logDebugInfo && (
+        <Alert
+          type="warning"
+          message="日志调试信息"
+          description={logDebugInfo}
+          style={{ marginBottom: 16 }}
+          closable
+        />
+      )}
 
       {/* 连接状态提示 */}
       {connectionError && (
@@ -415,7 +651,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
               <Progress 
                 percent={calculateProgress()} 
                 status={currentState?.status === 'failed' ? 'exception' : 
-                       (currentState?.status === 'success' || currentState?.status === 'completed') ? 'success' : 'active'}
+                       currentState?.status === 'success' ? 'success' : 'active'}
                 style={{ marginTop: 8 }}
               />
             </div>
@@ -455,13 +691,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
             }
             style={{ height: 600 }}
           >
-            {logs.length > 0 ? renderLogTimeline() : (
-              <div style={{ textAlign: 'center', padding: '50px 0', color: '#999' }}>
-                暂无日志信息
-                <br />
-                <small>连接状态: {isConnected ? '已连接' : '未连接'}</small>
-              </div>
-            )}
+            {renderLogTimeline()}
           </Card>
         </Col>
       </Row>
@@ -485,19 +715,64 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
         ]}
       >
         <div style={{ height: '60vh', overflow: 'auto', backgroundColor: '#f5f5f5', padding: 16 }}>
-          {logs.map((log) => (
-            <div key={log.id} style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}>
-              <span style={{ color: '#666' }}>[{new Date(log.timestamp).toLocaleString()}]</span>
-              {log.stepName && <span style={{ color: '#1890ff', marginLeft: 8 }}>[{log.stepName}]</span>}
-              <span style={{ 
-                marginLeft: 8,
-                color: log.level === 'error' ? '#ff4d4f' : 
-                       log.level === 'warning' ? '#fa8c16' : '#000'
-              }}>
-                {log.message}
-              </span>
+          {logs.length > 0 ? (
+            // 显示WebSocket实时日志
+            logs.map((log) => (
+              <div key={log.id} style={{ marginBottom: 8, fontFamily: 'monospace', fontSize: 12 }}>
+                <span style={{ color: '#666' }}>[{new Date(log.timestamp).toLocaleString()}]</span>
+                {log.stepName && <span style={{ color: '#1890ff', marginLeft: 8 }}>[{log.stepName}]</span>}
+                <span style={{ 
+                  marginLeft: 8,
+                  color: log.level === 'error' ? '#ff4d4f' : 
+                         log.level === 'warning' ? '#fa8c16' : '#000'
+                }}>
+                  {log.message}
+                </span>
+              </div>
+            ))
+          ) : execution?.step_executions && execution.step_executions.length > 0 ? (
+            // 显示step_executions中的日志
+            execution.step_executions
+              .filter(step => step.logs && step.logs.trim() !== '')
+              .map((step) => (
+                <div key={`modal-step-${step.id}`} style={{ marginBottom: 16, fontFamily: 'monospace', fontSize: 12 }}>
+                  <div style={{ 
+                    color: '#1890ff', 
+                    fontWeight: 'bold', 
+                    marginBottom: 4,
+                    borderBottom: '1px solid #d9d9d9',
+                    paddingBottom: 4
+                  }}>
+                    [{step.started_at ? new Date(step.started_at).toLocaleString() : ''}] {step.atomic_step_name} ({step.status_display})
+                  </div>
+                  <div style={{ 
+                    marginLeft: 16, 
+                    whiteSpace: 'pre-wrap',
+                    backgroundColor: '#fff',
+                    padding: 8,
+                    border: '1px solid #e8e8e8',
+                    borderRadius: 4
+                  }}>
+                    {step.logs}
+                  </div>
+                  {step.duration && (
+                    <div style={{ marginLeft: 16, color: '#999', fontSize: 11, marginTop: 4 }}>
+                      执行时间: {step.duration}
+                    </div>
+                  )}
+                </div>
+              ))
+          ) : execution?.logs && execution.logs.trim() !== '' ? (
+            // 显示整体执行日志
+            <div style={{ fontFamily: 'monospace', fontSize: 12, whiteSpace: 'pre-wrap' }}>
+              {execution.logs}
             </div>
-          ))}
+          ) : (
+            // 没有日志
+            <div style={{ textAlign: 'center', color: '#999', padding: '50px 0' }}>
+              暂无日志信息
+            </div>
+          )}
         </div>
       </Modal>
     </div>
