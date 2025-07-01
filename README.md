@@ -5,44 +5,25 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![React](https://img.shields.io/badge/react-18+-blue.svg)](https://reactjs.org/)
-[![Docker](htt## 🤝 贡献指南
-
-我们欢迎所有形式的贡献！在开始之前，请阅读我们的 [贡献指南](CONTRIBUTING.md)。
-
-### 快速参与
-
-1. **Fork** 本仓库
-2. 创建特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交更改 (`git commit -m 'Add some AmazingFeature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 开启 **Pull Request**
-
-### 开发规范
-
-- 遵循 [PEP 8](https://www.python.org/dev/peps/pep-0008/) Python 代码规范
-- 遵循 [ESLint](https://eslint.org/) JavaScript/TypeScript 代码规范
-- 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/)
-- 确保所有测试通过
-- 更新相关文档
-
-### 贡献领域
-
-- 🐛 **Bug 修复** - 解决已知问题
-- ✨ **新功能开发** - 实现计划中的功能  
-- 📚 **文档改进** - 完善文档和教程
-- 🧪 **测试完善** - 增加测试覆盖率
-- 🎨 **UI/UX 优化** - 改进用户界面和体验
-
-> 💡 详细信息请查看 [CONTRIBUTING.md](CONTRIBUTING.md)io/badge/docker-ready-blue.svg)](https://www.docker.com/)
+[![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](https://www.docker.com/)
 [![WebSocket](https://img.shields.io/badge/websocket-realtime-green.svg)](https://websockets.spec.whatwg.org/)
 
 ## 🎯 当前项目状态 
 
-**📅 最新更新**: 2025年6月30日 | **🚧 当前阶段**: Phase 3 - Jenkins工具集成完善
+**📅 最新更新**: 2025年7月1日 | **✅ 状态**: 前端执行详情页面修复完成
 
+### 最新修复内容
+- ✅ **执行详情页面显示问题修复**: 解决了前端执行详情页面（`/executions/{id}/`）无法显示执行步骤和日志的问题
+- ✅ **数据流优化**: 优化了前后端数据传递，确保`step_executions`数据正确渲染
+- ✅ **日志显示增强**: 实现了多层级日志显示逻辑（WebSocket实时日志 → 步骤日志 → 整体日志）
+- ✅ **类型定义完善**: 修正了前端TypeScript类型定义，确保`PipelineExecution`接口包含`step_executions`字段
+- ✅ **用户体验优化**: 修复了Modal日志查看功能，确保"查看全部"能正确显示完整日志内容
+
+### 项目进度概览
 - ✅ **Phase 1 完成**: 核心执行引擎 (7种原子步骤，Celery异步执行)
 - ✅ **Phase 2 完成**: WebSocket实时监控系统 (<100ms延迟，完整前后端集成)
 - ✅ **Jenkins集成专项**: 工具状态系统、作业管理、构建监控、智能状态同步
+- ✅ **前端修复专项**: 执行详情页面显示问题全面解决
 - 🚧 **Phase 3 进行中**: 多CI/CD工具集成 + 可视化流水线编辑器
 - 🎯 **下一步**: GitLab CI & GitHub Actions 集成 (预计2周)
 

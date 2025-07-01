@@ -75,8 +75,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
   const [execution, setExecution] = useState<PipelineExecution | null>(null)
   const [loading, setLoading] = useState(true)
   const [isLogsModalVisible, setIsLogsModalVisible] = useState(false)
-  const [debugInfo, setDebugInfo] = useState<string>('')
-  const [logDebugInfo, setLogDebugInfo] = useState<string>('')
   
   // WebSocket实时监控
   const {
@@ -96,37 +94,9 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
       const loadExecution = async () => {
         try {
           setLoading(true)
-          
-          // 检查token
-          const token = localStorage.getItem('authToken')
-          console.log('🔐 Token in localStorage:', token ? 'exists' : 'missing')
-          setDebugInfo(`Token: ${token ? 'exists' : 'missing'}`)
-          
-          // 如果没有token，设置一个测试token
-          if (!token) {
-            console.log('🔐 Setting test token...')
-            localStorage.setItem('authToken', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzUxMzQ1NzE3LCJpYXQiOjE3NTEzNDIxMTcsImp0aSI6ImUzMGQzYWIwOTEzNTRjNjJiOWU3ZTdiOTM4NzVlMWJhIiwidXNlcl9pZCI6MX0.FJHQB0srOuzc5unDjj_8OcaJ86jNBLNt3pzXqHJ-4k8')
-            setDebugInfo(prev => prev + ' | Token set')
-          }
-          
           const result = await getExecutionById(executionId)
-          console.log('从store获取到的执行数据:', result)
-          setDebugInfo(prev => prev + ` | API result: ${result ? 'success' : 'null'}`)
-          if (result) {
-            setExecution(result)
-            setDebugInfo(prev => prev + ` | Step executions: ${result.step_executions?.length || 0}`)
-            
-            // 立即检查日志数据
-            if (result.step_executions && result.step_executions.length > 0) {
-              const logDetails = result.step_executions.map(step => 
-                `${step.atomic_step_name}: ${step.logs ? `"${step.logs.slice(0, 20)}..."` : 'no logs'} (${step.logs?.length || 0})`
-              ).join(' | ')
-              setLogDebugInfo(`初始日志数据: ${logDetails}`)
-            }
-          }
+          setExecution(result)
         } catch (error) {
-          console.error('❌ 加载执行记录失败:', error)
-          setDebugInfo(prev => prev + ` | Error: ${error}`)
           message.error('加载执行记录失败')
           console.error('Load execution error:', error)
         } finally {
@@ -214,16 +184,8 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
 
   // 渲染步骤列表
   const renderSteps = () => {
-    console.log('🔄 renderSteps called in ExecutionDetailFixed')
-    console.log('🌐 WebSocket stepStates:', stepStates)
-    console.log('🌐 WebSocket stepStates length:', stepStates.length)
-    console.log('📦 execution:', execution)
-    console.log('📊 execution?.step_executions:', execution?.step_executions)
-    console.log('📊 execution?.step_executions length:', execution?.step_executions?.length || 0)
-    
     // 优先使用实时WebSocket数据
     if (stepStates.length > 0) {
-      console.log('✅ Using WebSocket stepStates data')
       return (
         <Steps direction="vertical" current={-1}>
           {stepStates.map((step) => (
@@ -256,7 +218,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     
     // 如果没有实时数据，使用静态数据（从API返回的step_executions）
     if (execution?.step_executions && execution.step_executions.length > 0) {
-      console.log('✅ Using static step_executions data:', execution.step_executions)
       return (
         <Steps direction="vertical" current={-1}>
           {execution.step_executions.map((step) => (
@@ -289,7 +250,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     
     // 回退到原有的result字段逻辑（兼容旧数据）
     if (execution?.result) {
-      console.log('✅ Using execution.result as fallback')
       const steps = Object.entries(execution.result).filter(([key]) => key.startsWith('step_'))
       
       return (
@@ -317,7 +277,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     }
     
     // 没有步骤数据
-    console.log('❌ No step data available')
     return (
       <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
         暂无步骤信息
@@ -327,16 +286,8 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
 
   // 渲染日志时间线
   const renderLogTimeline = () => {
-    console.log('🔄 renderLogTimeline called in ExecutionDetailFixed')
-    console.log('🌐 WebSocket logs:', logs)
-    console.log('🌐 WebSocket logs length:', logs.length)
-    console.log('📦 execution:', execution)
-    console.log('📊 execution?.step_executions:', execution?.step_executions)
-    console.log('📝 execution?.logs:', execution?.logs)
-    
     // 首先尝试从实时WebSocket获取日志（只有在有真实日志数据时才使用）
     if (logs.length > 0 && logs.some(log => log.message && log.message.trim() !== '')) {
-      console.log('✅ Using WebSocket logs data')
       const displayLogs = logs.slice(-20) // 只显示最新20条
       
       return (
@@ -363,9 +314,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     
     // 如果没有实时日志，从步骤执行中构建日志
     if (execution?.step_executions && execution.step_executions.length > 0) {
-      console.log('✅ Using static step_executions for logs')
-      console.log('📊 step_executions count:', execution.step_executions.length)
-      
       // 添加详细的步骤日志调试
       execution.step_executions.forEach((step, index) => {
         const stepInfo = {
@@ -375,13 +323,10 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
           logsLength: step.logs?.length || 0,
           hasLogs: !!(step.logs && step.logs.trim() !== '')
         }
-        console.log(`📊 Step ${index}:`, stepInfo)
       })
       
       const stepLogs = execution.step_executions
         .filter(step => step.logs && step.logs.trim() !== '')
-        
-      console.log('📊 Filtered stepLogs count:', stepLogs.length)
        const timelineItems = stepLogs.map((step, index) => ({
         key: `step-${step.id}`,
         color: step.status === 'success' ? 'green' : step.status === 'failed' ? 'red' : 'blue',
@@ -422,7 +367,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     
     // 如果执行有整体日志，显示整体日志
     if (execution?.logs && execution.logs.trim() !== '') {
-      console.log('✅ Using execution logs')
       return (
         <Timeline
           style={{ maxHeight: 400, overflow: 'auto' }}
@@ -445,7 +389,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     }
     
     // 没有日志数据
-    console.log('❌ No log data available')
     return (
       <div style={{ textAlign: 'center', padding: '20px', color: '#999' }}>
         暂无日志信息
@@ -520,36 +463,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
             >
               刷新页面
             </Button>
-            <Button
-              type="dashed"
-              onClick={async () => {
-                try {
-                  const token = localStorage.getItem('authToken')
-                  const response = await fetch(`/api/v1/cicd/executions/${executionId}/`, {
-                    headers: { 'Authorization': `Bearer ${token}` }
-                  })
-                  const data = await response.json()
-                  setDebugInfo(`直接API调用: ${response.status} | step_executions: ${data.step_executions?.length || 0}`)
-                } catch (error) {
-                  setDebugInfo(`直接API调用失败: ${error}`)
-                }
-              }}
-            >
-              测试API
-            </Button>
-            <Button
-              type="dashed"
-              onClick={() => {
-                if (execution?.step_executions) {
-                  const logInfo = execution.step_executions.map(step => 
-                    `${step.atomic_step_name}: "${step.logs}" (${step.logs?.length || 0} chars)`
-                  ).join(' | ')
-                  setLogDebugInfo(`步骤日志详情: ${logInfo}`)
-                }
-              }}
-            >
-              检查日志
-            </Button>
             {isRunning && (
               <Button
                 danger
@@ -571,28 +484,6 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
           </Space>
         </Col>
       </Row>
-
-      {/* 调试信息 */}
-      {debugInfo && (
-        <Alert
-          type="info"
-          message="调试信息"
-          description={debugInfo}
-          style={{ marginBottom: 16 }}
-          closable
-        />
-      )}
-
-      {/* 日志调试信息 */}
-      {logDebugInfo && (
-        <Alert
-          type="warning"
-          message="日志调试信息"
-          description={logDebugInfo}
-          style={{ marginBottom: 16 }}
-          closable
-        />
-      )}
 
       {/* 连接状态提示 */}
       {connectionError && (
