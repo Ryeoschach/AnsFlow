@@ -1013,3 +1013,230 @@ def create_jenkins_job_config_for_step(step: AtomicStep) -> str:
             </builders>
         </project>
         """
+
+
+@shared_task(bind=True)
+def monitor_remote_execution(self, execution_id: int):
+    """
+    监控远程CI/CD工具的流水线执行状态
+    
+    Args:
+        execution_id: PipelineExecution 的 ID
+    """
+    try:
+        execution = PipelineExecution.objects.select_related('cicd_tool').get(id=execution_id)
+        
+        if not execution.cicd_tool or not execution.external_id:
+            logger.error(f"No CI/CD tool or external ID for execution {execution_id}")
+            return
+        
+        logger.info(f"Starting monitoring for remote execution {execution_id} (external ID: {execution.external_id})")
+        
+        from .adapters import AdapterFactory
+        
+        # 创建适配器
+        adapter = AdapterFactory.create_adapter(
+            execution.cicd_tool.tool_type,
+            base_url=execution.cicd_tool.base_url,
+            username=execution.cicd_tool.username,
+            token=execution.cicd_tool.token,
+            **execution.cicd_tool.config
+        )
+        
+        # 运行异步监控
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(
+                _async_monitor_remote_execution(adapter, execution)
+            )
+            return result
+        finally:
+            loop.close()
+            
+    except PipelineExecution.DoesNotExist:
+        logger.error(f"Pipeline execution {execution_id} not found")
+    except Exception as e:
+        logger.error(f"Error monitoring remote execution {execution_id}: {e}", exc_info=True)
+        
+        # 如果监控失败，标记执行为失败状态
+        try:
+            execution = PipelineExecution.objects.get(id=execution_id)
+            if execution.status in ['pending', 'running']:
+                execution.status = 'failed'
+                execution.completed_at = timezone.now()
+                execution.logs = f"Monitoring failed: {str(e)}"
+                execution.save()
+        except:
+            pass
+
+
+async def _async_monitor_remote_execution(adapter, execution: PipelineExecution):
+    """异步监控远程执行"""
+    from asgiref.sync import sync_to_async
+    
+    max_checks = 360  # 最多检查6小时 (每分钟检查一次)
+    check_count = 0
+    
+    async with adapter:
+        while check_count < max_checks:
+            try:
+                # 获取执行状态
+                status_data = await adapter.get_pipeline_status(execution.external_id)
+                current_status = status_data.get('status', 'unknown')
+                
+                logger.info(f"Remote execution {execution.id} status: {current_status}")
+                
+                # 映射外部状态到内部状态
+                internal_status = _map_external_status(current_status)
+                
+                # 更新执行状态
+                if internal_status != execution.status:
+                    execution.status = internal_status
+                    
+                    # 更新所有步骤的状态
+                    await _update_step_executions_status(execution, internal_status)
+                    
+                    if internal_status in ['success', 'failed', 'cancelled']:
+                        execution.completed_at = timezone.now()
+                        
+                        # 获取日志
+                        try:
+                            logs = await adapter.get_logs(execution.external_id)
+                            execution.logs = logs
+                        except Exception as e:
+                            logger.warning(f"Failed to get logs for {execution.external_id}: {e}")
+                            execution.logs = f"Execution completed but failed to get logs: {str(e)}"
+                    
+                    await sync_to_async(execution.save)()
+                    logger.info(f"Updated execution {execution.id} status to {internal_status}")
+                
+                # 如果执行完成，退出监控
+                if internal_status in ['success', 'failed', 'cancelled', 'timeout']:
+                    logger.info(f"Remote execution monitoring completed: {execution.id} - {internal_status}")
+                    return {'status': 'completed', 'final_status': internal_status}
+                
+                # 等待1分钟后再次检查
+                await asyncio.sleep(60)
+                check_count += 1
+            
+            except Exception as e:
+                logger.error(f"Error checking remote execution status: {e}")
+                check_count += 1
+                await asyncio.sleep(60)
+        
+        # 如果超时仍未完成，标记为超时
+        if check_count >= max_checks:
+            logger.warning(f"Remote execution monitoring timeout: {execution.id}")
+            execution.status = 'timeout'
+            execution.completed_at = timezone.now()
+            execution.logs = execution.logs + "\n\nExecution timed out after 6 hours"
+            
+            # 更新步骤状态为超时
+            await _update_step_executions_status(execution, 'timeout')
+            
+            await sync_to_async(execution.save)()
+            return {'status': 'timeout'}
+
+
+def _map_external_status(external_status: str) -> str:
+    """映射外部CI/CD工具的状态到内部状态"""
+    status_mapping = {
+        # Jenkins
+        'SUCCESS': 'success',
+        'FAILURE': 'failed',
+        'ABORTED': 'cancelled',
+        'UNSTABLE': 'failed',
+        'IN_PROGRESS': 'running',
+        'NOT_BUILT': 'pending',
+        # GitLab CI
+        'success': 'success',
+        'failed': 'failed',
+        'canceled': 'cancelled',
+        'cancelled': 'cancelled',
+        'running': 'running',
+        'pending': 'pending',
+        'created': 'pending',
+        'manual': 'pending',
+        # GitHub Actions
+        'completed': 'success',
+        'failure': 'failed',
+        'cancelled': 'cancelled',
+        'in_progress': 'running',
+        'queued': 'pending',
+        'requested': 'pending',
+        # 通用状态
+        'unknown': 'running',
+        'error': 'failed'
+    }
+    
+    return status_mapping.get(external_status.lower(), 'running')
+
+
+async def _update_step_executions_status(execution: PipelineExecution, pipeline_status: str):
+    """更新步骤执行状态"""
+    from asgiref.sync import sync_to_async
+    from .models import StepExecution
+    
+    try:
+        logger.info(f"Updating step executions for pipeline {execution.id} to status {pipeline_status}")
+        
+        # 获取所有步骤执行记录（预取关联对象）
+        step_executions = await sync_to_async(list)(
+            StepExecution.objects.filter(pipeline_execution=execution)
+            .select_related('atomic_step')
+            .order_by('order')
+        )
+        
+        if not step_executions:
+            logger.info(f"No step executions found for pipeline execution {execution.id}")
+            return
+        
+        logger.info(f"Found {len(step_executions)} step executions for pipeline {execution.id}")
+        for i, step in enumerate(step_executions):
+            # 由于我们使用了 select_related，atomic_step 已经预取，可以安全访问
+            logger.info(f"  Step {i+1}: {step.atomic_step.name} - current status: {step.status}")
+        
+        # 根据流水线状态更新步骤状态
+        if pipeline_status == 'running':
+            # 如果流水线正在运行，将第一个步骤设为running，其他保持pending
+            for i, step_exec in enumerate(step_executions):
+                if i == 0 and step_exec.status == 'pending':
+                    step_exec.status = 'running'
+                    step_exec.started_at = timezone.now()
+                    await sync_to_async(step_exec.save)()
+                    logger.info(f"Updated step {step_exec.atomic_step.name} to running")
+                    break
+        
+        elif pipeline_status in ['success', 'failed', 'cancelled', 'timeout']:
+            # 如果流水线完成，更新所有步骤状态
+            if pipeline_status == 'success':
+                final_step_status = 'success'
+            elif pipeline_status == 'timeout':
+                final_step_status = 'timeout'
+            else:
+                final_step_status = 'failed'  # failed, cancelled 都映射为 failed
+            
+            logger.info(f"Setting all pending/running steps to {final_step_status}")
+            
+            updated_count = 0
+            for step_exec in step_executions:
+                if step_exec.status in ['pending', 'running']:
+                    logger.info(f"Updating step {step_exec.atomic_step.name} from {step_exec.status} to {final_step_status}")
+                    step_exec.status = final_step_status
+                    step_exec.completed_at = timezone.now()
+                    if not step_exec.started_at:
+                        step_exec.started_at = step_exec.completed_at
+                    await sync_to_async(step_exec.save)()
+                    updated_count += 1
+                    logger.info(f"Successfully updated step {step_exec.atomic_step.name} to {final_step_status}")
+                else:
+                    logger.info(f"Step {step_exec.atomic_step.name} already has final status {step_exec.status}")
+            
+            logger.info(f"Updated {updated_count} step executions to {final_step_status}")
+        
+        logger.info(f"Finished updating step executions for pipeline {execution.id}")
+        
+    except Exception as e:
+        logger.error(f"Failed to update step execution status for pipeline {execution.id}: {e}", exc_info=True)

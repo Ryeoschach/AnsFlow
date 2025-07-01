@@ -164,55 +164,18 @@ class UnifiedCICDEngine:
             ).get(id=execution_id)
             
             logger.info(f"Starting pipeline execution {execution_id}")
+            logger.info(f"Pipeline execution mode: {execution.pipeline.execution_mode}")
+            logger.info(f"Associated CI/CD tool: {execution.cicd_tool}")
             
-            # 获取流水线的原子步骤
-            atomic_steps = list(
-                AtomicStep.objects.filter(
-                    pipeline=execution.pipeline
-                ).order_by('order')
-            )
-            
-            if not atomic_steps:
-                logger.warning(f"No atomic steps found for pipeline {execution.pipeline.id}")
-                execution.status = 'failed'
-                execution.completed_at = timezone.now()
-                execution.logs = "No atomic steps found in pipeline"
-                execution.save()
-                return
-            
-            logger.info(f"Found {len(atomic_steps)} atomic steps to execute")
-            
-            # 使用同步执行器
-            sync_executor = SyncPipelineExecutor()
-            
-            # 准备工具配置
-            tool_config = {}
-            if execution.cicd_tool:
-                tool_config = {
-                    'tool_type': execution.cicd_tool.tool_type,
-                    'base_url': execution.cicd_tool.base_url,
-                    'project_id': execution.cicd_tool.project_id,
-                    'config': execution.cicd_tool.config
-                }
-            
-            # 执行流水线
-            result = sync_executor.execute_pipeline(
-                execution_id=execution_id,
-                tool_config=tool_config,
-                parameters=execution.parameters
-            )
-            
-            # 检查结果类型并处理
-            if result is None:
-                logger.warning(f"Pipeline execution returned None for execution {execution_id}")
-                result = {'success': False, 'error_message': 'Execution returned None'}
-            elif not isinstance(result, dict):
-                logger.error(f"Pipeline execution returned unexpected type: {type(result)} - {result}")
-                result = {'success': False, 'error_message': f'Unexpected result type: {type(result)}'}
-            
-            success = result.get('success', False)
-            logger.info(f"Pipeline execution completed: {execution.id} - {'success' if success else 'failed'}")
-            return result
+            # 根据执行模式决定执行方式
+            if execution.pipeline.execution_mode == 'remote' and execution.cicd_tool:
+                # 远程执行：在外部CI/CD工具上执行
+                logger.info(f"Using remote execution mode with {execution.cicd_tool.tool_type}")
+                return self._perform_remote_execution(execution)
+            else:
+                # 本地执行：直接执行原子步骤
+                logger.info("Using local execution mode")
+                return self._perform_local_execution(execution)
         
         except Exception as e:
             logger.error(f"Pipeline execution failed: {e}", exc_info=True)
@@ -225,6 +188,188 @@ class UnifiedCICDEngine:
                 execution.save()
             except Exception as save_error:
                 logger.error(f"Failed to save error state: {save_error}")
+    
+    def _perform_local_execution(self, execution: PipelineExecution):
+        """本地执行原子步骤"""
+        logger.info(f"Performing local execution for {execution.id}")
+        
+        # 获取流水线的原子步骤
+        atomic_steps = list(
+            AtomicStep.objects.filter(
+                pipeline=execution.pipeline
+            ).order_by('order')
+        )
+        
+        if not atomic_steps:
+            logger.warning(f"No atomic steps found for pipeline {execution.pipeline.id}")
+            execution.status = 'failed'
+            execution.completed_at = timezone.now()
+            execution.logs = "No atomic steps found in pipeline"
+            execution.save()
+            return
+        
+        logger.info(f"Found {len(atomic_steps)} atomic steps to execute locally")
+        
+        # 使用同步执行器进行本地执行
+        sync_executor = SyncPipelineExecutor()
+        
+        # 准备工具配置（用于本地执行）
+        tool_config = {}
+        if execution.cicd_tool:
+            tool_config = {
+                'tool_type': execution.cicd_tool.tool_type,
+                'base_url': execution.cicd_tool.base_url,
+                'project_id': execution.cicd_tool.project_id,
+                'config': execution.cicd_tool.config
+            }
+        
+        # 执行流水线
+        result = sync_executor.execute_pipeline(
+            execution_id=execution.id,
+            tool_config=tool_config,
+            parameters=execution.parameters
+        )
+        
+        # 检查结果类型并处理
+        if result is None:
+            logger.warning(f"Pipeline execution returned None for execution {execution.id}")
+            result = {'success': False, 'error_message': 'Execution returned None'}
+        elif not isinstance(result, dict):
+            logger.error(f"Pipeline execution returned unexpected type: {type(result)} - {result}")
+            result = {'success': False, 'error_message': f'Unexpected result type: {type(result)}'}
+        
+        success = result.get('success', False)
+        logger.info(f"Local pipeline execution completed: {execution.id} - {'success' if success else 'failed'}")
+        return result
+    
+    def _perform_remote_execution(self, execution: PipelineExecution):
+        """在外部CI/CD工具上执行流水线"""
+        logger.info(f"Performing remote execution for {execution.id} using {execution.cicd_tool.tool_type}")
+        
+        try:
+            # 创建适配器
+            from .adapters import AdapterFactory
+            adapter = AdapterFactory.create_adapter(
+                execution.cicd_tool.tool_type,
+                base_url=execution.cicd_tool.base_url,
+                username=execution.cicd_tool.username,
+                token=execution.cicd_tool.token,
+                **execution.cicd_tool.config
+            )
+            
+            # 构建流水线定义
+            pipeline_definition = self._build_pipeline_definition_from_atomic_steps(execution)
+            
+            # 在外部工具上创建并执行流水线
+            logger.info(f"Creating pipeline in {execution.cicd_tool.tool_type}")
+            
+            # 运行异步代码
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+            try:
+                # 创建并执行流水线
+                result = loop.run_until_complete(self._async_remote_execution(adapter, execution, pipeline_definition))
+                return result
+            finally:
+                loop.close()
+                
+        except Exception as e:
+            logger.error(f"Remote execution failed for {execution.id}: {e}", exc_info=True)
+            # 更新执行状态
+            execution.status = 'failed'
+            execution.completed_at = timezone.now()
+            execution.logs = f"Remote execution failed: {str(e)}"
+            execution.save()
+            return {'success': False, 'error_message': str(e)}
+    
+    async def _async_remote_execution(self, adapter, execution: PipelineExecution, pipeline_definition):
+        """异步执行远程流水线"""
+        async with adapter:
+            # 创建步骤执行记录（为原子步骤）
+            await self._create_step_executions_for_remote(execution)
+            
+            # 先创建或更新流水线
+            job_name = await adapter.create_pipeline(pipeline_definition)
+            
+            # 然后触发执行
+            execution_result = await adapter.trigger_pipeline(pipeline_definition)
+            
+            if execution_result and execution_result.success:
+                # 从执行结果中获取外部ID
+                external_id = execution_result.external_id
+                
+                # 更新执行记录的外部ID
+                execution.external_id = external_id
+                execution.status = 'running'
+                execution.started_at = timezone.now()
+                await sync_to_async(execution.save)(update_fields=['external_id', 'status', 'started_at'])
+                
+                logger.info(f"Pipeline created and triggered in {execution.cicd_tool.tool_type} with external ID: {external_id}")
+                
+                # 启动监控任务（在后台异步监控）
+                from .tasks import monitor_remote_execution
+                monitor_remote_execution.delay(execution.id)
+                
+                return {'success': True, 'external_id': external_id}
+            else:
+                error_msg = execution_result.error if hasattr(execution_result, 'error') else execution_result.message if execution_result else "Unknown error"
+                logger.error(f"Failed to start pipeline execution: {error_msg}")
+                return {'success': False, 'error_message': error_msg}
+    
+    async def _create_step_executions_for_remote(self, execution: PipelineExecution):
+        """为远程执行创建步骤执行记录"""
+        # 获取原子步骤
+        atomic_steps = await sync_to_async(list)(
+            AtomicStep.objects.filter(
+                pipeline=execution.pipeline
+            ).order_by('order')
+        )
+        
+        logger.info(f"Creating step execution records for {len(atomic_steps)} atomic steps")
+        
+        # 为每个原子步骤创建 StepExecution 记录
+        for index, atomic_step in enumerate(atomic_steps):
+            step_execution = await sync_to_async(StepExecution.objects.create)(
+                pipeline_execution=execution,
+                atomic_step=atomic_step,
+                status='pending',
+                order=index + 1
+            )
+            logger.debug(f"Created step execution record: {step_execution.id} for step {atomic_step.name}")
+    
+    def _build_pipeline_definition_from_atomic_steps(self, execution: PipelineExecution):
+        """从原子步骤构建流水线定义"""
+        # 获取原子步骤
+        atomic_steps = list(
+            AtomicStep.objects.filter(
+                pipeline=execution.pipeline
+            ).order_by('order')
+        )
+        
+        # 转换为流水线定义格式
+        steps = []
+        for atomic_step in atomic_steps:
+            step = {
+                'name': atomic_step.name,
+                'type': atomic_step.step_type,
+                'parameters': atomic_step.parameters,
+                'description': atomic_step.description
+            }
+            steps.append(step)
+        
+        pipeline_definition = PipelineDefinition(
+            name=execution.pipeline.name,
+            steps=steps,
+            triggers=execution.pipeline.config.get('triggers', {}) if execution.pipeline.config else {},
+            environment=execution.parameters,
+            artifacts=execution.pipeline.config.get('artifacts', []) if execution.pipeline.config else [],
+            timeout=execution.pipeline.config.get('timeout', 3600) if execution.pipeline.config else 3600
+        )
+        
+        logger.info(f"Built pipeline definition with {len(steps)} steps for {execution.pipeline.name}")
+        return pipeline_definition
     
     def _build_pipeline_definition(self, execution: PipelineExecution) -> PipelineDefinition:
         """构建流水线定义（保留用于外部工具兼容性）"""

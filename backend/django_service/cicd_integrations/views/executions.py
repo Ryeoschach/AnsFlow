@@ -73,7 +73,11 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
         if triggered_by:
             queryset = queryset.filter(triggered_by_id=triggered_by)
         
-        return queryset.select_related('pipeline', 'cicd_tool', 'triggered_by').order_by('-created_at')
+        return queryset.select_related(
+            'pipeline', 'cicd_tool', 'triggered_by'
+        ).prefetch_related(
+            'step_executions'
+        ).order_by('-created_at')
     
     @extend_schema(
         summary="Cancel execution",

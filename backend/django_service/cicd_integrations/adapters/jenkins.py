@@ -68,15 +68,20 @@ class JenkinsAdapter(CICDAdapter):
         
         for i, step in enumerate(steps):
             step_type = step.get('type', '')
+            step_name = step.get('name', f'Stage {i+1}')
             params = step.get('parameters', {})
-            stage_name = params.get('stage', f'Stage {i+1}')
+            description = step.get('description', '')
             
             # 根据步骤类型生成不同的 Jenkins 代码
             stage_script = self._generate_stage_script(step_type, params)
             
+            # 添加描述作为注释
+            comment = f"// {description}" if description else ""
+            
             stage = f"""
-        stage('{stage_name}') {{
+        stage('{step_name}') {{
             steps {{
+                {comment}
                 {stage_script}
             }}
         }}"""
@@ -86,7 +91,38 @@ class JenkinsAdapter(CICDAdapter):
     
     def _generate_stage_script(self, step_type: str, params: Dict[str, Any]) -> str:
         """根据步骤类型生成 Jenkins 脚本"""
-        if step_type == 'git_checkout':
+        if step_type == 'fetch_code' or step_type == '代码拉取':
+            # 代码拉取步骤 - 优先使用用户自定义命令
+            custom_command = params.get('command', params.get('cammand', ''))  # 支持拼写错误
+            
+            if custom_command:
+                return f"sh '{custom_command}'"
+            
+            # 如果没有自定义命令，使用标准Git checkout
+            repo_url = params.get('repository', params.get('repository_url', ''))
+            branch = params.get('branch', 'main')
+            if repo_url:
+                return f"""
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: '{branch}']],
+                    userRemoteConfigs: [[url: '{repo_url}']]
+                ])"""
+            else:
+                return "checkout scm"
+        
+        elif step_type == 'test':
+            # 测试执行步骤
+            test_command = params.get('test_command', 'npm test')
+            coverage = params.get('coverage', False)
+            script_parts = [f"sh '{test_command}'"]
+            
+            if coverage:
+                script_parts.append("publishHTML([allowMissing: false, alwaysLinkToLastBuild: true, keepAll: true, reportDir: 'coverage', reportFiles: 'index.html', reportName: 'Coverage Report'])")
+            
+            return '\n                '.join(script_parts)
+        
+        elif step_type == 'git_checkout':
             repo_url = params.get('repository_url', '')
             branch = params.get('branch', 'main')
             if repo_url:
@@ -94,6 +130,88 @@ class JenkinsAdapter(CICDAdapter):
             else:
                 return "checkout scm"
         
+        elif step_type == 'build' or step_type == '构建':
+            # 构建步骤 - 优先使用用户自定义命令
+            custom_command = params.get('command', '')
+            
+            if custom_command:
+                return f"sh '{custom_command}'"
+            
+            # 如果没有自定义命令，使用标准构建逻辑
+            build_tool = params.get('build_tool', 'npm')
+            build_command = params.get('build_command', '')
+            
+            if build_tool == 'npm':
+                command = build_command or 'npm run build'
+                return f"""
+                sh 'npm ci'
+                sh '{command}'"""
+            elif build_tool == 'maven':
+                goals = build_command or 'clean compile package'
+                return f"sh 'mvn {goals}'"
+            elif build_tool == 'gradle':
+                tasks = build_command or 'build'
+                return f"sh './gradlew {tasks}'"
+            elif build_tool == 'docker':
+                dockerfile = params.get('dockerfile', 'Dockerfile')
+                tag = params.get('tag', 'latest')
+                context = params.get('context', '.')
+                return f"sh 'docker build -f {dockerfile} -t {tag} {context}'"
+            else:
+                command = build_command or 'echo "No build command specified"'
+                return f"sh '{command}'"
+        
+        elif step_type == 'deploy':
+            # 部署步骤
+            deploy_type = params.get('deploy_type', 'kubernetes')
+            
+            if deploy_type == 'kubernetes':
+                namespace = params.get('namespace', 'default')
+                manifest_path = params.get('manifest_path', 'k8s/')
+                return f"sh 'kubectl apply -f {manifest_path} -n {namespace}'"
+            elif deploy_type == 'docker':
+                image = params.get('image', 'app:latest')
+                container_name = params.get('container_name', 'app')
+                return f"""
+                sh 'docker stop {container_name} || true'
+                sh 'docker rm {container_name} || true'
+                sh 'docker run -d --name {container_name} {image}'"""
+            else:
+                deploy_command = params.get('deploy_command', 'echo "No deploy command specified"')
+                return f"sh '{deploy_command}'"
+        
+        elif step_type == 'security_scan':
+            # 安全扫描步骤
+            scan_type = params.get('scan_type', 'zap')
+            
+            if scan_type == 'zap':
+                target_url = params.get('target_url', 'http://localhost')
+                return f"sh 'docker run -t owasp/zap2docker-stable zap-baseline.py -t {target_url}'"
+            elif scan_type == 'sonarqube':
+                project_key = params.get('project_key', 'default')
+                return f"sh 'sonar-scanner -Dsonar.projectKey={project_key}'"
+            else:
+                scan_command = params.get('scan_command', 'echo "No security scan command specified"')
+                return f"sh '{scan_command}'"
+        
+        elif step_type == 'notify':
+            # 通知步骤
+            message = params.get('message', 'Pipeline completed')
+            webhook_url = params.get('webhook_url', '')
+            
+            if webhook_url:
+                escaped_message = message.replace('"', '\\"')
+                curl_data = '{\\"text\\": \\"' + escaped_message + '\\"}'
+                return f"""
+                sh 'curl -X POST -H "Content-Type: application/json" -d "{curl_data}" {webhook_url}'"""
+            else:
+                return f"echo '{message}'"
+        
+        elif step_type == 'custom':
+            # 自定义步骤
+            command = params.get('command', params.get('script', 'echo "No command specified"'))
+            return f"sh '{command}'"
+
         elif step_type == 'shell_script':
             script = params.get('script', 'echo "No script provided"')
             return f"sh '{script}'"
@@ -156,9 +274,19 @@ class JenkinsAdapter(CICDAdapter):
             return "echo 'Environment variables configured'"
         
         else:
-            # 默认脚本步骤
-            command = params.get('command', f'echo "Unknown step type: {step_type}"')
-            return f"sh '{command}'"
+            # 默认处理 - 优先使用用户自定义命令
+            command = params.get('command', params.get('cammand', ''))  # 支持拼写错误
+            
+            if command:
+                return f"sh '{command}'"
+            else:
+                # 如果没有自定义命令，尝试其他常见参数名
+                script = params.get('script', '')
+                if script:
+                    return f"sh '{script}'"
+                
+                # 最后的备用方案
+                return f"echo 'Step type: {step_type} - No command specified'"
     
     async def create_pipeline_file(self, pipeline_def: PipelineDefinition, project_path: str = "") -> str:
         """创建 Jenkinsfile 内容"""
@@ -205,7 +333,10 @@ pipeline {{
     
     async def create_pipeline(self, definition: PipelineDefinition) -> str:
         """在 Jenkins 中创建流水线任务"""
+        # 更安全的 job 名称生成，移除特殊字符
+        import re
         job_name = definition.name.replace(' ', '-').lower()
+        job_name = re.sub(r'[^a-z0-9\-_]', '', job_name)  # 只保留字母、数字、连字符和下划线
         
         # 生成 Jenkinsfile
         jenkinsfile = await self.create_pipeline_file(definition)
@@ -229,64 +360,95 @@ pipeline {{
   <disabled>false</disabled>
 </flow-definition>"""
         
-        # 创建或更新 Job
-        url = f"{self.base_url}/job/{job_name}/config.xml"
-        
         try:
-            # 先检查 Job 是否存在
-            check_response = await self.client.get(url, auth=self.auth)
+            # 先尝试更新现有 Job（如果存在）
+            update_url = f"{self.base_url}/job/{job_name}/config.xml"
+            logger.info(f"Attempting to update Jenkins job '{job_name}'")
             
-            if check_response.status_code == 404:
+            response = await self._make_authenticated_request(
+                'POST',
+                update_url,
+                content=job_config,
+                headers={'Content-Type': 'application/xml'}
+            )
+            
+            if response.status_code == 200:
+                logger.info(f"Jenkins job '{job_name}' updated successfully")
+                return job_name
+            elif response.status_code == 404:
                 # Job 不存在，创建新 Job
-                create_url = f"{self.base_url}/createItem?name={job_name}"
-                response = await self._make_authenticated_request(
-                    'POST',
-                    create_url,
-                    content=job_config,
-                    headers={'Content-Type': 'application/xml'}
-                )
+                logger.info(f"Jenkins job '{job_name}' not found, creating new job")
             else:
-                # Job 存在，更新配置
-                response = await self._make_authenticated_request(
-                    'POST',
-                    url,
-                    content=job_config,
-                    headers={'Content-Type': 'application/xml'}
-                )
+                # 更新失败，删除旧 job 并重新创建
+                logger.warning(f"Failed to update Jenkins job config: {response.status_code}")
+                logger.info(f"Attempting to delete and recreate Jenkins job '{job_name}'")
+                
+                # 尝试删除现有 job
+                delete_url = f"{self.base_url}/job/{job_name}/doDelete"
+                delete_response = await self._make_authenticated_request('POST', delete_url)
+                
+                if delete_response.status_code in [200, 302]:
+                    logger.info(f"Successfully deleted existing Jenkins job '{job_name}'")
+                else:
+                    logger.warning(f"Failed to delete existing job: {delete_response.status_code}")
+            
+            # 创建新 Job
+            create_url = f"{self.base_url}/createItem?name={job_name}"
+            response = await self._make_authenticated_request(
+                'POST',
+                create_url,
+                content=job_config,
+                headers={'Content-Type': 'application/xml'}
+            )
             
             if response.status_code in [200, 201]:
-                logger.info(f"Jenkins job '{job_name}' created/updated successfully")
+                logger.info(f"Jenkins job '{job_name}' created successfully")
                 return job_name
+            elif response.status_code == 400 and "already exists" in response.text:
+                # Job 已存在，强制更新
+                logger.warning(f"Job already exists, forcing update for '{job_name}'")
+                
+                # 再次尝试更新
+                response = await self._make_authenticated_request(
+                    'POST',
+                    update_url,
+                    content=job_config,
+                    headers={'Content-Type': 'application/xml'}
+                )
+                
+                if response.status_code == 200:
+                    logger.info(f"Jenkins job '{job_name}' force updated successfully")
+                    return job_name
+                else:
+                    logger.error(f"Force update also failed: {response.status_code} - {response.text}")
+                    # 返回 job_name 但记录错误
+                    return job_name
             else:
+                logger.error(f"Failed to create Jenkins job: {response.status_code} - {response.text}")
                 raise Exception(f"Failed to create Jenkins job: {response.status_code} - {response.text}")
         
         except Exception as e:
-            logger.error(f"Error creating Jenkins job: {e}")
+            logger.error(f"Error creating/updating Jenkins job: {e}")
+            # 如果是 job 已存在的错误，我们仍然返回 job_name
+            if "already exists" in str(e):
+                logger.info(f"Jenkins job '{job_name}' already exists, proceeding with existing job")
+                return job_name
             raise
     
     async def trigger_pipeline(self, pipeline_def: PipelineDefinition, project_path: str = "") -> ExecutionResult:
         """触发 Jenkins 流水线执行"""
         try:
-            # 首先创建或更新流水线
-            job_name = await self.create_pipeline(pipeline_def)
+            # 生成安全的 job 名称（与 create_pipeline 中的逻辑保持一致）
+            import re
+            job_name = pipeline_def.name.replace(' ', '-').lower()
+            job_name = re.sub(r'[^a-z0-9\-_]', '', job_name)
             
-            # 构建参数
-            build_params = []
-            for key, value in pipeline_def.environment.items():
-                build_params.append(f"{key}={value}")
-            
-            # 触发构建
-            if build_params:
-                url = f"{self.base_url}/job/{job_name}/buildWithParameters"
-                data = '&'.join(build_params)
-            else:
-                url = f"{self.base_url}/job/{job_name}/build"
-                data = ''
-            
+            # 触发构建 - 先尝试简单构建，不带参数
+            url = f"{self.base_url}/job/{job_name}/build"
             response = await self._make_authenticated_request(
                 'POST',
                 url,
-                data=data,
+                data='',
                 headers={'Content-Type': 'application/x-www-form-urlencoded'}
             )
             
