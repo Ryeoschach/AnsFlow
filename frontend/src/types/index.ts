@@ -92,7 +92,7 @@ export interface Pipeline {
   created_by_username?: string
   
   // 新增：CI/CD工具关联
-  execution_tool?: number
+  execution_tool?: number | CICDTool
   execution_tool_name?: string
   execution_tool_type?: string
   tool_job_name?: string
@@ -286,7 +286,8 @@ export interface CreateStepForm {
 }
 
 export interface CreateExecutionForm {
-  pipeline: number
+  pipeline_id: number
+  cicd_tool_id: number
   trigger_type: 'manual' | 'webhook' | 'schedule'
   parameters?: Record<string, any>
 }

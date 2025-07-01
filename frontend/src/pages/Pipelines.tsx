@@ -128,8 +128,23 @@ const Pipelines: React.FC = () => {
 
   const handleExecutePipeline = async (pipeline: Pipeline) => {
     try {
+      // 获取工具ID
+      let toolId: number | undefined
+      if (typeof pipeline.execution_tool === 'number') {
+        toolId = pipeline.execution_tool
+      } else if (pipeline.execution_tool && typeof pipeline.execution_tool === 'object') {
+        toolId = pipeline.execution_tool.id
+      }
+
+      // 检查流水线是否配置了执行工具
+      if (!toolId) {
+        message.error('流水线未配置执行工具，请先编辑流水线设置执行工具')
+        return
+      }
+
       const execution = await apiService.createExecution({
-        pipeline: pipeline.id,
+        pipeline_id: pipeline.id,
+        cicd_tool_id: toolId,
         trigger_type: 'manual',
         parameters: {}
       })

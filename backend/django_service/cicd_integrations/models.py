@@ -148,7 +148,7 @@ class PipelineExecution(models.Model):
                                  help_text="关联的CI/CD工具，为空表示本地执行")
     
     # 执行信息
-    external_id = models.CharField(max_length=255, help_text="外部工具中的执行ID")
+    external_id = models.CharField(max_length=255, blank=True, help_text="外部工具中的执行ID")
     external_url = models.URLField(blank=True, help_text="外部工具中的执行URL")
     
     status = models.CharField(max_length=20, choices=EXECUTION_STATUSES, default='pending')

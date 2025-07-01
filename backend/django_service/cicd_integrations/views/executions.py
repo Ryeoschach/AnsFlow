@@ -386,19 +386,68 @@ class PipelineExecutionViewSet(viewsets.ModelViewSet):
             )
     
     def create(self, request, *args, **kwargs):
-        """创建流水线执行 - 添加调试日志"""
-        logger.warning(f"[DEBUG] PipelineExecutionViewSet.create called")
-        logger.warning(f"[DEBUG] Request method: {request.method}")
-        logger.warning(f"[DEBUG] Request path: {request.path}")
-        logger.warning(f"[DEBUG] Request data: {request.data}")
-        logger.warning(f"[DEBUG] User: {request.user}")
+        """创建流水线执行"""
+        logger.info(f"Creating pipeline execution with data: {request.data}")
         
-        # 检查是否是误调用
-        if not request.data.get('pipeline_id') or not request.data.get('cicd_tool_id'):
-            logger.error(f"[DEBUG] Missing required fields in execution create request!")
-            logger.error(f"[DEBUG] This might be a misdirected pipeline edit request")
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
         
-        return super().create(request, *args, **kwargs)
+        # 从验证后的数据中获取流水线和工具
+        pipeline_id = serializer.validated_data['pipeline_id']
+        cicd_tool_id = serializer.validated_data['cicd_tool_id']
+        trigger_type = serializer.validated_data.get('trigger_type', 'manual')
+        parameters = serializer.validated_data.get('parameters', {})
+        
+        try:
+            from pipelines.models import Pipeline
+            from cicd_integrations.models import CICDTool
+            
+            pipeline = Pipeline.objects.get(id=pipeline_id)
+            cicd_tool = CICDTool.objects.get(id=cicd_tool_id)
+            
+            # 创建执行记录
+            execution = PipelineExecution.objects.create(
+                pipeline=pipeline,
+                cicd_tool=cicd_tool,
+                status='pending',
+                trigger_type=trigger_type,
+                triggered_by=request.user,
+                definition=pipeline.config or {},
+                parameters=parameters,
+                trigger_data=request.data
+            )
+            
+            # 启动异步执行任务
+            try:
+                from cicd_integrations.tasks import execute_pipeline_async
+                execute_pipeline_async.delay(execution.id)
+                logger.info(f"Pipeline execution {execution.id} started successfully")
+            except Exception as e:
+                logger.error(f"Failed to start pipeline execution task: {e}")
+                execution.status = 'failed'
+                execution.save()
+                raise
+            
+            # 返回创建的执行记录
+            response_serializer = PipelineExecutionSerializer(execution)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Pipeline.DoesNotExist:
+            return Response(
+                {'error': f'Pipeline {pipeline_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except CICDTool.DoesNotExist:
+            return Response(
+                {'error': f'CI/CD tool {cicd_tool_id} not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        except Exception as e:
+            logger.error(f"Failed to create pipeline execution: {e}")
+            return Response(
+                {'error': f'Failed to create pipeline execution: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
     def update(self, request, *args, **kwargs):
         """更新流水线执行 - 添加调试日志"""

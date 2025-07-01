@@ -37,17 +37,18 @@ def execute_pipeline_async(self, execution_id: int):
         
         logger.info(f"Starting pipeline execution {execution_id}")
         
-        # 创建异步事件循环执行流水线
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        
+        # 使用同步执行引擎
         engine = UnifiedCICDEngine()
-        result = loop.run_until_complete(engine._perform_execution(execution_id))
         
-        loop.close()
+        try:
+            result = engine._perform_execution(execution_id)
+            logger.info(f"Engine result type: {type(result)}, value: {result}")
+        except Exception as engine_error:
+            logger.error(f"Engine execution error: {engine_error}", exc_info=True)
+            raise
         
         logger.info(f"Pipeline execution {execution_id} completed successfully")
-        return {"status": "success", "execution_id": execution_id}
+        return {"status": "success", "execution_id": execution_id, "result": result}
         
     except PipelineExecution.DoesNotExist:
         logger.error(f"Pipeline execution {execution_id} not found")

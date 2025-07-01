@@ -106,13 +106,8 @@ class UnifiedCICDEngine:
             )
             
             # 启动异步执行任务
-            execute_pipeline_task.delay(
-                execution_id=execution.id,
-                pipeline_id=pipeline.id,
-                trigger_type=trigger_type,
-                triggered_by_id=triggered_by.id if triggered_by else None,
-                parameters=parameters or {}
-            )
+            from .tasks import execute_pipeline_async
+            execute_pipeline_async.delay(execution.id)
             
             logger.info(f"Pipeline execution started: {execution.id}")
             return execution
@@ -151,7 +146,8 @@ class UnifiedCICDEngine:
             )
             
             # 启动异步执行任务
-            execute_pipeline_task.delay(execution.id)
+            from .tasks import execute_pipeline_async
+            execute_pipeline_async.delay(execution.id)
             
             logger.info(f"Local pipeline execution started: {execution.id}")
             return execution
@@ -206,7 +202,16 @@ class UnifiedCICDEngine:
                 parameters=execution.parameters
             )
             
-            logger.info(f"Pipeline execution completed: {execution.id} - {'success' if result['success'] else 'failed'}")
+            # 检查结果类型并处理
+            if result is None:
+                logger.warning(f"Pipeline execution returned None for execution {execution_id}")
+                result = {'success': False, 'error_message': 'Execution returned None'}
+            elif not isinstance(result, dict):
+                logger.error(f"Pipeline execution returned unexpected type: {type(result)} - {result}")
+                result = {'success': False, 'error_message': f'Unexpected result type: {type(result)}'}
+            
+            success = result.get('success', False)
+            logger.info(f"Pipeline execution completed: {execution.id} - {'success' if success else 'failed'}")
             return result
         
         except Exception as e:
