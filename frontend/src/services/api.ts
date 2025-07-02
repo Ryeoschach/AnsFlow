@@ -396,6 +396,31 @@ class ApiService {
   async deletePipelineToolMapping(id: number): Promise<void> {
     await this.api.delete(`/pipelines/pipeline-mappings/${id}/`)
   }
+
+  // Git凭据管理
+  async getGitCredentials(): Promise<any[]> {
+    const response = await this.api.get('/cicd/git-credentials/')
+    return response.data.results || response.data
+  }
+
+  async createGitCredential(credential: any): Promise<any> {
+    const response = await this.api.post('/cicd/git-credentials/', credential)
+    return response.data
+  }
+
+  async updateGitCredential(id: number, credential: any): Promise<any> {
+    const response = await this.api.put(`/cicd/git-credentials/${id}/`, credential)
+    return response.data
+  }
+
+  async deleteGitCredential(id: number): Promise<void> {
+    await this.api.delete(`/cicd/git-credentials/${id}/`)
+  }
+
+  async testGitCredential(id: number): Promise<{ success: boolean; message: string; tested_at?: string }> {
+    const response = await this.api.post(`/cicd/git-credentials/${id}/test_connection/`)
+    return response.data
+  }
 }
 
 export const apiService = new ApiService()

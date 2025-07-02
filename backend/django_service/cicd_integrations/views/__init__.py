@@ -12,10 +12,12 @@ from .tools import CICDToolViewSet
 from .jenkins import JenkinsManagementMixin
 from .executions import PipelineExecutionViewSet
 from .steps import AtomicStepViewSet
+from .git_credentials import GitCredentialViewSet
 
 __all__ = [
     'CICDToolViewSet',
     'JenkinsManagementMixin', 
     'PipelineExecutionViewSet',
     'AtomicStepViewSet',
+    'GitCredentialViewSet',
 ]

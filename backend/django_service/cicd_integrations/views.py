@@ -22,6 +22,7 @@ from .views.tools import CICDToolViewSet
 from .views.executions import PipelineExecutionViewSet  
 from .views.steps import AtomicStepViewSet
 from .views.jenkins import JenkinsManagementMixin
+from .views.git_credentials import GitCredentialViewSet
 
 # 导出所有视图类供URL配置使用
 __all__ = [
@@ -29,4 +30,5 @@ __all__ = [
     'PipelineExecutionViewSet', 
     'AtomicStepViewSet',
     'JenkinsManagementMixin',
+    'GitCredentialViewSet',
 ]

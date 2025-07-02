@@ -2,7 +2,7 @@
 CI/CD 集成 API 序列化器
 """
 from rest_framework import serializers
-from .models import CICDTool, AtomicStep, PipelineExecution, StepExecution
+from .models import CICDTool, AtomicStep, PipelineExecution, StepExecution, GitCredential
 
 
 class CICDToolSerializer(serializers.ModelSerializer):
@@ -262,3 +262,85 @@ class ToolStatusSerializer(serializers.Serializer):
     is_healthy = serializers.BooleanField(read_only=True)
     last_check = serializers.DateTimeField(read_only=True)
     error_message = serializers.CharField(read_only=True, allow_null=True)
+
+
+class GitCredentialSerializer(serializers.ModelSerializer):
+    """Git认证凭据序列化器"""
+    password = serializers.CharField(write_only=True, required=False, help_text="密码/Token")
+    ssh_private_key = serializers.CharField(write_only=True, required=False, help_text="SSH私钥")
+    platform_display = serializers.CharField(source='get_platform_display', read_only=True)
+    credential_type_display = serializers.CharField(source='get_credential_type_display', read_only=True)
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    
+    class Meta:
+        model = GitCredential
+        fields = [
+            'id', 'name', 'platform', 'platform_display', 'credential_type', 
+            'credential_type_display', 'server_url', 'username', 'password',
+            'ssh_private_key', 'ssh_public_key', 'description', 'is_active',
+            'last_test_at', 'last_test_result', 'created_by_username',
+            'created_at', 'updated_at'
+        ]
+        extra_kwargs = {
+            'password': {'write_only': True},
+            'ssh_private_key': {'write_only': True},
+        }
+    
+    def create(self, validated_data):
+        password = validated_data.pop('password', None)
+        ssh_private_key = validated_data.pop('ssh_private_key', None)
+        
+        # 设置创建者
+        validated_data['created_by'] = self.context['request'].user
+        
+        credential = GitCredential.objects.create(**validated_data)
+        
+        # 加密敏感信息
+        if password:
+            credential.encrypt_password(password)
+        if ssh_private_key:
+            credential.encrypt_ssh_key(ssh_private_key)
+        
+        credential.save()
+        return credential
+    
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        ssh_private_key = validated_data.pop('ssh_private_key', None)
+        
+        # 更新基本字段
+        for attr, value in validated_data.items():
+            setattr(instance, attr, value)
+        
+        # 更新敏感信息
+        if password:
+            instance.encrypt_password(password)
+        if ssh_private_key:
+            instance.encrypt_ssh_key(ssh_private_key)
+        
+        instance.save()
+        return instance
+
+
+class GitCredentialListSerializer(serializers.ModelSerializer):
+    """Git认证凭据列表序列化器（不包含敏感信息）"""
+    platform_display = serializers.CharField(source='get_platform_display', read_only=True)
+    credential_type_display = serializers.CharField(source='get_credential_type_display', read_only=True)
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    has_credentials = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = GitCredential
+        fields = [
+            'id', 'name', 'platform', 'platform_display', 'credential_type',
+            'credential_type_display', 'server_url', 'username', 'description', 
+            'is_active', 'last_test_at', 'last_test_result', 'created_by_username',
+            'has_credentials', 'created_at', 'updated_at'
+        ]
+    
+    def get_has_credentials(self, obj):
+        """检查是否已设置凭据"""
+        if obj.credential_type == 'ssh_key':
+            return bool(obj.ssh_private_key_encrypted)
+        else:
+            return bool(obj.password_encrypted)

@@ -43,6 +43,7 @@ dependencies = [
     "websockets>=15.0.1",
     "daphne>=4.2.0",
     "django-celery-results>=2.6.0",
+    "cryptography>=45.0.4",
 ]
 
 [project.optional-dependencies]

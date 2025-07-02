@@ -62,6 +62,31 @@ export interface CICDTool {
 // Tool 类型别名，用于兼容
 export type Tool = CICDTool
 
+// Git凭据类型
+export interface GitCredential {
+  id: number
+  name: string
+  platform: 'github' | 'gitlab' | 'gitee' | 'bitbucket' | 'azure_devops' | 'other'
+  platform_display: string
+  server_url: string
+  credential_type: 'username_password' | 'ssh_key' | 'access_token' | 'oauth'
+  credential_type_display: string
+  username?: string
+  email?: string
+  description?: string
+  is_active?: boolean
+  last_test_at?: string
+  last_test_result?: boolean
+  has_credentials?: boolean
+  created_by_username?: string
+  created_at: string
+  updated_at: string
+  user: number
+  // 兼容新字段名
+  auth_type?: string
+  auth_type_display?: string
+}
+
 // 流水线运行记录类型
 export interface PipelineRun {
   id: number
@@ -144,6 +169,7 @@ export interface AtomicStep {
   pipeline: number
   is_active: boolean
   created_at: string
+  git_credential?: number | null  // Git凭据ID
 }
 
 // 步骤执行类型

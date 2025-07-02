@@ -23,7 +23,7 @@ import {
   SettingOutlined,
   QuestionCircleOutlined
 } from '@ant-design/icons'
-import { AtomicStep, Pipeline } from '../../types'
+import { AtomicStep, Pipeline, GitCredential } from '../../types'
 import apiService from '../../services/api'
 import ParameterDocumentation from '../ParameterDocumentation'
 
@@ -91,6 +91,7 @@ interface StepFormData {
   description?: string
   parameters: Record<string, any>
   order: number
+  git_credential_id?: number | null
 }
 
 const STEP_TYPES = [
@@ -120,6 +121,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   // 添加参数说明状态
   const [selectedStepType, setSelectedStepType] = useState<string>('')
   const [showParameterDoc, setShowParameterDoc] = useState(false)
+  // 添加Git凭据状态
+  const [gitCredentials, setGitCredentials] = useState<GitCredential[]>([])
 
   // 清理状态的effect
   useEffect(() => {
@@ -139,6 +142,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         tool_job_name: pipeline.tool_job_name,
         is_active: pipeline.is_active
       })
+
+      // 获取Git凭据列表
+      fetchGitCredentials()
     } else if (!visible) {
       // 关闭编辑器时清理状态
       setSteps([])
@@ -147,10 +153,21 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       setPipelineInfoVisible(false)
       setSelectedStepType('')
       setShowParameterDoc(false)
+      setGitCredentials([])
       form.resetFields()
       pipelineForm.resetFields()
     }
   }, [visible, pipeline?.id]) // 只监听visible和pipeline.id的变化
+
+  // 获取Git凭据列表
+  const fetchGitCredentials = async () => {
+    try {
+      const credentials = await apiService.getGitCredentials()
+      setGitCredentials(credentials)
+    } catch (error) {
+      console.error('Failed to fetch git credentials:', error)
+    }
+  }
 
   // 当pipeline内容变化时不自动更新steps，避免污染编辑中的内容
   // 用户需要手动重新打开编辑器来获取最新数据
@@ -176,7 +193,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       step_type: step.step_type,
       description: step.description,
       order: step.order,
-      parameters: JSON.stringify(step.parameters, null, 2)
+      parameters: JSON.stringify(step.parameters, null, 2),
+      git_credential_id: step.git_credential || undefined
     })
     setStepFormVisible(true)
   }
@@ -227,7 +245,11 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       if (editingStep) {
         const updatedSteps = steps.map(step => 
           step.id === editingStep.id 
-            ? { ...step, ...stepData }
+            ? { 
+                ...step, 
+                ...stepData,
+                git_credential: values.git_credential_id || null
+              }
             : step
         )
         setSteps(updatedSteps)
@@ -238,7 +260,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           ...stepData,
           pipeline: pipeline?.id || 0,
           is_active: true,
-          created_at: new Date().toISOString()
+          created_at: new Date().toISOString(),
+          git_credential: values.git_credential_id || null
         }
         setSteps([...steps, newStep])
         message.success('步骤添加成功')
@@ -590,6 +613,73 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
                 }}
               />
             </div>
+          )}
+
+          {/* Git凭据选择 - 仅在代码拉取步骤显示 */}
+          {selectedStepType === 'fetch_code' && (
+            <Form.Item
+              name="git_credential_id"
+              label={
+                <Space>
+                  <span>Git认证凭据</span>
+                  <Button 
+                    type="link" 
+                    size="small"
+                    onClick={() => {
+                      // 打开系统设置中的Git凭据管理
+                      window.open('/settings?module=git-credentials', '_blank')
+                    }}
+                  >
+                    管理凭据
+                  </Button>
+                </Space>
+              }
+              tooltip="选择用于拉取代码的Git认证凭据，如果不选择则使用公开仓库或默认认证"
+            >
+              <Select 
+                placeholder="选择Git凭据（可选）"
+                allowClear
+                optionLabelProp="label"
+                notFoundContent={
+                  <div style={{ textAlign: 'center', padding: '20px' }}>
+                    <Text type="secondary">暂无Git凭据</Text>
+                    <br />
+                    <Button 
+                      type="link" 
+                      size="small"
+                      onClick={() => {
+                        window.open('/settings?module=git-credentials', '_blank')
+                      }}
+                    >
+                      去创建凭据
+                    </Button>
+                  </div>
+                }
+              >
+                {gitCredentials.map(credential => (
+                  <Select.Option 
+                    key={credential.id} 
+                    value={credential.id}
+                    label={credential.name}
+                  >
+                    <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
+                      <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                        {credential.name}
+                      </div>
+                      <div style={{ 
+                        fontSize: 12, 
+                        color: '#999',
+                        whiteSpace: 'normal',
+                        wordBreak: 'break-word',
+                        lineHeight: '1.3'
+                      }}>
+                        {credential.platform_display} - {credential.server_url}
+                      </div>
+                    </div>
+                  </Select.Option>
+                ))}
+              </Select>
+            </Form.Item>
           )}
           
           <Form.Item

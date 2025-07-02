@@ -4,6 +4,8 @@ CI/CD 工具集成数据模型
 from django.db import models
 from django.contrib.auth.models import User
 from django.core.validators import URLValidator
+from django.conf import settings
+from cryptography.fernet import Fernet
 import json
 
 
@@ -67,6 +69,120 @@ class CICDTool(models.Model):
         return f"{self.name} ({self.get_tool_type_display()})"
 
 
+class GitCredential(models.Model):
+    """Git仓库认证凭据"""
+    CREDENTIAL_TYPES = [
+        ('username_password', '用户名密码'),
+        ('ssh_key', 'SSH密钥'),
+        ('access_token', '访问令牌'),
+        ('oauth', 'OAuth认证'),
+    ]
+    
+    PLATFORM_TYPES = [
+        ('gitlab', 'GitLab'),
+        ('github', 'GitHub'),
+        ('gitee', 'Gitee'),
+        ('bitbucket', 'Bitbucket'),
+        ('azure_devops', 'Azure DevOps'),
+        ('custom', '自定义Git服务'),
+    ]
+    
+    name = models.CharField(max_length=100, verbose_name='凭据名称')
+    platform = models.CharField(max_length=20, choices=PLATFORM_TYPES, verbose_name='Git平台')
+    credential_type = models.CharField(max_length=20, choices=CREDENTIAL_TYPES, verbose_name='认证类型')
+    
+    # 基础信息
+    server_url = models.URLField(verbose_name='服务器地址', help_text='如: https://gitlab.company.com')
+    username = models.CharField(max_length=100, blank=True, verbose_name='用户名')
+    
+    # 敏感信息(加密存储)
+    password_encrypted = models.TextField(blank=True, verbose_name='加密后的密码/Token')
+    ssh_private_key_encrypted = models.TextField(blank=True, verbose_name='加密后的SSH私钥')
+    ssh_public_key = models.TextField(blank=True, verbose_name='SSH公钥')
+    
+    # 元数据
+    description = models.TextField(blank=True, verbose_name='描述')
+    is_active = models.BooleanField(default=True, verbose_name='是否启用')
+    created_by = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name='创建者')
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    # 测试连接状态
+    last_test_at = models.DateTimeField(null=True, blank=True, verbose_name='上次测试时间')
+    last_test_result = models.BooleanField(null=True, blank=True, verbose_name='上次测试结果')
+    
+    class Meta:
+        verbose_name = 'Git认证凭据'
+        verbose_name_plural = 'Git认证凭据'
+        unique_together = ['name', 'created_by']  # 同一用户下凭据名称唯一
+    
+    def __str__(self):
+        return f"{self.name} ({self.get_platform_display()})"
+    
+    def encrypt_password(self, password):
+        """加密密码/Token"""
+        try:
+            # 使用项目密钥进行加密，如果没有设置则生成一个
+            key = getattr(settings, 'GIT_CREDENTIAL_ENCRYPTION_KEY', None)
+            if not key:
+                # 生成一个默认密钥（生产环境中应该设置在settings中）
+                key = Fernet.generate_key()
+            if isinstance(key, str):
+                key = key.encode()
+            f = Fernet(key)
+            self.password_encrypted = f.encrypt(password.encode()).decode()
+        except Exception as e:
+            # 如果加密失败，记录错误但不阻止保存
+            print(f"Failed to encrypt password: {e}")
+            self.password_encrypted = ""
+    
+    def decrypt_password(self):
+        """解密密码/Token"""
+        if not self.password_encrypted:
+            return None
+        try:
+            key = getattr(settings, 'GIT_CREDENTIAL_ENCRYPTION_KEY', None)
+            if not key:
+                return None
+            if isinstance(key, str):
+                key = key.encode()
+            f = Fernet(key)
+            return f.decrypt(self.password_encrypted.encode()).decode()
+        except Exception as e:
+            print(f"Failed to decrypt password: {e}")
+            return None
+    
+    def encrypt_ssh_key(self, private_key):
+        """加密SSH私钥"""
+        try:
+            key = getattr(settings, 'GIT_CREDENTIAL_ENCRYPTION_KEY', None)
+            if not key:
+                key = Fernet.generate_key()
+            if isinstance(key, str):
+                key = key.encode()
+            f = Fernet(key)
+            self.ssh_private_key_encrypted = f.encrypt(private_key.encode()).decode()
+        except Exception as e:
+            print(f"Failed to encrypt SSH key: {e}")
+            self.ssh_private_key_encrypted = ""
+    
+    def decrypt_ssh_key(self):
+        """解密SSH私钥"""
+        if not self.ssh_private_key_encrypted:
+            return None
+        try:
+            key = getattr(settings, 'GIT_CREDENTIAL_ENCRYPTION_KEY', None)
+            if not key:
+                return None
+            if isinstance(key, str):
+                key = key.encode()
+            f = Fernet(key)
+            return f.decrypt(self.ssh_private_key_encrypted.encode()).decode()
+        except Exception as e:
+            print(f"Failed to decrypt SSH key: {e}")
+            return None
+
+
 class AtomicStep(models.Model):
     """原子化步骤定义"""
     
@@ -96,6 +212,15 @@ class AtomicStep(models.Model):
     # 参数配置
     parameters = models.JSONField(default=dict, help_text="步骤参数配置")
     config = models.JSONField(default=dict, help_text="步骤配置")
+    
+    # Git认证凭据(用于fetch_code步骤)
+    git_credential = models.ForeignKey(
+        GitCredential, 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True,
+        help_text="代码拉取步骤使用的Git认证凭据"
+    )
     
     # 依赖关系(字符串形式的步骤名称列表)
     dependencies = models.JSONField(default=list, help_text="依赖的步骤名称列表")
