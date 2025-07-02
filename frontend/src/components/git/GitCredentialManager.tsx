@@ -351,9 +351,22 @@ const GitCredentialManager: React.FC = () => {
                     <Form.Item
                       name="password"
                       label={credentialType === 'personal_token' ? '访问令牌' : '密码'}
-                      rules={[{ required: true, message: '请输入密码或令牌' }]}
+                      rules={editingCredential && (editingCredential.has_password || editingCredential.has_credentials) ? 
+                        [] : // 编辑时如果已有密码，则不强制要求
+                        [{ required: true, message: '请输入密码或令牌' }]
+                      }
+                      extra={editingCredential && (editingCredential.has_password || editingCredential.has_credentials) ? 
+                        <span style={{ color: '#666' }}>
+                          🔒 当前已设置密码，留空则保持不变
+                        </span> : null
+                      }
                     >
-                      <Input.Password placeholder="输入密码或访问令牌" />
+                      <Input.Password 
+                        placeholder={editingCredential && (editingCredential.has_password || editingCredential.has_credentials) ? 
+                          "留空保持原密码不变" : 
+                          "输入密码或访问令牌"
+                        } 
+                      />
                     </Form.Item>
                   </>
                 )
@@ -365,11 +378,22 @@ const GitCredentialManager: React.FC = () => {
                     <Form.Item
                       name="ssh_private_key"
                       label="SSH私钥"
-                      rules={[{ required: true, message: '请输入SSH私钥' }]}
+                      rules={editingCredential && (editingCredential.has_ssh_key || editingCredential.has_credentials) ? 
+                        [] : // 编辑时如果已有SSH密钥，则不强制要求
+                        [{ required: true, message: '请输入SSH私钥' }]
+                      }
+                      extra={editingCredential && (editingCredential.has_ssh_key || editingCredential.has_credentials) ? 
+                        <span style={{ color: '#666' }}>
+                          🔒 当前已设置SSH私钥，留空则保持不变
+                        </span> : null
+                      }
                     >
                       <TextArea 
                         rows={8}
-                        placeholder="-----BEGIN OPENSSH PRIVATE KEY-----&#10;...&#10;-----END OPENSSH PRIVATE KEY-----"
+                        placeholder={editingCredential && (editingCredential.has_ssh_key || editingCredential.has_credentials) ? 
+                          "留空保持原SSH私钥不变" : 
+                          "-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
+                        }
                       />
                     </Form.Item>
                     

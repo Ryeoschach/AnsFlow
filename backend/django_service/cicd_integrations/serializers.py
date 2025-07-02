@@ -271,6 +271,8 @@ class GitCredentialSerializer(serializers.ModelSerializer):
     platform_display = serializers.CharField(source='get_platform_display', read_only=True)
     credential_type_display = serializers.CharField(source='get_credential_type_display', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    has_password = serializers.SerializerMethodField(read_only=True, help_text="是否已设置密码")
+    has_ssh_key = serializers.SerializerMethodField(read_only=True, help_text="是否已设置SSH密钥")
     
     class Meta:
         model = GitCredential
@@ -279,12 +281,20 @@ class GitCredentialSerializer(serializers.ModelSerializer):
             'credential_type_display', 'server_url', 'username', 'password',
             'ssh_private_key', 'ssh_public_key', 'description', 'is_active',
             'last_test_at', 'last_test_result', 'created_by_username',
-            'created_at', 'updated_at'
+            'has_password', 'has_ssh_key', 'created_at', 'updated_at'
         ]
         extra_kwargs = {
             'password': {'write_only': True},
             'ssh_private_key': {'write_only': True},
         }
+    
+    def get_has_password(self, obj):
+        """检查是否已设置密码"""
+        return bool(obj.password_encrypted)
+    
+    def get_has_ssh_key(self, obj):
+        """检查是否已设置SSH密钥"""
+        return bool(obj.ssh_private_key_encrypted)
     
     def create(self, validated_data):
         password = validated_data.pop('password', None)
@@ -312,10 +322,10 @@ class GitCredentialSerializer(serializers.ModelSerializer):
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
         
-        # 更新敏感信息
-        if password:
+        # 更新敏感信息 - 只有在提供了非空值时才加密
+        if password is not None and password.strip():
             instance.encrypt_password(password)
-        if ssh_private_key:
+        if ssh_private_key is not None and ssh_private_key.strip():
             instance.encrypt_ssh_key(ssh_private_key)
         
         instance.save()
@@ -328,6 +338,8 @@ class GitCredentialListSerializer(serializers.ModelSerializer):
     credential_type_display = serializers.CharField(source='get_credential_type_display', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
     has_credentials = serializers.SerializerMethodField()
+    has_password = serializers.SerializerMethodField()
+    has_ssh_key = serializers.SerializerMethodField()
     
     class Meta:
         model = GitCredential
@@ -335,7 +347,7 @@ class GitCredentialListSerializer(serializers.ModelSerializer):
             'id', 'name', 'platform', 'platform_display', 'credential_type',
             'credential_type_display', 'server_url', 'username', 'description', 
             'is_active', 'last_test_at', 'last_test_result', 'created_by_username',
-            'has_credentials', 'created_at', 'updated_at'
+            'has_credentials', 'has_password', 'has_ssh_key', 'created_at', 'updated_at'
         ]
     
     def get_has_credentials(self, obj):
@@ -344,3 +356,11 @@ class GitCredentialListSerializer(serializers.ModelSerializer):
             return bool(obj.ssh_private_key_encrypted)
         else:
             return bool(obj.password_encrypted)
+    
+    def get_has_password(self, obj):
+        """检查是否已设置密码/Token"""
+        return bool(obj.password_encrypted)
+    
+    def get_has_ssh_key(self, obj):
+        """检查是否已设置SSH私钥"""
+        return bool(obj.ssh_private_key_encrypted)

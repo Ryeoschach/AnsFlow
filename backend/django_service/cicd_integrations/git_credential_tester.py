@@ -58,12 +58,20 @@ class GitCredentialTester:
         if not all([server_url, username, password]):
             return False, "用户名、密码或服务器URL不能为空"
         
-        # 构造认证URL
+        # 构造认证URL，保持原有协议
         parsed_url = urlparse(server_url)
         if parsed_url.netloc:
-            # 使用HTTPS进行简单的认证测试
-            auth_url = f"https://{username}:{password}@{parsed_url.netloc}"
-            test_repo_url = f"{auth_url}/test.git"  # 虚拟的测试仓库
+            # 保持原有的协议（HTTP或HTTPS）
+            scheme = parsed_url.scheme or 'https'
+            auth_url = f"{scheme}://{username}:{password}@{parsed_url.netloc}"
+            
+            # 使用实际存在的仓库路径
+            if '127.0.0.1:8929' in server_url:
+                # 本地GitLab，使用已知存在的仓库
+                test_repo_url = f"{auth_url}/root/demo.git"
+            else:
+                # 其他服务器，使用通用测试路径
+                test_repo_url = f"{auth_url}/test.git"
             
             return self._test_git_ls_remote(test_repo_url, username, password)
         else:
@@ -230,7 +238,11 @@ class GitCredentialTester:
             if parsed_url.netloc:
                 # 构造带认证的URL
                 test_url = f"https://{username or 'token'}:{token}@{parsed_url.netloc}"
-                return self._test_git_ls_remote(f"{test_url}/test.git", username, token)
+                # 本地GitLab使用实际存在的仓库
+                if '127.0.0.1:8929' in server_url:
+                    return self._test_git_ls_remote(f"{test_url}/root/demo.git", username, token)
+                else:
+                    return self._test_git_ls_remote(f"{test_url}/test.git", username, token)
             else:
                 return False, "无效的服务器URL"
                 
@@ -240,11 +252,19 @@ class GitCredentialTester:
     def _test_git_ls_remote(self, repo_url: str, username: str = None, password: str = None) -> Tuple[bool, str]:
         """使用git ls-remote测试仓库访问"""
         try:
-            # 设置环境变量以避免交互式密码输入
+            # 设置环境变量以避免交互式密码输入和处理SSL问题
             env = os.environ.copy()
             if username and password:
                 env['GIT_USERNAME'] = username
                 env['GIT_PASSWORD'] = password
+            
+            # 禁用交互式提示
+            env['GIT_TERMINAL_PROMPT'] = '0'
+            env['GIT_ASKPASS'] = 'echo'
+            
+            # 对于本地/开发环境，忽略SSL验证
+            if '127.0.0.1' in repo_url or 'localhost' in repo_url:
+                env['GIT_SSL_NO_VERIFY'] = 'true'
             
             # 使用git ls-remote测试（这是一个只读操作）
             cmd = ['git', 'ls-remote', '--exit-code', repo_url]
@@ -263,10 +283,15 @@ class GitCredentialTester:
             elif result.returncode == 2:
                 return True, "Git认证成功，但测试仓库不存在（这是正常的）"
             elif result.returncode == 128:
-                if 'authentication failed' in result.stderr.lower():
+                error_msg = result.stderr.lower()
+                if 'authentication failed' in error_msg:
                     return False, "Git认证失败：用户名或密码错误"
-                elif 'repository not found' in result.stderr.lower():
+                elif 'repository not found' in error_msg:
                     return True, "Git认证成功，但测试仓库不存在（这是正常的）"
+                elif 'ssl' in error_msg or 'tls' in error_msg:
+                    return False, f"SSL/TLS连接问题: {result.stderr}"
+                elif 'could not resolve host' in error_msg:
+                    return False, f"DNS解析失败: {result.stderr}"
                 else:
                     return False, f"Git操作失败: {result.stderr}"
             else:

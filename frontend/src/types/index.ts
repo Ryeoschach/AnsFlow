@@ -78,6 +78,8 @@ export interface GitCredential {
   last_test_at?: string
   last_test_result?: boolean
   has_credentials?: boolean
+  has_password?: boolean
+  has_ssh_key?: boolean
   created_by_username?: string
   created_at: string
   updated_at: string

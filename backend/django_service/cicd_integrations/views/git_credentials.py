@@ -39,36 +39,154 @@ class GitCredentialViewSet(viewsets.ModelViewSet):
         credential = self.get_object()
         
         try:
-            success = self._test_git_connection(credential)
+            # 使用GitCredentialTester进行测试
+            from ..git_credential_tester import GitCredentialTester
+            
+            tester = GitCredentialTester()
+            success = False
+            message = "连接失败"
+            
+            if credential.credential_type == 'username_password':
+                password = credential.decrypt_password()
+                if not password:
+                    message = "密码解密失败"
+                else:
+                    success, message = tester.test_credential(
+                        platform=credential.platform,
+                        server_url=credential.server_url,
+                        credential_type='username_password',
+                        username=credential.username,
+                        password=password
+                    )
+                    
+            elif credential.credential_type == 'access_token':
+                token = credential.decrypt_password()
+                if not token:
+                    message = "访问令牌解密失败"
+                else:
+                    success, message = tester.test_credential(
+                        platform=credential.platform,
+                        server_url=credential.server_url,
+                        credential_type='access_token',
+                        username=credential.username,
+                        password=token
+                    )
+                    
+            elif credential.credential_type == 'ssh_key':
+                private_key = credential.decrypt_ssh_key()
+                if not private_key:
+                    message = "SSH私钥解密失败"
+                else:
+                    success, message = tester.test_credential(
+                        platform=credential.platform,
+                        server_url=credential.server_url,
+                        credential_type='ssh_key',
+                        ssh_private_key=private_key,
+                        email=credential.username
+                    )
+            else:
+                message = f"不支持的认证类型: {credential.credential_type}"
+            
+            # 更新测试结果
             credential.last_test_at = timezone.now()
             credential.last_test_result = success
             credential.save()
             
             return Response({
                 'success': success,
-                'message': '连接成功' if success else '连接失败',
-                'tested_at': credential.last_test_at
+                'message': message,
+                'tested_at': credential.last_test_at,
+                'platform': credential.platform,
+                'credential_type': credential.credential_type
             })
+            
         except Exception as e:
+            # 更新测试结果
             credential.last_test_at = timezone.now()
             credential.last_test_result = False
             credential.save()
             
+            error_message = f'测试失败: {str(e)}'
+            print(f"Git credential test error: {error_message}")
+            
             return Response({
                 'success': False,
-                'message': f'测试失败: {str(e)}',
-                'tested_at': credential.last_test_at
+                'message': error_message,
+                'tested_at': credential.last_test_at,
+                'platform': credential.platform,
+                'credential_type': credential.credential_type
             }, status=status.HTTP_400_BAD_REQUEST)
     
     def _test_git_connection(self, credential):
         """实际的Git连接测试"""
         try:
+            # 使用GitCredentialTester进行更准确的测试
+            from ..git_credential_tester import GitCredentialTester
+            
+            tester = GitCredentialTester()
+            
             if credential.credential_type == 'username_password':
-                return self._test_username_password_connection(credential)
+                password = credential.decrypt_password()
+                if not password:
+                    return False
+                
+                success, message = tester.test_credential(
+                    platform=credential.platform,
+                    server_url=credential.server_url,
+                    credential_type='username_password',
+                    username=credential.username,
+                    password=password
+                )
+                
+                # 记录详细日志
+                if success:
+                    print(f"Git connection test successful: {message}")
+                else:
+                    print(f"Git connection test failed: {message}")
+                
+                return success
+                
             elif credential.credential_type == 'access_token':
-                return self._test_access_token_connection(credential)
+                token = credential.decrypt_password()
+                if not token:
+                    return False
+                
+                success, message = tester.test_credential(
+                    platform=credential.platform,
+                    server_url=credential.server_url,
+                    credential_type='access_token',
+                    username=credential.username,
+                    password=token
+                )
+                
+                # 记录详细日志
+                if success:
+                    print(f"Access token test successful: {message}")
+                else:
+                    print(f"Access token test failed: {message}")
+                
+                return success
+                
             elif credential.credential_type == 'ssh_key':
-                return self._test_ssh_key_connection(credential)
+                private_key = credential.decrypt_ssh_key()
+                if not private_key:
+                    return False
+                
+                success, message = tester.test_credential(
+                    platform=credential.platform,
+                    server_url=credential.server_url,
+                    credential_type='ssh_key',
+                    ssh_private_key=private_key,
+                    email=credential.username  # 使用username字段作为email
+                )
+                
+                # 记录详细日志
+                if success:
+                    print(f"SSH key test successful: {message}")
+                else:
+                    print(f"SSH key test failed: {message}")
+                
+                return success
             else:
                 return False
         except Exception as e:

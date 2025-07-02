@@ -7,6 +7,8 @@ from .base import *
 # Initialize environment for development
 env = environ.Env()
 
+GIT_CREDENTIAL_ENCRYPTION_KEY = 'bKyVd1koSsbL2NJJO0jJopTa2r16PF9VWKq7UXNvk30='
+
 # Debug settings - Override base settings
 DEBUG = True
 

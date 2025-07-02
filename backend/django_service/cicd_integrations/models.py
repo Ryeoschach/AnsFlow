@@ -121,6 +121,9 @@ class GitCredential(models.Model):
     
     def encrypt_password(self, password):
         """加密密码/Token"""
+        if not password or not password.strip():
+            return
+        
         try:
             # 使用项目密钥进行加密，如果没有设置则生成一个
             key = getattr(settings, 'GIT_CREDENTIAL_ENCRYPTION_KEY', None)
@@ -154,6 +157,9 @@ class GitCredential(models.Model):
     
     def encrypt_ssh_key(self, private_key):
         """加密SSH私钥"""
+        if not private_key or not private_key.strip():
+            return
+        
         try:
             key = getattr(settings, 'GIT_CREDENTIAL_ENCRYPTION_KEY', None)
             if not key:
