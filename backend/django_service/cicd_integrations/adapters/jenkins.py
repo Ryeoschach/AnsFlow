@@ -24,6 +24,25 @@ class JenkinsAdapter(CICDAdapter):
         self.crumb_issuer = kwargs.get('crumb_issuer', True)
         self.folder_path = kwargs.get('folder_path', '')
     
+    def _escape_shell_command(self, command: str) -> str:
+        """
+        转义shell命令中的单引号，防止Jenkins Pipeline语法错误
+        将单引号 ' 替换为 \'
+        """
+        if not command:
+            return command
+        return command.replace("'", "\\'")
+    
+    def _safe_shell_command(self, command: str) -> str:
+        """
+        生成安全的Jenkins Pipeline sh步骤
+        """
+        if not command:
+            return "echo 'No command specified'"
+        
+        escaped_command = self._escape_shell_command(command)
+        return f"sh '{escaped_command}'"
+
     async def _get_crumb(self) -> Optional[Tuple[str, str]]:
         """获取 Jenkins CSRF 保护令牌"""
         if not self.crumb_issuer:
@@ -96,7 +115,7 @@ class JenkinsAdapter(CICDAdapter):
             custom_command = params.get('command', params.get('cammand', ''))  # 支持拼写错误
             
             if custom_command:
-                return f"sh '{custom_command}'"
+                return self._safe_shell_command(custom_command)
             
             # 如果没有自定义命令，使用标准Git checkout
             repo_url = params.get('repository', params.get('repository_url', ''))
@@ -115,7 +134,7 @@ class JenkinsAdapter(CICDAdapter):
             # 测试执行步骤
             test_command = params.get('test_command', 'npm test')
             coverage = params.get('coverage', False)
-            script_parts = [f"sh '{test_command}'"]
+            script_parts = [self._safe_shell_command(test_command)]
             
             if coverage:
                 script_parts.append("publishHTML([allowMissing: false, alwaysLinkToLastBuild: true, keepAll: true, reportDir: 'coverage', reportFiles: 'index.html', reportName: 'Coverage Report'])")
@@ -135,7 +154,7 @@ class JenkinsAdapter(CICDAdapter):
             custom_command = params.get('command', '')
             
             if custom_command:
-                return f"sh '{custom_command}'"
+                return self._safe_shell_command(custom_command)
             
             # 如果没有自定义命令，使用标准构建逻辑
             build_tool = params.get('build_tool', 'npm')
@@ -143,23 +162,25 @@ class JenkinsAdapter(CICDAdapter):
             
             if build_tool == 'npm':
                 command = build_command or 'npm run build'
+                npm_ci = self._safe_shell_command('npm ci')
+                npm_build = self._safe_shell_command(command)
                 return f"""
-                sh 'npm ci'
-                sh '{command}'"""
+                {npm_ci}
+                {npm_build}"""
             elif build_tool == 'maven':
                 goals = build_command or 'clean compile package'
-                return f"sh 'mvn {goals}'"
+                return self._safe_shell_command(f'mvn {goals}')
             elif build_tool == 'gradle':
                 tasks = build_command or 'build'
-                return f"sh './gradlew {tasks}'"
+                return self._safe_shell_command(f'./gradlew {tasks}')
             elif build_tool == 'docker':
                 dockerfile = params.get('dockerfile', 'Dockerfile')
                 tag = params.get('tag', 'latest')
                 context = params.get('context', '.')
-                return f"sh 'docker build -f {dockerfile} -t {tag} {context}'"
+                return self._safe_shell_command(f'docker build -f {dockerfile} -t {tag} {context}')
             else:
                 command = build_command or 'echo "No build command specified"'
-                return f"sh '{command}'"
+                return self._safe_shell_command(command)
         
         elif step_type == 'deploy':
             # 部署步骤
@@ -168,17 +189,20 @@ class JenkinsAdapter(CICDAdapter):
             if deploy_type == 'kubernetes':
                 namespace = params.get('namespace', 'default')
                 manifest_path = params.get('manifest_path', 'k8s/')
-                return f"sh 'kubectl apply -f {manifest_path} -n {namespace}'"
+                return self._safe_shell_command(f'kubectl apply -f {manifest_path} -n {namespace}')
             elif deploy_type == 'docker':
                 image = params.get('image', 'app:latest')
                 container_name = params.get('container_name', 'app')
+                stop_cmd = self._safe_shell_command(f'docker stop {container_name} || true')
+                rm_cmd = self._safe_shell_command(f'docker rm {container_name} || true')
+                run_cmd = self._safe_shell_command(f'docker run -d --name {container_name} {image}')
                 return f"""
-                sh 'docker stop {container_name} || true'
-                sh 'docker rm {container_name} || true'
-                sh 'docker run -d --name {container_name} {image}'"""
+                {stop_cmd}
+                {rm_cmd}
+                {run_cmd}"""
             else:
                 deploy_command = params.get('deploy_command', 'echo "No deploy command specified"')
-                return f"sh '{deploy_command}'"
+                return self._safe_shell_command(deploy_command)
         
         elif step_type == 'security_scan':
             # 安全扫描步骤
@@ -186,13 +210,13 @@ class JenkinsAdapter(CICDAdapter):
             
             if scan_type == 'zap':
                 target_url = params.get('target_url', 'http://localhost')
-                return f"sh 'docker run -t owasp/zap2docker-stable zap-baseline.py -t {target_url}'"
+                return self._safe_shell_command(f'docker run -t owasp/zap2docker-stable zap-baseline.py -t {target_url}')
             elif scan_type == 'sonarqube':
                 project_key = params.get('project_key', 'default')
-                return f"sh 'sonar-scanner -Dsonar.projectKey={project_key}'"
+                return self._safe_shell_command(f'sonar-scanner -Dsonar.projectKey={project_key}')
             else:
                 scan_command = params.get('scan_command', 'echo "No security scan command specified"')
-                return f"sh '{scan_command}'"
+                return self._safe_shell_command(scan_command)
         
         elif step_type == 'notify':
             # 通知步骤
@@ -202,52 +226,54 @@ class JenkinsAdapter(CICDAdapter):
             if webhook_url:
                 escaped_message = message.replace('"', '\\"')
                 curl_data = '{\\"text\\": \\"' + escaped_message + '\\"}'
-                return f"""
-                sh 'curl -X POST -H "Content-Type: application/json" -d "{curl_data}" {webhook_url}'"""
+                curl_command = f'curl -X POST -H "Content-Type: application/json" -d "{curl_data}" {webhook_url}'
+                return self._safe_shell_command(curl_command)
             else:
-                return f"echo '{message}'"
+                return self._safe_shell_command(f"echo '{message}'")
         
         elif step_type == 'custom':
             # 自定义步骤
             command = params.get('command', params.get('script', 'echo "No command specified"'))
-            return f"sh '{command}'"
+            return self._safe_shell_command(command)
 
         elif step_type == 'shell_script':
             script = params.get('script', 'echo "No script provided"')
-            return f"sh '{script}'"
+            return self._safe_shell_command(script)
         
         elif step_type == 'maven_build':
             goals = params.get('goals', 'clean compile')
-            return f"sh 'mvn {goals}'"
+            return self._safe_shell_command(f'mvn {goals}')
         
         elif step_type == 'gradle_build':
             tasks = params.get('tasks', 'build')
-            return f"sh './gradlew {tasks}'"
+            return self._safe_shell_command(f'./gradlew {tasks}')
         
         elif step_type == 'npm_build':
             script = params.get('script', 'build')
+            npm_ci = self._safe_shell_command('npm ci')
+            npm_run = self._safe_shell_command(f'npm run {script}')
             return f"""
-                sh 'npm ci'
-                sh 'npm run {script}'"""
+                {npm_ci}
+                {npm_run}"""
         
         elif step_type == 'docker_build':
             dockerfile = params.get('dockerfile', 'Dockerfile')
             tag = params.get('tag', 'latest')
             context = params.get('context', '.')
-            return f"sh 'docker build -f {dockerfile} -t {tag} {context}'"
+            return self._safe_shell_command(f'docker build -f {dockerfile} -t {tag} {context}')
         
         elif step_type == 'kubernetes_deploy':
             namespace = params.get('namespace', 'default')
             manifest_path = params.get('manifest_path', 'k8s/')
-            return f"sh 'kubectl apply -f {manifest_path} -n {namespace}'"
+            return self._safe_shell_command(f'kubectl apply -f {manifest_path} -n {namespace}')
         
         elif step_type == 'test_execution':
             test_command = params.get('test_command', 'npm test')
-            return f"sh '{test_command}'"
+            return self._safe_shell_command(test_command)
         
         elif step_type == 'security_scan':
             target_url = params.get('target_url', 'http://localhost')
-            return f"sh 'docker run -t owasp/zap2docker-stable zap-baseline.py -t {target_url}'"
+            return self._safe_shell_command(f'docker run -t owasp/zap2docker-stable zap-baseline.py -t {target_url}')
         
         elif step_type == 'artifact_upload':
             paths = params.get('paths', [])
@@ -261,13 +287,11 @@ class JenkinsAdapter(CICDAdapter):
             message = params.get('message', 'Pipeline completed')
             webhook_url = params.get('webhook_url', '')
             if webhook_url:
-                # 避免在f-string中使用反斜杠
-                escaped_message = message.replace('"', '\\"')
-                curl_data = '{\\"text\\": \\"' + escaped_message + '\\"}'
-                return f"""
-                sh 'curl -X POST -H "Content-Type: application/json" -d "{curl_data}" {webhook_url}'"""
+                # 构建curl命令并使用安全转义
+                curl_command = f'curl -X POST -H "Content-Type: application/json" -d {{"text": "{message}"}} {webhook_url}'
+                return self._safe_shell_command(curl_command)
             else:
-                return f"echo '{message}'"
+                return self._safe_shell_command(f"echo '{message}'")
         
         elif step_type == 'environment_setup':
             # 环境变量在流水线级别设置
@@ -278,12 +302,12 @@ class JenkinsAdapter(CICDAdapter):
             command = params.get('command', params.get('cammand', ''))  # 支持拼写错误
             
             if command:
-                return f"sh '{command}'"
+                return self._safe_shell_command(command)
             else:
                 # 如果没有自定义命令，尝试其他常见参数名
                 script = params.get('script', '')
                 if script:
-                    return f"sh '{script}'"
+                    return self._safe_shell_command(script)
                 
                 # 最后的备用方案
                 return f"echo 'Step type: {step_type} - No command specified'"

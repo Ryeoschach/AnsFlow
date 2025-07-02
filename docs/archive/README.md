@@ -4,7 +4,27 @@
 
 本目录包含 AnsFlow 项目开发过程中产生的所有修复报告、技术文档和开发总结。这些文档记录了项目的完整开发历程和重要技术决策。
 
-### 📋 归档文档列表
+## 📂 项目文档结构
+
+```
+docs/
+├── archive/                    # 历史修复报告和技术文档归档
+├── api/                       # API文档
+├── deployment/                # 部署相关文档
+├── development/               # 开发指南
+├── NEXT_PHASE_DEVELOPMENT_PLAN.md      # 下一阶段开发计划
+├── PIPELINE_PARAMETER_HELP_FEATURE.md  # 流水线参数帮助功能
+├── PROJECT_STATUS_SUMMARY.md           # 项目状态总结
+├── PROJECT_STRUCTURE.md               # 项目结构说明
+├── QUICK_FIX_GUIDE.md                 # 快速修复指南
+└── QUICK_START_GUIDE.md               # 快速开始指南
+```
+
+### 📋 归档文档列表 (按时间倒序)
+
+#### 🎨 最新：前端UI优化与组件样式统一 (2025-07-02)
+- `FRONTEND_UI_OPTIMIZATION_JULY2_2025.md` - 前端UI优化详细技术报告
+- `FRONTEND_UI_OPTIMIZATION_ARCHIVE_SUMMARY_JULY2_2025.md` - UI优化归档总结
 
 #### 🔧 核心功能修复报告
 - `ATOMIC_STEP_ENGINE_SUCCESS.md` - 原子步骤执行引擎成功实现报告

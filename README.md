@@ -102,7 +102,28 @@ graph TB
 
 ## 🚀 快速开始
 
-> **⚡ 5分钟极速体验**: 查看 [快速启动指南](QUICK_START_GUIDE.md) 获得最佳上手体验
+> **⚡ 5分钟极速体验**: 查看 [快速启动指南](docs/QUICK_START_GUIDE.md) 获得最佳上手体验
+
+### 📚 文档导航
+
+- **📖 [完整文档目录](docs/README.md)** - 所有文档的总入口
+- **🚀 [快速开始指南](docs/QUICK_START_GUIDE.md)** - 新用户5分钟上手
+- **🏗️ [项目结构说明](docs/PROJECT_STRUCTURE.md)** - 了解项目架构
+- **📊 [项目状态总结](docs/PROJECT_STATUS_SUMMARY.md)** - 当前开发进展
+- **🔧 [快速修复指南](docs/QUICK_FIX_GUIDE.md)** - 常见问题解决
+- **📡 [API文档](docs/api/)** - REST API和WebSocket API
+- **🚀 [部署指南](docs/deployment/)** - 生产环境部署
+- **👨‍💻 [开发指南](docs/development/)** - 开发规范和贡献指南
+- **📚 [历史归档](docs/archive/)** - 所有修复报告和技术决策记录
+
+### 🧪 测试和验证脚本
+
+- **📋 [脚本目录说明](scripts/README.md)** - 所有脚本的使用指南
+- **🎨 前端UI测试**: `node scripts/test_frontend_ui_optimization_july2_2025.js`
+- **⚡ 快速验证**: `python scripts/quick_verify.py`
+- **🔍 系统状态检查**: `./scripts/check_system_status.sh`
+- **🔧 Jenkins集成测试**: `python scripts/jenkins_test_pipeline.py`
+- **🛡️ 安全转义测试**: `python scripts/test_comprehensive_escaping.py`
 
 ### 环境要求
 
@@ -239,7 +260,21 @@ make prod-backup     # 生产环境备份
 
 ## 📋 开发路线图 / TODO List
 
-### 🎉 最新完成：远程流水线执行步骤状态同步修复 ✅
+### 🎉 最新完成：前端UI优化与组件样式统一 ✅
+**完成日期**: 2025年7月2日 | **阶段**: 用户体验提升与界面优化
+- ✅ **Select组件样式统一** - 修复"编辑信息"与"编辑流水线"Drawer中Select组件样式不一致问题
+- ✅ **选择器显示优化** - 选中后只显示主标题(单行)，下拉时显示主标题+描述(双行)
+- ✅ **CSS样式全局注入** - 统一PipelineEditor.tsx和Pipelines.tsx的Select组件样式
+- ✅ **表格操作列优化** - 移除固定宽度限制，恢复自适应布局，解决按钮溢出问题
+- ✅ **图标按钮改进** - 操作列文字按钮改为图标按钮，添加Tooltip提示，界面更简洁
+- ✅ **下拉菜单整合** - 次要操作移至"更多"下拉菜单，主要操作(编辑/配置)保持直接可见
+- ✅ **响应式布局恢复** - 移除表格横向滚动限制，各列宽度自适应内容
+- ✅ **完整测试验证** - 100%测试通过率，包含CSS注入、组件配置、操作列布局等5项测试
+- ✅ **文档归档** - 详细修复文档和自动化测试脚本归档
+
+> 🎯 **优化成果**: Select组件在所有页面选中后只显示主标题，表格操作列不再溢出，界面更简洁美观，用户体验显著提升
+
+### 🎉 已完成：远程流水线执行步骤状态同步修复 ✅
 **完成日期**: 2025年1月13日 | **阶段**: Phase 3 核心功能完善
 - ✅ **远程执行步骤状态同步修复** - 修复远程执行时 StepExecution 状态一直为 pending 的问题
 - ✅ **监控任务异步兼容性修复** - 解决监控任务中异步 ORM 查询导致的 SynchronousOnlyOperation 错误

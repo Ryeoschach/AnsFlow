@@ -15,7 +15,8 @@ import {
   Drawer,
   Row,
   Col,
-  Statistic
+  Statistic,
+  Dropdown
 } from 'antd'
 import {
   PlusOutlined,
@@ -42,6 +43,52 @@ import PipelineEditor from '../components/pipeline/PipelineEditor'
 
 const { Option } = Select
 const { TextArea } = Input
+
+// 优化Select组件的样式 - 与PipelineEditor保持一致
+const selectStyles = `
+  .ant-select-dropdown .ant-select-item-option-content {
+    white-space: normal !important;
+    height: auto !important;
+    padding: 8px 12px !important;
+  }
+  
+  .ant-select-dropdown .ant-select-item {
+    height: auto !important;
+    min-height: 32px !important;
+    padding: 0 !important;
+  }
+  
+  .ant-select-dropdown .ant-select-item-option-content > div {
+    width: 100%;
+  }
+  
+  .ant-select-selector {
+    height: auto !important;
+    min-height: 32px !important;
+  }
+  
+  .ant-select-selection-item {
+    line-height: 30px !important;
+    padding: 0 8px !important;
+    height: 30px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+  
+  /* 强制隐藏选中项中的第二个div */
+  .ant-select-selection-item > div > div:nth-child(2) {
+    display: none !important;
+  }
+`
+
+// 将样式注入到页面中
+if (typeof document !== 'undefined' && !document.getElementById('pipelines-page-styles')) {
+  const style = document.createElement('style')
+  style.id = 'pipelines-page-styles'
+  style.textContent = selectStyles
+  document.head.appendChild(style)
+}
 
 const Pipelines: React.FC = () => {
   const navigate = useNavigate()
@@ -276,6 +323,7 @@ const Pipelines: React.FC = () => {
     {
       title: '步骤数',
       key: 'stepsCount',
+      align: 'center',
       render: (_, record: Pipeline) => (
         <span>{record.steps_count ?? record.steps?.length ?? 0}</span>
       ),
@@ -297,6 +345,7 @@ const Pipelines: React.FC = () => {
     {
       title: '状态',
       key: 'status',
+      align: 'center',
       render: (_, record: Pipeline) => getStatusTag(record),
     },
     {
@@ -317,54 +366,71 @@ const Pipelines: React.FC = () => {
       key: 'actions',
       render: (_, record: Pipeline) => (
         <Space size="small">
-          <Tooltip title="查看详情">
-            <Button 
-              type="text" 
-              icon={<EyeOutlined />} 
-              onClick={() => handleViewPipeline(record)}
-            />
-          </Tooltip>
-          <Tooltip title="执行流水线">
-            <Button 
-              type="text" 
-              icon={<PlayCircleOutlined />} 
-              onClick={() => handleExecutePipeline(record)}
-              disabled={!record.is_active}
-            />
-          </Tooltip>
-          <Tooltip title="编辑">
-            <Button 
-              type="text" 
-              icon={<EditOutlined />} 
+          <Tooltip title="编辑流水线">
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
               onClick={() => handleEditPipeline(record)}
             />
           </Tooltip>
-          <Tooltip title="拖拽式编辑器">
-            <Button 
-              type="text" 
-              icon={<DeploymentUnitOutlined />} 
+          <Tooltip title="拖拽式配置">
+            <Button
+              type="text"
+              size="small"
+              icon={<SettingOutlined />}
               onClick={() => handleOpenEditor(record)}
             />
           </Tooltip>
-          <Tooltip title={record.is_active ? "停用流水线" : "激活流水线"}>
-            <Button 
-              type="text" 
-              icon={<PoweroffOutlined />} 
-              onClick={() => handleToggleStatus(record)}
-              style={{ color: record.is_active ? '#ff4d4f' : '#52c41a' }}
-            />
-          </Tooltip>
-          <Tooltip title="删除">
-            <Popconfirm
-              title="确认删除此流水线？"
-              description="删除后将无法恢复，相关执行记录也会受到影响。"
-              onConfirm={() => handleDeletePipeline(record)}
-              okText="确认删除"
-              cancelText="取消"
-            >
-              <Button type="text" icon={<DeleteOutlined />} danger />
-            </Popconfirm>
-          </Tooltip>
+          <Dropdown
+            menu={{
+              items: [
+                {
+                  key: 'view',
+                  icon: <EyeOutlined />,
+                  label: '查看详情',
+                  onClick: () => handleViewPipeline(record),
+                },
+                {
+                  key: 'execute',
+                  icon: <PlayCircleOutlined />,
+                  label: '执行流水线',
+                  disabled: !record.is_active,
+                  onClick: () => handleExecutePipeline(record),
+                },
+                {
+                  key: 'toggleStatus',
+                  icon: <PoweroffOutlined />,
+                  label: record.is_active ? '停用流水线' : '激活流水线',
+                  onClick: () => handleToggleStatus(record),
+                },
+                {
+                  type: 'divider' as const,
+                },
+                {
+                  key: 'delete',
+                  icon: <DeleteOutlined />,
+                  label: '删除',
+                  danger: true,
+                  onClick: () => {
+                    Modal.confirm({
+                      title: '确认删除此流水线？',
+                      content: '删除后将无法恢复，相关执行记录也会受到影响。',
+                      okText: '确认删除',
+                      cancelText: '取消',
+                      okType: 'danger',
+                      onOk: () => handleDeletePipeline(record),
+                    });
+                  },
+                },
+              ],
+            }}
+            trigger={['click']}
+          >
+            <Button type="text" size="small">
+              更多
+            </Button>
+          </Dropdown>
         </Space>
       ),
     },
@@ -490,20 +556,23 @@ const Pipelines: React.FC = () => {
             label="执行模式"
             initialValue="local"
           >
-            <Select placeholder="选择执行模式">
-              <Option value="local">
+            <Select 
+              placeholder="选择执行模式"
+              optionLabelProp="label"
+            >
+              <Option value="local" label="本地执行">
                 <div>
                   <div>本地执行</div>
                   <div style={{ fontSize: 12, color: '#999' }}>使用本地Celery执行所有步骤</div>
                 </div>
               </Option>
-              <Option value="remote">
+              <Option value="remote" label="远程工具">
                 <div>
                   <div>远程工具</div>
                   <div style={{ fontSize: 12, color: '#999' }}>在CI/CD工具中执行</div>
                 </div>
               </Option>
-              <Option value="hybrid">
+              <Option value="hybrid" label="混合模式">
                 <div>
                   <div>混合模式</div>
                   <div style={{ fontSize: 12, color: '#999' }}>部分本地、部分远程执行</div>
@@ -517,9 +586,17 @@ const Pipelines: React.FC = () => {
             label="执行工具"
             tooltip="选择用于远程或混合模式执行的CI/CD工具"
           >
-            <Select placeholder="选择CI/CD工具（可选）" allowClear>
+            <Select 
+              placeholder="选择CI/CD工具（可选）" 
+              allowClear
+              optionLabelProp="label"
+            >
               {tools.map(tool => (
-                <Option key={tool.id} value={tool.id}>
+                <Option 
+                  key={tool.id} 
+                  value={tool.id}
+                  label={`${tool.name} (${tool.tool_type})`}
+                >
                   <div>
                     <div>{tool.name}</div>
                     <div style={{ fontSize: 12, color: '#999' }}>{tool.tool_type} - {tool.base_url}</div>

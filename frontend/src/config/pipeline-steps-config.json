@@ -1,0 +1,683 @@
+{
+  "pipelineStepsConfig": {
+    "fetch_code": {
+      "name": "代码拉取",
+      "description": "从版本控制系统获取源代码",
+      "icon": "git-branch",
+      "category": "source",
+      "parameters": [
+        {
+          "key": "command",
+          "type": "text",
+          "label": "自定义Git命令",
+          "description": "自定义Git命令，优先级最高，会覆盖其他参数",
+          "placeholder": "git clone https://github.com/user/repo.git",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "repository",
+          "type": "text",
+          "label": "仓库地址",
+          "description": "Git仓库的URL地址",
+          "placeholder": "https://github.com/user/repo.git",
+          "required": false,
+          "priority": 2
+        },
+        {
+          "key": "repository_url",
+          "type": "text",
+          "label": "仓库地址（别名）",
+          "description": "Git仓库URL的别名参数",
+          "placeholder": "https://github.com/user/repo.git",
+          "required": false,
+          "priority": 3
+        },
+        {
+          "key": "branch",
+          "type": "text",
+          "label": "分支名称",
+          "description": "要拉取的Git分支名称",
+          "placeholder": "main",
+          "defaultValue": "main",
+          "required": false,
+          "priority": 2
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的checkout步骤或自定义sh命令",
+        "examples": [
+          {
+            "input": {"repository": "https://github.com/user/repo.git", "branch": "main"},
+            "output": "checkout([\n    $class: 'GitSCM',\n    branches: [[name: 'main']],\n    userRemoteConfigs: [[url: 'https://github.com/user/repo.git']]\n])"
+          },
+          {
+            "input": {"command": "git clone https://github.com/user/repo.git"},
+            "output": "sh 'git clone https://github.com/user/repo.git'"
+          }
+        ]
+      }
+    },
+    "build": {
+      "name": "构建",
+      "description": "编译和构建应用程序",
+      "icon": "hammer",
+      "category": "build",
+      "parameters": [
+        {
+          "key": "command",
+          "type": "text",
+          "label": "自定义构建命令",
+          "description": "自定义构建命令，优先级最高",
+          "placeholder": "npm run build",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "build_tool",
+          "type": "select",
+          "label": "构建工具",
+          "description": "选择使用的构建工具类型",
+          "options": [
+            {"value": "npm", "label": "NPM"},
+            {"value": "maven", "label": "Maven"},
+            {"value": "gradle", "label": "Gradle"},
+            {"value": "docker", "label": "Docker"}
+          ],
+          "defaultValue": "npm",
+          "required": false,
+          "priority": 2
+        },
+        {
+          "key": "build_command",
+          "type": "text",
+          "label": "构建命令",
+          "description": "特定于构建工具的命令",
+          "placeholder": "build",
+          "required": false,
+          "priority": 3,
+          "conditionalDisplay": {
+            "dependsOn": "build_tool",
+            "conditions": {
+              "npm": {"placeholder": "build", "description": "NPM脚本名称，如 build、compile"},
+              "maven": {"placeholder": "clean compile package", "description": "Maven目标，如 clean compile package"},
+              "gradle": {"placeholder": "build", "description": "Gradle任务，如 build、assemble"},
+              "docker": {"placeholder": "", "description": "Docker构建时此参数无效"}
+            }
+          }
+        },
+        {
+          "key": "dockerfile",
+          "type": "text",
+          "label": "Dockerfile路径",
+          "description": "Dockerfile文件的路径",
+          "placeholder": "Dockerfile",
+          "defaultValue": "Dockerfile",
+          "required": false,
+          "priority": 4,
+          "showWhen": {
+            "build_tool": "docker"
+          }
+        },
+        {
+          "key": "tag",
+          "type": "text",
+          "label": "镜像标签",
+          "description": "Docker镜像的标签",
+          "placeholder": "myapp:latest",
+          "defaultValue": "latest",
+          "required": false,
+          "priority": 4,
+          "showWhen": {
+            "build_tool": "docker"
+          }
+        },
+        {
+          "key": "context",
+          "type": "text",
+          "label": "构建上下文",
+          "description": "Docker构建的上下文路径",
+          "placeholder": ".",
+          "defaultValue": ".",
+          "required": false,
+          "priority": 4,
+          "showWhen": {
+            "build_tool": "docker"
+          }
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "根据build_tool生成对应的构建命令",
+        "examples": [
+          {
+            "input": {"build_tool": "npm", "build_command": "build"},
+            "output": "sh 'npm ci'\nsh 'npm run build'"
+          },
+          {
+            "input": {"build_tool": "maven", "build_command": "clean package"},
+            "output": "sh 'mvn clean package'"
+          },
+          {
+            "input": {"build_tool": "docker", "dockerfile": "Dockerfile", "tag": "myapp:v1.0"},
+            "output": "sh 'docker build -f Dockerfile -t myapp:v1.0 .'"
+          }
+        ]
+      }
+    },
+    "test": {
+      "name": "测试",
+      "description": "执行各种类型的测试",
+      "icon": "test-tube",
+      "category": "test",
+      "parameters": [
+        {
+          "key": "test_command",
+          "type": "text",
+          "label": "测试命令",
+          "description": "执行测试的命令",
+          "placeholder": "npm test",
+          "defaultValue": "npm test",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "coverage",
+          "type": "boolean",
+          "label": "生成覆盖率报告",
+          "description": "是否生成代码覆盖率报告",
+          "defaultValue": false,
+          "required": false,
+          "priority": 2
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "执行测试命令，可选择生成覆盖率报告",
+        "examples": [
+          {
+            "input": {"test_command": "jest --coverage"},
+            "output": "sh 'jest --coverage'"
+          },
+          {
+            "input": {"test_command": "npm test", "coverage": true},
+            "output": "sh 'npm test'\npublishHTML([allowMissing: false, alwaysLinkToLastBuild: true, keepAll: true, reportDir: 'coverage', reportFiles: 'index.html', reportName: 'Coverage Report'])"
+          }
+        ]
+      }
+    },
+    "test_execution": {
+      "name": "测试执行",
+      "description": "执行测试命令",
+      "icon": "play-circle",
+      "category": "test",
+      "parameters": [
+        {
+          "key": "test_command",
+          "type": "text",
+          "label": "测试命令",
+          "description": "要执行的测试命令",
+          "placeholder": "npm test",
+          "defaultValue": "npm test",
+          "required": false,
+          "priority": 1
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "直接执行指定的测试命令",
+        "examples": [
+          {
+            "input": {"test_command": "jest --watchAll=false"},
+            "output": "sh 'jest --watchAll=false'"
+          }
+        ]
+      }
+    },
+    "deploy": {
+      "name": "部署",
+      "description": "将应用部署到目标环境",
+      "icon": "rocket",
+      "category": "deploy",
+      "parameters": [
+        {
+          "key": "deploy_type",
+          "type": "select",
+          "label": "部署类型",
+          "description": "选择部署方式",
+          "options": [
+            {"value": "kubernetes", "label": "Kubernetes"},
+            {"value": "docker", "label": "Docker"}
+          ],
+          "defaultValue": "kubernetes",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": false,
+          "priority": 2,
+          "showWhen": {
+            "deploy_type": "kubernetes"
+          }
+        },
+        {
+          "key": "manifest_path",
+          "type": "text",
+          "label": "清单文件路径",
+          "description": "Kubernetes清单文件的路径",
+          "placeholder": "k8s/",
+          "defaultValue": "k8s/",
+          "required": false,
+          "priority": 2,
+          "showWhen": {
+            "deploy_type": "kubernetes"
+          }
+        },
+        {
+          "key": "image",
+          "type": "text",
+          "label": "Docker镜像",
+          "description": "要部署的Docker镜像名称",
+          "placeholder": "app:latest",
+          "defaultValue": "app:latest",
+          "required": false,
+          "priority": 2,
+          "showWhen": {
+            "deploy_type": "docker"
+          }
+        },
+        {
+          "key": "container_name",
+          "type": "text",
+          "label": "容器名称",
+          "description": "Docker容器的名称",
+          "placeholder": "app",
+          "defaultValue": "app",
+          "required": false,
+          "priority": 2,
+          "showWhen": {
+            "deploy_type": "docker"
+          }
+        },
+        {
+          "key": "deploy_command",
+          "type": "text",
+          "label": "自定义部署命令",
+          "description": "自定义部署命令，会覆盖其他部署参数",
+          "placeholder": "kubectl apply -f k8s/",
+          "required": false,
+          "priority": 3
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "根据deploy_type生成对应的部署命令",
+        "examples": [
+          {
+            "input": {"deploy_type": "kubernetes", "namespace": "prod", "manifest_path": "k8s/"},
+            "output": "sh 'kubectl apply -f k8s/ -n prod'"
+          },
+          {
+            "input": {"deploy_type": "docker", "image": "myapp:v1.0", "container_name": "myapp"},
+            "output": "sh 'docker stop myapp || true'\nsh 'docker rm myapp || true'\nsh 'docker run -d --name myapp myapp:v1.0'"
+          }
+        ]
+      }
+    },
+    "security_scan": {
+      "name": "安全扫描",
+      "description": "执行安全漏洞扫描",
+      "icon": "shield",
+      "category": "security",
+      "parameters": [
+        {
+          "key": "scan_type",
+          "type": "select",
+          "label": "扫描类型",
+          "description": "选择安全扫描工具",
+          "options": [
+            {"value": "zap", "label": "OWASP ZAP"},
+            {"value": "sonarqube", "label": "SonarQube"}
+          ],
+          "defaultValue": "zap",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "target_url",
+          "type": "text",
+          "label": "目标URL",
+          "description": "要扫描的目标URL",
+          "placeholder": "http://localhost:3000",
+          "defaultValue": "http://localhost",
+          "required": false,
+          "priority": 2,
+          "showWhen": {
+            "scan_type": "zap"
+          }
+        },
+        {
+          "key": "project_key",
+          "type": "text",
+          "label": "项目键",
+          "description": "SonarQube项目的唯一标识",
+          "placeholder": "my-project",
+          "defaultValue": "default",
+          "required": false,
+          "priority": 2,
+          "showWhen": {
+            "scan_type": "sonarqube"
+          }
+        },
+        {
+          "key": "scan_command",
+          "type": "text",
+          "label": "自定义扫描命令",
+          "description": "自定义安全扫描命令",
+          "placeholder": "sonar-scanner",
+          "required": false,
+          "priority": 3
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "根据scan_type生成对应的扫描命令",
+        "examples": [
+          {
+            "input": {"scan_type": "zap", "target_url": "https://myapp.com"},
+            "output": "sh 'docker run -t owasp/zap2docker-stable zap-baseline.py -t https://myapp.com'"
+          },
+          {
+            "input": {"scan_type": "sonarqube", "project_key": "my-project"},
+            "output": "sh 'sonar-scanner -Dsonar.projectKey=my-project'"
+          }
+        ]
+      }
+    },
+    "notification": {
+      "name": "通知",
+      "description": "发送构建状态通知",
+      "icon": "bell",
+      "category": "notification",
+      "parameters": [
+        {
+          "key": "message",
+          "type": "textarea",
+          "label": "通知消息",
+          "description": "要发送的通知消息内容",
+          "placeholder": "Pipeline completed successfully!",
+          "defaultValue": "Pipeline completed",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "webhook_url",
+          "type": "text",
+          "label": "Webhook URL",
+          "description": "接收通知的Webhook地址（如Slack、钉钉等）",
+          "placeholder": "https://hooks.slack.com/services/...",
+          "required": false,
+          "priority": 2
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "发送通知到Webhook或输出消息",
+        "examples": [
+          {
+            "input": {"message": "构建完成", "webhook_url": "https://hooks.slack.com/services/..."},
+            "output": "sh 'curl -X POST -H \"Content-Type: application/json\" -d {\"text\": \"构建完成\"} https://hooks.slack.com/services/...'"
+          },
+          {
+            "input": {"message": "构建完成"},
+            "output": "sh 'echo \\'构建完成\\''"
+          }
+        ]
+      }
+    },
+    "artifact_upload": {
+      "name": "制品上传",
+      "description": "上传构建产物和文件",
+      "icon": "archive",
+      "category": "artifact",
+      "parameters": [
+        {
+          "key": "paths",
+          "type": "array",
+          "label": "文件路径",
+          "description": "要上传的文件或目录路径列表，支持通配符",
+          "placeholder": "dist/**, *.jar, reports/*",
+          "required": false,
+          "priority": 1,
+          "itemType": "text"
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "使用Jenkins的archiveArtifacts步骤上传文件",
+        "examples": [
+          {
+            "input": {"paths": ["dist/**", "*.jar", "reports/*"]},
+            "output": "archiveArtifacts artifacts: 'dist/**', '*.jar', 'reports/*', allowEmptyArchive: true"
+          }
+        ]
+      }
+    },
+    "custom": {
+      "name": "自定义步骤",
+      "description": "执行自定义Shell命令或脚本",
+      "icon": "terminal",
+      "category": "custom",
+      "parameters": [
+        {
+          "key": "command",
+          "type": "text",
+          "label": "命令",
+          "description": "要执行的Shell命令",
+          "placeholder": "echo 'Hello World'",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "script",
+          "type": "textarea",
+          "label": "脚本内容",
+          "description": "多行Shell脚本内容",
+          "placeholder": "#!/bin/bash\necho 'Starting custom script'\n# Your commands here",
+          "required": false,
+          "priority": 2
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "直接执行指定的命令或脚本",
+        "examples": [
+          {
+            "input": {"command": "echo 'Hello World'"},
+            "output": "sh 'echo \\'Hello World\\''"
+          },
+          {
+            "input": {"script": "#!/bin/bash\necho 'Multi-line script'\nls -la"},
+            "output": "sh '#!/bin/bash\\necho \\'Multi-line script\\'\\nls -la'"
+          }
+        ]
+      }
+    },
+    "shell_script": {
+      "name": "Shell脚本",
+      "description": "执行Shell脚本",
+      "icon": "code",
+      "category": "custom",
+      "parameters": [
+        {
+          "key": "script",
+          "type": "textarea",
+          "label": "脚本内容",
+          "description": "要执行的Shell脚本内容",
+          "placeholder": "#!/bin/bash\necho 'Shell script content'",
+          "required": false,
+          "priority": 1
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "执行指定的Shell脚本",
+        "examples": [
+          {
+            "input": {"script": "echo 'Script execution'"},
+            "output": "sh 'echo \\'Script execution\\''"
+          }
+        ]
+      }
+    },
+    "docker_build": {
+      "name": "Docker构建",
+      "description": "构建Docker镜像",
+      "icon": "container",
+      "category": "build",
+      "parameters": [
+        {
+          "key": "dockerfile",
+          "type": "text",
+          "label": "Dockerfile路径",
+          "description": "Dockerfile文件的路径",
+          "placeholder": "Dockerfile",
+          "defaultValue": "Dockerfile",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "tag",
+          "type": "text",
+          "label": "镜像标签",
+          "description": "Docker镜像的标签",
+          "placeholder": "myapp:latest",
+          "defaultValue": "latest",
+          "required": false,
+          "priority": 2
+        },
+        {
+          "key": "context",
+          "type": "text",
+          "label": "构建上下文",
+          "description": "Docker构建的上下文路径",
+          "placeholder": ".",
+          "defaultValue": ".",
+          "required": false,
+          "priority": 3
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "构建Docker镜像",
+        "examples": [
+          {
+            "input": {"dockerfile": "Dockerfile.prod", "tag": "myapp:v1.0", "context": "./src"},
+            "output": "sh 'docker build -f Dockerfile.prod -t myapp:v1.0 ./src'"
+          }
+        ]
+      }
+    },
+    "kubernetes_deploy": {
+      "name": "Kubernetes部署",
+      "description": "部署到Kubernetes集群",
+      "icon": "kubernetes",
+      "category": "deploy",
+      "parameters": [
+        {
+          "key": "namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": false,
+          "priority": 1
+        },
+        {
+          "key": "manifest_path",
+          "type": "text",
+          "label": "清单文件路径",
+          "description": "Kubernetes清单文件的路径",
+          "placeholder": "k8s/",
+          "defaultValue": "k8s/",
+          "required": false,
+          "priority": 2
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "应用Kubernetes清单文件",
+        "examples": [
+          {
+            "input": {"namespace": "production", "manifest_path": "k8s/prod/"},
+            "output": "sh 'kubectl apply -f k8s/prod/ -n production'"
+          }
+        ]
+      }
+    }
+  },
+  "parameterTypes": {
+    "text": {
+      "component": "Input",
+      "validation": "string"
+    },
+    "textarea": {
+      "component": "TextArea",
+      "validation": "string"
+    },
+    "select": {
+      "component": "Select",
+      "validation": "string"
+    },
+    "boolean": {
+      "component": "Switch",
+      "validation": "boolean"
+    },
+    "number": {
+      "component": "InputNumber",
+      "validation": "number"
+    },
+    "array": {
+      "component": "ArrayInput",
+      "validation": "array"
+    }
+  },
+  "categories": {
+    "source": {
+      "name": "源码管理",
+      "icon": "git-branch",
+      "color": "#52c41a"
+    },
+    "build": {
+      "name": "构建",
+      "icon": "hammer",
+      "color": "#1890ff"
+    },
+    "test": {
+      "name": "测试",
+      "icon": "test-tube",
+      "color": "#722ed1"
+    },
+    "security": {
+      "name": "安全",
+      "icon": "shield",
+      "color": "#fa8c16"
+    },
+    "deploy": {
+      "name": "部署",
+      "icon": "rocket",
+      "color": "#eb2f96"
+    },
+    "notification": {
+      "name": "通知",
+      "icon": "bell",
+      "color": "#13c2c2"
+    },
+    "artifact": {
+      "name": "制品",
+      "icon": "archive",
+      "color": "#a0d911"
+    },
+    "custom": {
+      "name": "自定义",
+      "icon": "terminal",
+      "color": "#595959"
+    }
+  }
+}

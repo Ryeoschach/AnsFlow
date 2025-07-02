@@ -9,7 +9,9 @@ import {
   Form,
   Input,
   Select,
-  Divider
+  Divider,
+  Alert,
+  Collapse
 } from 'antd'
 import {
   PlusOutlined,
@@ -18,14 +20,62 @@ import {
   SaveOutlined,
   ArrowUpOutlined,
   ArrowDownOutlined,
-  SettingOutlined
+  SettingOutlined,
+  QuestionCircleOutlined
 } from '@ant-design/icons'
 import { AtomicStep, Pipeline } from '../../types'
 import apiService from '../../services/api'
+import ParameterDocumentation from '../ParameterDocumentation'
 
 const { Text } = Typography
 const { Option } = Select
 const { TextArea } = Input
+
+// 优化Select组件的样式
+const selectStyles = `
+  .ant-select-dropdown .ant-select-item-option-content {
+    white-space: normal !important;
+    height: auto !important;
+    padding: 8px 12px !important;
+  }
+  
+  .ant-select-dropdown .ant-select-item {
+    height: auto !important;
+    min-height: 32px !important;
+    padding: 0 !important;
+  }
+  
+  .ant-select-dropdown .ant-select-item-option-content > div {
+    width: 100%;
+  }
+  
+  .ant-select-selector {
+    height: auto !important;
+    min-height: 32px !important;
+  }
+  
+  .ant-select-selection-item {
+    line-height: 30px !important;
+    padding: 0 8px !important;
+    height: 30px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+  }
+  
+  /* 强制隐藏选中项中的第二个div */
+  .ant-select-selection-item > div > div:nth-child(2) {
+    display: none !important;
+  }
+`
+
+// 将样式注入到页面中
+if (typeof document !== 'undefined' && !document.getElementById('pipeline-editor-styles')) {
+  const style = document.createElement('style')
+  style.id = 'pipeline-editor-styles'
+  style.textContent = selectStyles
+  document.head.appendChild(style)
+}
 
 interface PipelineEditorProps {
   visible?: boolean
@@ -67,6 +117,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   // 添加流水线基本信息编辑表单
   const [pipelineForm] = Form.useForm()
   const [pipelineInfoVisible, setPipelineInfoVisible] = useState(false)
+  // 添加参数说明状态
+  const [selectedStepType, setSelectedStepType] = useState<string>('')
+  const [showParameterDoc, setShowParameterDoc] = useState(false)
 
   // 清理状态的effect
   useEffect(() => {
@@ -92,6 +145,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       setStepFormVisible(false)
       setEditingStep(null)
       setPipelineInfoVisible(false)
+      setSelectedStepType('')
+      setShowParameterDoc(false)
       form.resetFields()
       pipelineForm.resetFields()
     }
@@ -102,6 +157,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
   const handleAddStep = () => {
     setEditingStep(null)
+    setSelectedStepType('')
+    setShowParameterDoc(false)
     form.resetFields()
     form.setFieldsValue({
       order: steps.length + 1,
@@ -112,6 +169,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
   const handleEditStep = (step: AtomicStep) => {
     setEditingStep(step)
+    setSelectedStepType(step.step_type)
+    setShowParameterDoc(false)
     form.setFieldsValue({
       name: step.name,
       step_type: step.step_type,
@@ -432,12 +491,33 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
             label="步骤类型"
             rules={[{ required: true, message: '请选择步骤类型' }]}
           >
-            <Select placeholder="选择步骤类型">
+            <Select 
+              placeholder="选择步骤类型"
+              optionLabelProp="label"
+              onChange={(value) => {
+                setSelectedStepType(value)
+                setShowParameterDoc(true)
+              }}
+            >
               {STEP_TYPES.map(type => (
-                <Option key={type.value} value={type.value}>
-                  <div>
-                    <div>{type.label}</div>
-                    <div style={{ fontSize: 12, color: '#999' }}>{type.description}</div>
+                <Option 
+                  key={type.value} 
+                  value={type.value}
+                  label={type.label}
+                >
+                  <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
+                    <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                      {type.label}
+                    </div>
+                    <div style={{ 
+                      fontSize: 12, 
+                      color: '#999',
+                      whiteSpace: 'normal',
+                      wordBreak: 'break-word',
+                      lineHeight: '1.3'
+                    }}>
+                      {type.description}
+                    </div>
                   </div>
                 </Option>
               ))}
@@ -461,9 +541,67 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
           <Divider>参数配置</Divider>
           
+          {/* 参数说明按钮 */}
+          {selectedStepType && (
+            <Alert
+              message={
+                <Space>
+                  <span>需要参数配置帮助？</span>
+                  <Button 
+                    type="link" 
+                    size="small" 
+                    icon={<QuestionCircleOutlined />}
+                    onClick={() => setShowParameterDoc(!showParameterDoc)}
+                  >
+                    {showParameterDoc ? '隐藏参数说明' : '查看参数说明'}
+                  </Button>
+                </Space>
+              }
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
+
+          {/* 参数说明组件 */}
+          {selectedStepType && showParameterDoc && (
+            <div style={{ marginBottom: 16 }}>
+              <ParameterDocumentation 
+                stepType={selectedStepType}
+                visible={showParameterDoc}
+                onParameterSelect={(paramKey, paramValue) => {
+                  // 将选择的参数示例插入到参数文本框
+                  const currentParams = form.getFieldValue('parameters') || '{}'
+                  try {
+                    const params = JSON.parse(currentParams)
+                    params[paramKey] = paramValue
+                    form.setFieldsValue({
+                      parameters: JSON.stringify(params, null, 2)
+                    })
+                    message.success(`已插入参数: ${paramKey}`)
+                  } catch (error) {
+                    // 如果当前参数不是有效JSON，直接替换
+                    const newParams = { [paramKey]: paramValue }
+                    form.setFieldsValue({
+                      parameters: JSON.stringify(newParams, null, 2)
+                    })
+                    message.success(`已插入参数: ${paramKey}`)
+                  }
+                }}
+              />
+            </div>
+          )}
+          
           <Form.Item
             name="parameters"
-            label="步骤参数"
+            label={
+              <Space>
+                <span>步骤参数</span>
+                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+                  (JSON格式)
+                </Typography.Text>
+              </Space>
+            }
           >
             <TextArea 
               placeholder='输入JSON格式的参数，例如: {"timeout": 300, "retry": 3}'
@@ -510,26 +648,12 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           <Form.Item
             name="execution_mode"
             label="执行模式"
+            tooltip="本地执行：使用本地Celery执行；远程工具：在CI/CD工具中执行；混合模式：部分本地、部分远程执行"
           >
             <Select placeholder="选择执行模式">
-              <Select.Option value="local">
-                <div>
-                  <div>本地执行</div>
-                  <div style={{ fontSize: 12, color: '#999' }}>使用本地Celery执行所有步骤</div>
-                </div>
-              </Select.Option>
-              <Select.Option value="remote">
-                <div>
-                  <div>远程工具</div>
-                  <div style={{ fontSize: 12, color: '#999' }}>在CI/CD工具中执行</div>
-                </div>
-              </Select.Option>
-              <Select.Option value="hybrid">
-                <div>
-                  <div>混合模式</div>
-                  <div style={{ fontSize: 12, color: '#999' }}>部分本地、部分远程执行</div>
-                </div>
-              </Select.Option>
+              <Select.Option value="local">本地执行</Select.Option>
+              <Select.Option value="remote">远程工具</Select.Option>
+              <Select.Option value="hybrid">混合模式</Select.Option>
             </Select>
           </Form.Item>
 
@@ -538,13 +662,16 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
             label="执行工具"
             tooltip="选择用于远程或混合模式执行的CI/CD工具"
           >
-            <Select placeholder="选择CI/CD工具（可选）" allowClear>
+            <Select 
+              placeholder="选择CI/CD工具（可选）" 
+              allowClear
+            >
               {tools.map((tool: any) => (
-                <Select.Option key={tool.id} value={tool.id}>
-                  <div>
-                    <div>{tool.name}</div>
-                    <div style={{ fontSize: 12, color: '#999' }}>{tool.tool_type} - {tool.base_url}</div>
-                  </div>
+                <Select.Option 
+                  key={tool.id} 
+                  value={tool.id}
+                >
+                  {tool.name} ({tool.tool_type})
                 </Select.Option>
               ))}
             </Select>
