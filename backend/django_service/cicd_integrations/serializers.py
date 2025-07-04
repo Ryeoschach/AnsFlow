@@ -108,12 +108,25 @@ class AtomicStepSerializer(serializers.ModelSerializer):
     step_type_display = serializers.CharField(source='get_step_type_display', read_only=True)
     dependencies_count = serializers.IntegerField(source='dependencies.count', read_only=True)
     
+    # Git凭据相关字段
+    git_credential_name = serializers.CharField(source='git_credential.name', read_only=True)
+    
+    # Ansible相关字段
+    ansible_playbook_name = serializers.CharField(source='ansible_playbook.name', read_only=True)
+    ansible_inventory_name = serializers.CharField(source='ansible_inventory.name', read_only=True)
+    ansible_credential_name = serializers.CharField(source='ansible_credential.name', read_only=True)
+    
     class Meta:
         model = AtomicStep
         fields = [
             'id', 'name', 'step_type', 'step_type_display', 'description',
-            'parameters', 'dependencies', 'dependencies_count', 'conditions',
-            'created_by', 'created_by_username', 'is_public',
+            'order', 'parameters', 'config', 'dependencies', 'dependencies_count', 
+            'conditions', 'timeout', 'retry_count',
+            'git_credential', 'git_credential_name',
+            'ansible_playbook', 'ansible_playbook_name',
+            'ansible_inventory', 'ansible_inventory_name', 
+            'ansible_credential', 'ansible_credential_name',
+            'pipeline', 'created_by', 'created_by_username', 'is_public', 'is_active',
             'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']

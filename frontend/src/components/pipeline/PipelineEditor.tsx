@@ -23,7 +23,7 @@ import {
   SettingOutlined,
   QuestionCircleOutlined
 } from '@ant-design/icons'
-import { AtomicStep, Pipeline, GitCredential } from '../../types'
+import { AtomicStep, Pipeline, GitCredential, PipelineStep } from '../../types'
 import apiService from '../../services/api'
 import ParameterDocumentation from '../ParameterDocumentation'
 
@@ -92,6 +92,81 @@ interface StepFormData {
   parameters: Record<string, any>
   order: number
   git_credential_id?: number | null
+  ansible_playbook?: number | null
+  ansible_inventory?: number | null
+  ansible_credential?: number | null
+}
+
+// 工具函数：判断是否为AtomicStep
+const isAtomicStep = (step: PipelineStep | AtomicStep): step is AtomicStep => {
+  return 'parameters' in step && 'pipeline' in step && 'is_active' in step && 'created_at' in step
+}
+
+// 工具函数：判断是否为PipelineStep
+const isPipelineStep = (step: PipelineStep | AtomicStep): step is PipelineStep => {
+  return !isAtomicStep(step)
+}
+
+// 工具函数：获取步骤参数
+const getStepParameters = (step: PipelineStep | AtomicStep): Record<string, any> => {
+  if (isAtomicStep(step)) {
+    return step.parameters || {}
+  } else {
+    // 对于旧的PipelineStep，需要从独立字段构建参数
+    const parameters = step.ansible_parameters || {}
+    
+    // 如果是ansible步骤，确保从独立字段获取ansible配置
+    if (step.step_type === 'ansible') {
+      return {
+        ...parameters,
+        playbook_id: step.ansible_playbook,
+        inventory_id: step.ansible_inventory,
+        credential_id: step.ansible_credential
+      }
+    }
+    
+    return parameters
+  }
+}
+
+// 工具函数：获取步骤的Ansible配置
+const getStepAnsibleConfig = (step: PipelineStep | AtomicStep) => {
+  if (isAtomicStep(step)) {
+    return {
+      playbook_id: step.parameters?.playbook_id || step.ansible_playbook,
+      inventory_id: step.parameters?.inventory_id || step.ansible_inventory,
+      credential_id: step.parameters?.credential_id || step.ansible_credential
+    }
+  } else {
+    return {
+      playbook_id: step.ansible_playbook,
+      inventory_id: step.ansible_inventory,
+      credential_id: step.ansible_credential
+    }
+  }
+}
+
+// 工具函数：规范化步骤数据用于显示
+const normalizeStepForDisplay = (step: PipelineStep | AtomicStep): AtomicStep => {
+  if (isAtomicStep(step)) {
+    return step
+  } else {
+    // 将PipelineStep转换为AtomicStep格式用于显示
+    return {
+      id: step.id,
+      name: step.name,
+      step_type: step.step_type,
+      description: step.description || '',
+      order: step.order,
+      parameters: step.ansible_parameters || {},
+      pipeline: 0, // 临时值
+      is_active: true,
+      created_at: new Date().toISOString(),
+      ansible_playbook: step.ansible_playbook,
+      ansible_inventory: step.ansible_inventory,
+      ansible_credential: step.ansible_credential
+    }
+  }
 }
 
 const STEP_TYPES = [
@@ -112,9 +187,10 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   onClose,
   tools = []
 }) => {
-  const [steps, setSteps] = useState<AtomicStep[]>([])
+  // 使用统一的步骤类型，兼容PipelineStep和AtomicStep
+  const [steps, setSteps] = useState<(PipelineStep | AtomicStep)[]>([])
   const [stepFormVisible, setStepFormVisible] = useState(false)
-  const [editingStep, setEditingStep] = useState<AtomicStep | null>(null)
+  const [editingStep, setEditingStep] = useState<(PipelineStep | AtomicStep) | null>(null)
   const [form] = Form.useForm()
   // 添加流水线基本信息编辑表单
   const [pipelineForm] = Form.useForm()
@@ -132,22 +208,58 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   // 清理状态的effect
   useEffect(() => {
     if (visible && pipeline) {
-      // 每次打开编辑器时重新初始化steps - 深拷贝避免引用污染
-      const initialSteps = pipeline.steps ? 
-        pipeline.steps.map(step => ({ ...step })).sort((a, b) => a.order - b.order) : 
-        []
-      setSteps(initialSteps)
+      // 重新获取完整的流水线数据（包含步骤）
+      const loadPipelineDetails = async () => {
+        try {
+          console.log('Loading pipeline details for:', pipeline.name, pipeline.id)
+          const fullPipeline = await apiService.getPipeline(pipeline.id)
+          console.log('Full pipeline data:', fullPipeline)
+          
+          // 每次打开编辑器时重新初始化steps - 优先使用PipelineStep，兼容AtomicStep
+          let initialSteps: (PipelineStep | AtomicStep)[] = []
+          
+          if (fullPipeline.steps && fullPipeline.steps.length > 0) {
+            // 使用新的PipelineStep数据
+            initialSteps = fullPipeline.steps.map(step => ({ ...step })).sort((a, b) => a.order - b.order)
+            console.log('Using PipelineStep data:', initialSteps.length, 'steps')
+          } else if (fullPipeline.atomic_steps && fullPipeline.atomic_steps.length > 0) {
+            // 兼容旧的AtomicStep数据
+            initialSteps = fullPipeline.atomic_steps.map(step => ({ ...step })).sort((a, b) => a.order - b.order)
+            console.log('Using AtomicStep data (compatibility):', initialSteps.length, 'steps')
+          }
+          
+          setSteps(initialSteps)
+          
+          // 使用完整的流水线数据初始化表单
+          pipelineForm.setFieldsValue({
+            name: fullPipeline.name,
+            description: fullPipeline.description,
+            execution_mode: fullPipeline.execution_mode || 'local',
+            execution_tool: fullPipeline.execution_tool,
+            tool_job_name: fullPipeline.tool_job_name,
+            is_active: fullPipeline.is_active
+          })
+        } catch (error) {
+          console.error('Failed to load pipeline details:', error)
+          message.error('加载流水线详情失败')
+          
+          // 如果获取失败，使用传入的流水线数据作为兜底
+          const initialSteps: (PipelineStep | AtomicStep)[] = []
+          setSteps(initialSteps)
+          
+          pipelineForm.setFieldsValue({
+            name: pipeline.name,
+            description: pipeline.description,
+            execution_mode: pipeline.execution_mode || 'local',
+            execution_tool: pipeline.execution_tool,
+            tool_job_name: pipeline.tool_job_name,
+            is_active: pipeline.is_active
+          })
+        }
+      }
       
-      // 初始化流水线基本信息表单
-      pipelineForm.setFieldsValue({
-        name: pipeline.name,
-        description: pipeline.description,
-        execution_mode: pipeline.execution_mode || 'local',
-        execution_tool: pipeline.execution_tool,
-        tool_job_name: pipeline.tool_job_name,
-        is_active: pipeline.is_active
-      })
-
+      loadPipelineDetails()
+      
       // 获取Git凭据列表
       fetchGitCredentials()
 
@@ -212,25 +324,51 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
     )
   }
 
-  const handleEditStep = (step: AtomicStep) => {
+  const handleEditStep = (step: PipelineStep | AtomicStep) => {
     setEditingStep(step)
     setSelectedStepType(step.step_type)
     setShowParameterDoc(false)
     
+    // 获取步骤的参数和Ansible配置
+    const stepParams = getStepParameters(step)
+    const ansibleConfig = getStepAnsibleConfig(step)
+    
+    // 准备基础表单值
     const formValues: any = {
       name: step.name,
       step_type: step.step_type,
       description: step.description,
       order: step.order,
-      parameters: JSON.stringify(step.parameters, null, 2),
-      git_credential_id: step.git_credential || undefined
+      git_credential_id: isAtomicStep(step) ? step.git_credential : undefined
     }
 
-    // 如果是ansible步骤，从parameters中提取ansible相关字段
-    if (step.step_type === 'ansible' && step.parameters) {
-      formValues.ansible_playbook_id = step.parameters.playbook_id
-      formValues.ansible_inventory_id = step.parameters.inventory_id
-      formValues.ansible_credential_id = step.parameters.credential_id
+    // 如果是ansible步骤，从参数中提取ansible相关字段
+    if (step.step_type === 'ansible') {
+      formValues.ansible_playbook_id = ansibleConfig.playbook_id
+      formValues.ansible_inventory_id = ansibleConfig.inventory_id  
+      formValues.ansible_credential_id = ansibleConfig.credential_id
+      
+      // 清理参数中的ansible字段，避免重复显示
+      const cleanParameters = { ...stepParams }
+      delete cleanParameters.playbook_id
+      delete cleanParameters.inventory_id
+      delete cleanParameters.credential_id
+      
+      // 只有在清理后的参数不为空时才显示
+      formValues.parameters = Object.keys(cleanParameters).length > 0 
+        ? JSON.stringify(cleanParameters, null, 2) 
+        : '{}'
+      
+      console.log('Loading ansible step:', {
+        playbook: formValues.ansible_playbook_id,
+        inventory: formValues.ansible_inventory_id,
+        credential: formValues.ansible_credential_id,
+        originalStep: step,
+        cleanParameters: cleanParameters
+      })
+    } else {
+      // 非ansible步骤直接使用原始参数
+      formValues.parameters = JSON.stringify(stepParams, null, 2)
     }
 
     form.setFieldsValue(formValues)
@@ -277,7 +415,7 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
       // 处理ansible步骤的特殊字段
       if (values.step_type === 'ansible') {
-        // 将ansible相关字段添加到parameters中
+        // 将ansible相关字段添加到parameters中（主要存储方式）
         parameters = {
           ...parameters,
           playbook_id: values.ansible_playbook_id,
@@ -288,7 +426,11 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
       const stepData: StepFormData = {
         ...values,
-        parameters
+        parameters,
+        // 同时保存为独立字段（兼容性）
+        ansible_playbook: values.step_type === 'ansible' ? values.ansible_playbook_id : undefined,
+        ansible_inventory: values.step_type === 'ansible' ? values.ansible_inventory_id : undefined,
+        ansible_credential: values.step_type === 'ansible' ? values.ansible_credential_id : undefined
       }
 
       if (editingStep) {
@@ -376,14 +518,19 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         execution_tool: pipelineInfo.execution_tool || pipeline.execution_tool,
         tool_job_name: pipelineInfo.tool_job_name || pipeline.tool_job_name,
         tool_job_config: pipeline.tool_job_config,
-        steps: steps.map((step, index) => ({
-          name: step.name,
-          step_type: step.step_type,
-          description: step.description || '',
-          parameters: step.parameters || {},
-          order: index + 1, // 重新排序，确保顺序正确
-          is_active: true
-        }))
+        steps: steps.map((step, index) => {
+          const stepParams = getStepParameters(step)
+          return {
+            name: step.name,
+            step_type: step.step_type,
+            description: step.description || '',
+            parameters: stepParams,
+            order: index + 1, // 重新排序，确保顺序正确
+            is_active: true,
+            git_credential: isAtomicStep(step) ? step.git_credential : null
+            // 注意：不再传递独立的ansible字段，因为它们已经保存在parameters中
+          }
+        })
       }
 
       console.log('Saving pipeline with data:', updateData)
@@ -395,8 +542,11 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       message.success('流水线保存成功')
       
       // 更新本地状态为服务器返回的最新数据
-      if (updatedPipeline.steps) {
+      if (updatedPipeline.steps && updatedPipeline.steps.length > 0) {
         setSteps(updatedPipeline.steps.sort((a, b) => a.order - b.order))
+      } else if (updatedPipeline.atomic_steps && updatedPipeline.atomic_steps.length > 0) {
+        // 兼容性处理
+        setSteps(updatedPipeline.atomic_steps.sort((a, b) => a.order - b.order))
       }
       
       onSave?.(updatedPipeline)
@@ -427,6 +577,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         return '🤖'
       case 'notify':
         return '📢'
+      case 'custom':
+        return '🔧'
       default:
         return '⚙️'
     }
@@ -524,12 +676,44 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
                   {step.description && (
                     <Text type="secondary">{step.description}</Text>
                   )}
-                  {Object.keys(step.parameters || {}).length > 0 && (
-                    <div style={{ marginTop: 8 }}>
-                      <Text strong>参数: </Text>
-                      <Text code>{JSON.stringify(step.parameters, null, 2)}</Text>
-                    </div>
-                  )}
+                  
+                  {/* Ansible步骤特殊显示 */}
+                  {step.step_type === 'ansible' && (() => {
+                    const ansibleConfig = getStepAnsibleConfig(step)
+                    return (
+                      <div style={{ marginTop: 8 }}>
+                        <Text strong>Ansible配置:</Text>
+                        <div style={{ marginLeft: 16, marginTop: 4 }}>
+                          {ansibleConfig.playbook_id && (
+                            <div><Text type="secondary">Playbook ID: </Text>{ansibleConfig.playbook_id}</div>
+                          )}
+                          {ansibleConfig.inventory_id && (
+                            <div><Text type="secondary">Inventory ID: </Text>{ansibleConfig.inventory_id}</div>
+                          )}
+                          {ansibleConfig.credential_id && (
+                            <div><Text type="secondary">Credential ID: </Text>{ansibleConfig.credential_id}</div>
+                          )}
+                        </div>
+                      </div>
+                    )
+                  })()}
+                  
+                  {/* 显示清理后的参数（不包含ansible字段） */}
+                  {(() => {
+                    const stepParams = getStepParameters(step)
+                    const displayParams = { ...stepParams }
+                    if (step.step_type === 'ansible') {
+                      delete displayParams.playbook_id
+                      delete displayParams.inventory_id
+                      delete displayParams.credential_id
+                    }
+                    return Object.keys(displayParams).length > 0 && (
+                      <div style={{ marginTop: 8 }}>
+                        <Text strong>参数: </Text>
+                        <Text code>{JSON.stringify(displayParams, null, 2)}</Text>
+                      </div>
+                    )
+                  })()}
                 </Card>
               ))}
             </div>

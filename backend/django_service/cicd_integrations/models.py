@@ -198,6 +198,7 @@ class AtomicStep(models.Model):
         ('test', 'Test'),
         ('security_scan', 'Security Scan'),
         ('deploy', 'Deploy'),
+        ('ansible', 'Ansible Automation'),
         ('notify', 'Notify'),
         ('custom', 'Custom'),
     ]
@@ -226,6 +227,29 @@ class AtomicStep(models.Model):
         null=True, 
         blank=True,
         help_text="代码拉取步骤使用的Git认证凭据"
+    )
+    
+    # Ansible相关字段(用于ansible步骤)
+    ansible_playbook = models.ForeignKey(
+        'ansible_integration.AnsiblePlaybook',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Ansible步骤使用的Playbook"
+    )
+    ansible_inventory = models.ForeignKey(
+        'ansible_integration.AnsibleInventory',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Ansible步骤使用的Inventory"
+    )
+    ansible_credential = models.ForeignKey(
+        'ansible_integration.AnsibleCredential',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        help_text="Ansible步骤使用的SSH认证凭据"
     )
     
     # 依赖关系(字符串形式的步骤名称列表)

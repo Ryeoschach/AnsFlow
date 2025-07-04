@@ -131,7 +131,8 @@ export interface Pipeline {
   tool_name?: string
   tool_type?: string
   
-  steps?: AtomicStep[]  // 详情API返回
+  steps?: PipelineStep[]  // 主要步骤列表 (新的PipelineStep模型)
+  atomic_steps?: AtomicStep[]  // 兼容的原子步骤列表
   steps_count?: number  // 列表API返回
   runs?: PipelineRun[]  // 运行历史
   runs_count?: number
@@ -160,6 +161,35 @@ export interface PipelineToolMapping {
   updated_at: string
 }
 
+// 流水线步骤类型 (新的主要步骤模型)
+export interface PipelineStep {
+  id: number
+  name: string
+  description?: string
+  status?: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
+  step_type: string
+  command?: string
+  environment_vars?: Record<string, any>
+  timeout_seconds?: number
+  order: number
+  
+  // Ansible配置
+  ansible_playbook?: number | null
+  ansible_playbook_name?: string
+  ansible_inventory?: number | null
+  ansible_inventory_name?: string
+  ansible_credential?: number | null
+  ansible_credential_name?: string
+  ansible_parameters?: Record<string, any>
+  
+  // 执行结果
+  output_log?: string
+  error_log?: string
+  exit_code?: number
+  started_at?: string | null
+  completed_at?: string | null
+}
+
 // 原子步骤类型
 export interface AtomicStep {
   id: number
@@ -172,6 +202,9 @@ export interface AtomicStep {
   is_active: boolean
   created_at: string
   git_credential?: number | null  // Git凭据ID
+  ansible_playbook?: number | null  // Ansible Playbook ID
+  ansible_inventory?: number | null  // Ansible Inventory ID
+  ansible_credential?: number | null  // Ansible Credential ID
 }
 
 // 步骤执行类型

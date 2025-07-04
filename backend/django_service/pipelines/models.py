@@ -87,11 +87,15 @@ class PipelineStep(models.Model):
     
     # 步骤类型 - 新增
     STEP_TYPE_CHOICES = [
-        ('command', 'Shell Command'),
-        ('ansible', 'Ansible Playbook'),
-        ('script', 'Script Execution'),
-        ('deploy', 'Deployment'),
+        ('fetch_code', 'Code Fetch'),
+        ('build', 'Build'),
         ('test', 'Test Execution'),
+        ('security_scan', 'Security Scan'),
+        ('deploy', 'Deployment'),
+        ('ansible', 'Ansible Playbook'),
+        ('notify', 'Notification'),
+        ('custom', 'Custom Step'),
+        ('script', 'Script Execution'),
     ]
     
     pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='steps')
@@ -103,7 +107,7 @@ class PipelineStep(models.Model):
     step_type = models.CharField(
         max_length=20, 
         choices=STEP_TYPE_CHOICES, 
-        default='command',
+        default='custom',
         help_text="Type of step to execute"
     )
     
