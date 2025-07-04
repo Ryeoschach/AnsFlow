@@ -353,3 +353,6 @@ export interface SystemStats {
   tools_count: number
   healthy_tools: number
 }
+
+// 导出Ansible相关类型
+export * from './ansible'

@@ -200,6 +200,113 @@ class PipelineViewSet(viewsets.ModelViewSet):
         else:
             return Response(result, status=status.HTTP_400_BAD_REQUEST)
 
+    @action(detail=True, methods=['post'])
+    def add_ansible_step(self, request, pk=None):
+        """为Pipeline添加Ansible步骤"""
+        pipeline = self.get_object()
+        
+        # 验证必需参数
+        required_fields = ['name', 'ansible_playbook_id', 'ansible_inventory_id', 'ansible_credential_id']
+        for field in required_fields:
+            if field not in request.data:
+                return Response(
+                    {'error': f'缺少必需字段: {field}'}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        # 创建Ansible步骤
+        step_data = {
+            'pipeline': pipeline.id,
+            'name': request.data['name'],
+            'description': request.data.get('description', ''),
+            'step_type': 'ansible',
+            'ansible_playbook': request.data['ansible_playbook_id'],
+            'ansible_inventory': request.data['ansible_inventory_id'],
+            'ansible_credential': request.data['ansible_credential_id'],
+            'ansible_parameters': request.data.get('ansible_parameters', {}),
+            'order': request.data.get('order', pipeline.steps.count()),
+            'timeout_seconds': request.data.get('timeout_seconds', 600),
+        }
+        
+        step_serializer = PipelineStepSerializer(data=step_data)
+        step_serializer.is_valid(raise_exception=True)
+        step = step_serializer.save()
+        
+        return Response({
+            'message': 'Ansible步骤已添加到Pipeline',
+            'step_id': step.id,
+            'step_data': PipelineStepSerializer(step).data
+        }, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def execute_ansible_steps(self, request, pk=None):
+        """执行Pipeline中的所有Ansible步骤"""
+        pipeline = self.get_object()
+        
+        # 获取所有Ansible类型的步骤
+        ansible_steps = pipeline.steps.filter(step_type='ansible').order_by('order')
+        
+        if not ansible_steps.exists():
+            return Response({
+                'message': '该Pipeline中没有Ansible步骤'
+            }, status=status.HTTP_200_OK)
+        
+        execution_results = []
+        
+        for step in ansible_steps:
+            try:
+                # 检查必需的Ansible配置
+                if not all([step.ansible_playbook, step.ansible_inventory, step.ansible_credential]):
+                    result = {
+                        'step_id': step.id,
+                        'step_name': step.name,
+                        'status': 'failed',
+                        'error': 'Ansible配置不完整'
+                    }
+                    execution_results.append(result)
+                    continue
+                
+                # 创建Ansible执行记录
+                from ansible_integration.models import AnsibleExecution
+                from ansible_integration.tasks import execute_ansible_playbook
+                
+                execution = AnsibleExecution.objects.create(
+                    playbook=step.ansible_playbook,
+                    inventory=step.ansible_inventory,
+                    credential=step.ansible_credential,
+                    parameters=step.ansible_parameters,
+                    pipeline=pipeline,
+                    pipeline_step=step,
+                    created_by=request.user,
+                    status='pending'
+                )
+                
+                # 启动异步执行
+                task = execute_ansible_playbook.delay(execution.id)
+                
+                result = {
+                    'step_id': step.id,
+                    'step_name': step.name,
+                    'execution_id': execution.id,
+                    'task_id': task.id,
+                    'status': 'started'
+                }
+                execution_results.append(result)
+                
+            except Exception as e:
+                result = {
+                    'step_id': step.id,
+                    'step_name': step.name,
+                    'status': 'failed',
+                    'error': str(e)
+                }
+                execution_results.append(result)
+        
+        return Response({
+            'message': f'已启动{len(execution_results)}个Ansible步骤',
+            'results': execution_results
+        })
+
     def create(self, request, *args, **kwargs):
         """创建流水线 - 添加调试日志"""
         logger.warning(f"[DEBUG] PipelineViewSet.create called")

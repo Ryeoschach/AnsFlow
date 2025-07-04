@@ -100,6 +100,7 @@ const STEP_TYPES = [
   { value: 'test', label: '测试', description: '运行自动化测试' },
   { value: 'security_scan', label: '安全扫描', description: '安全漏洞扫描' },
   { value: 'deploy', label: '部署', description: '部署到目标环境' },
+  { value: 'ansible', label: 'Ansible自动化', description: '执行Ansible Playbook自动化任务' },
   { value: 'notify', label: '通知', description: '发送通知消息' },
   { value: 'custom', label: '自定义', description: '自定义步骤' },
 ]
@@ -123,6 +124,10 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   const [showParameterDoc, setShowParameterDoc] = useState(false)
   // 添加Git凭据状态
   const [gitCredentials, setGitCredentials] = useState<GitCredential[]>([])
+  // 添加Ansible资源状态
+  const [ansiblePlaybooks, setAnsiblePlaybooks] = useState<any[]>([])
+  const [ansibleInventories, setAnsibleInventories] = useState<any[]>([])
+  const [ansibleCredentials, setAnsibleCredentials] = useState<any[]>([])
 
   // 清理状态的effect
   useEffect(() => {
@@ -145,6 +150,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
       // 获取Git凭据列表
       fetchGitCredentials()
+
+      // 获取Ansible资源
+      fetchAnsibleResources()
     } else if (!visible) {
       // 关闭编辑器时清理状态
       setSteps([])
@@ -154,6 +162,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       setSelectedStepType('')
       setShowParameterDoc(false)
       setGitCredentials([])
+      setAnsiblePlaybooks([])
+      setAnsibleInventories([])
+      setAnsibleCredentials([])
       form.resetFields()
       pipelineForm.resetFields()
     }
@@ -169,6 +180,22 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
     }
   }
 
+  // 获取Ansible资源列表
+  const fetchAnsibleResources = async () => {
+    try {
+      const [playbooks, inventories, credentials] = await Promise.all([
+        apiService.getAnsiblePlaybooks(),
+        apiService.getAnsibleInventories(), 
+        apiService.getAnsibleCredentials()
+      ])
+      setAnsiblePlaybooks(playbooks)
+      setAnsibleInventories(inventories)
+      setAnsibleCredentials(credentials)
+    } catch (error) {
+      console.error('Failed to fetch ansible resources:', error)
+    }
+  }
+
   // 当pipeline内容变化时不自动更新steps，避免污染编辑中的内容
   // 用户需要手动重新打开编辑器来获取最新数据
 
@@ -181,21 +208,32 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       order: steps.length + 1,
       parameters: '{}'
     })
-    setStepFormVisible(true)
+    setStepFormVisible(true
+    )
   }
 
   const handleEditStep = (step: AtomicStep) => {
     setEditingStep(step)
     setSelectedStepType(step.step_type)
     setShowParameterDoc(false)
-    form.setFieldsValue({
+    
+    const formValues: any = {
       name: step.name,
       step_type: step.step_type,
       description: step.description,
       order: step.order,
       parameters: JSON.stringify(step.parameters, null, 2),
       git_credential_id: step.git_credential || undefined
-    })
+    }
+
+    // 如果是ansible步骤，从parameters中提取ansible相关字段
+    if (step.step_type === 'ansible' && step.parameters) {
+      formValues.ansible_playbook_id = step.parameters.playbook_id
+      formValues.ansible_inventory_id = step.parameters.inventory_id
+      formValues.ansible_credential_id = step.parameters.credential_id
+    }
+
+    form.setFieldsValue(formValues)
     setStepFormVisible(true)
   }
 
@@ -234,6 +272,17 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         } catch (e) {
           message.error('参数格式错误，请输入有效的JSON')
           return
+        }
+      }
+
+      // 处理ansible步骤的特殊字段
+      if (values.step_type === 'ansible') {
+        // 将ansible相关字段添加到parameters中
+        parameters = {
+          ...parameters,
+          playbook_id: values.ansible_playbook_id,
+          inventory_id: values.ansible_inventory_id,
+          credential_id: values.ansible_credential_id
         }
       }
 
@@ -374,6 +423,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         return '🛡️'
       case 'deploy':
         return '🚀'
+      case 'ansible':
+        return '🤖'
       case 'notify':
         return '📢'
       default:
@@ -680,6 +731,200 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
                 ))}
               </Select>
             </Form.Item>
+          )}
+          
+          {/* Ansible资源选择 - 仅在ansible步骤显示 */}
+          {selectedStepType === 'ansible' && (
+            <>
+              <Form.Item
+                name="ansible_playbook_id"
+                label={
+                  <Space>
+                    <span>Ansible Playbook</span>
+                    <Button 
+                      type="link" 
+                      size="small"
+                      onClick={() => {
+                        window.open('/ansible?tab=playbooks', '_blank')
+                      }}
+                    >
+                      管理Playbook
+                    </Button>
+                  </Space>
+                }
+                tooltip="选择要执行的Ansible Playbook"
+                rules={[{ required: true, message: '请选择Ansible Playbook' }]}
+              >
+                <Select 
+                  placeholder="选择Ansible Playbook"
+                  optionLabelProp="label"
+                  notFoundContent={
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <Text type="secondary">暂无Playbook</Text>
+                      <br />
+                      <Button 
+                        type="link" 
+                        size="small"
+                        onClick={() => {
+                          window.open('/ansible?tab=playbooks', '_blank')
+                        }}
+                      >
+                        去创建Playbook
+                      </Button>
+                    </div>
+                  }
+                >
+                  {ansiblePlaybooks.map(playbook => (
+                    <Select.Option 
+                      key={playbook.id} 
+                      value={playbook.id}
+                      label={playbook.name}
+                    >
+                      <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
+                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                          {playbook.name}
+                        </div>
+                        <div style={{ 
+                          fontSize: 12, 
+                          color: '#999',
+                          whiteSpace: 'normal',
+                          wordBreak: 'break-word',
+                          lineHeight: '1.3'
+                        }}>
+                          {playbook.description || '无描述'}
+                        </div>
+                      </div>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              <Form.Item
+                name="ansible_inventory_id"
+                label={
+                  <Space>
+                    <span>Ansible Inventory</span>
+                    <Button 
+                      type="link" 
+                      size="small"
+                      onClick={() => {
+                        window.open('/ansible?tab=inventories', '_blank')
+                      }}
+                    >
+                      管理Inventory
+                    </Button>
+                  </Space>
+                }
+                tooltip="选择目标主机清单（可选）"
+              >
+                <Select 
+                  placeholder="选择Ansible Inventory（可选）"
+                  allowClear
+                  optionLabelProp="label"
+                  notFoundContent={
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <Text type="secondary">暂无Inventory</Text>
+                      <br />
+                      <Button 
+                        type="link" 
+                        size="small"
+                        onClick={() => {
+                          window.open('/ansible?tab=inventories', '_blank')
+                        }}
+                      >
+                        去创建Inventory
+                      </Button>
+                    </div>
+                  }
+                >
+                  {ansibleInventories.map(inventory => (
+                    <Select.Option 
+                      key={inventory.id} 
+                      value={inventory.id}
+                      label={inventory.name}
+                    >
+                      <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
+                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                          {inventory.name}
+                        </div>
+                        <div style={{ 
+                          fontSize: 12, 
+                          color: '#999',
+                          whiteSpace: 'normal',
+                          wordBreak: 'break-word',
+                          lineHeight: '1.3'
+                        }}>
+                          {inventory.description || '无描述'}
+                        </div>
+                      </div>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+
+              <Form.Item
+                name="ansible_credential_id"
+                label={
+                  <Space>
+                    <span>Ansible Credential</span>
+                    <Button 
+                      type="link" 
+                      size="small"
+                      onClick={() => {
+                        window.open('/ansible?tab=credentials', '_blank')
+                      }}
+                    >
+                      管理Credential
+                    </Button>
+                  </Space>
+                }
+                tooltip="选择SSH认证凭据（可选）"
+              >
+                <Select 
+                  placeholder="选择Ansible Credential（可选）"
+                  allowClear
+                  optionLabelProp="label"
+                  notFoundContent={
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <Text type="secondary">暂无Credential</Text>
+                      <br />
+                      <Button 
+                        type="link" 
+                        size="small"
+                        onClick={() => {
+                          window.open('/ansible?tab=credentials', '_blank')
+                        }}
+                      >
+                        去创建Credential
+                      </Button>
+                    </div>
+                  }
+                >
+                  {ansibleCredentials.map(credential => (
+                    <Select.Option 
+                      key={credential.id} 
+                      value={credential.id}
+                      label={credential.name}
+                    >
+                      <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
+                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
+                          {credential.name}
+                        </div>
+                        <div style={{ 
+                          fontSize: 12, 
+                          color: '#999',
+                          whiteSpace: 'normal',
+                          wordBreak: 'break-word',
+                          lineHeight: '1.3'
+                        }}>
+                          {credential.username} - {credential.credential_type}
+                        </div>
+                      </div>
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+            </>
           )}
           
           <Form.Item

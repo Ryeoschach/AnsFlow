@@ -10,7 +10,10 @@ import {
   LogoutOutlined,
   BellOutlined,
   MenuFoldOutlined,
-  MenuUnfoldOutlined
+  MenuUnfoldOutlined,
+  FolderOutlined,
+  BarChartOutlined,
+  ApiOutlined
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth'
@@ -54,6 +57,16 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       label: '仪表板',
     },
     {
+      key: '/analytics',
+      icon: <BarChartOutlined />,
+      label: '数据分析',
+    },
+    {
+      key: '/projects',
+      icon: <FolderOutlined />,
+      label: '项目管理',
+    },
+    {
       key: '/pipelines',
       icon: <AppstoreOutlined />,
       label: '流水线',
@@ -67,6 +80,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       key: '/executions',
       icon: <PlayCircleOutlined />,
       label: '执行记录',
+    },
+    {
+      key: '/ansible',
+      icon: <ApiOutlined />,
+      label: 'Ansible',
     },
     {
       key: '/settings',

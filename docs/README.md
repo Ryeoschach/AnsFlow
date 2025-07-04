@@ -43,6 +43,7 @@ docs/
 - **[api/](api/)** - REST API文档、WebSocket API文档、认证说明
 
 ### 💡 功能文档
+- **[ANSIBLE_INTEGRATION_PLAN.md](ANSIBLE_INTEGRATION_PLAN.md)** - Ansible自动化部署集成详细计划
 - **[PIPELINE_PARAMETER_HELP_FEATURE.md](PIPELINE_PARAMETER_HELP_FEATURE.md)** - 流水线参数帮助功能说明
 - **[pipeline-steps-parameters.md](pipeline-steps-parameters.md)** - 各种流水线步骤的参数详细说明
 

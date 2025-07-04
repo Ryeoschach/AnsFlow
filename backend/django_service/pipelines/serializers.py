@@ -4,11 +4,20 @@ from cicd_integrations.models import AtomicStep
 
 
 class PipelineStepSerializer(serializers.ModelSerializer):
+    # Ansible关联字段
+    ansible_playbook_name = serializers.CharField(source='ansible_playbook.name', read_only=True)
+    ansible_inventory_name = serializers.CharField(source='ansible_inventory.name', read_only=True)
+    ansible_credential_name = serializers.CharField(source='ansible_credential.name', read_only=True)
+    
     class Meta:
         model = PipelineStep
         fields = [
-            'id', 'name', 'description', 'status', 'command', 
-            'environment_vars', 'timeout_seconds', 'order',
+            'id', 'name', 'description', 'status', 'step_type',
+            'command', 'environment_vars', 'timeout_seconds', 'order',
+            'ansible_playbook', 'ansible_playbook_name',
+            'ansible_inventory', 'ansible_inventory_name', 
+            'ansible_credential', 'ansible_credential_name',
+            'ansible_parameters',
             'output_log', 'error_log', 'exit_code',
             'started_at', 'completed_at'
         ]
@@ -37,7 +46,7 @@ class PipelineRunSerializer(serializers.ModelSerializer):
 
 
 class PipelineSerializer(serializers.ModelSerializer):
-    steps = AtomicStepInPipelineSerializer(source='atomic_steps', many=True, required=False)
+    steps = PipelineStepSerializer(many=True, read_only=True)
     runs = PipelineRunSerializer(many=True, read_only=True)
     project_name = serializers.CharField(source='project.name', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
@@ -61,30 +70,28 @@ class PipelineSerializer(serializers.ModelSerializer):
     
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
-        steps_data = validated_data.pop('atomic_steps', [])
+        steps_data = validated_data.pop('steps', [])
         pipeline = super().create(validated_data)
         
-        # 创建关联的原子步骤
+        # 创建关联的Pipeline步骤
         for step_data in steps_data:
             step_data['pipeline'] = pipeline
-            step_data['created_by'] = self.context['request'].user
-            AtomicStep.objects.create(**step_data)
+            PipelineStep.objects.create(**step_data)
         
         return pipeline
     
     def update(self, instance, validated_data):
-        steps_data = validated_data.pop('atomic_steps', None)
+        steps_data = validated_data.pop('steps', None)
         instance = super().update(instance, validated_data)
         
         if steps_data is not None:
-            # 删除现有的原子步骤
-            instance.atomic_steps.all().delete()
+            # 删除现有的Pipeline步骤
+            instance.steps.all().delete()
             
-            # 创建新的原子步骤
+            # 创建新的Pipeline步骤
             for step_data in steps_data:
                 step_data['pipeline'] = instance
-                step_data['created_by'] = self.context['request'].user
-                AtomicStep.objects.create(**step_data)
+                PipelineStep.objects.create(**step_data)
         
         return instance
 
@@ -93,7 +100,7 @@ class PipelineListSerializer(serializers.ModelSerializer):
     """Lighter serializer for list views"""
     project_name = serializers.CharField(source='project.name', read_only=True)
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
-    steps_count = serializers.IntegerField(source='atomic_steps.count', read_only=True)
+    steps_count = serializers.IntegerField(source='steps.count', read_only=True)
     runs_count = serializers.IntegerField(source='runs.count', read_only=True)
     
     # 新增：执行模式相关字段

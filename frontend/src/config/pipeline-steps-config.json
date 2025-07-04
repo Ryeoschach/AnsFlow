@@ -610,6 +610,138 @@
           }
         ]
       }
+    },
+    "ansible": {
+      "name": "Ansible自动化",
+      "description": "执行Ansible Playbook自动化任务",
+      "icon": "automation",
+      "category": "deploy",
+      "parameters": [
+        {
+          "key": "playbook",
+          "type": "text",
+          "label": "Playbook路径",
+          "description": "Ansible Playbook文件的路径",
+          "placeholder": "playbooks/deploy.yml",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "inventory",
+          "type": "text",
+          "label": "Inventory文件",
+          "description": "Ansible Inventory文件路径，用于指定目标主机",
+          "placeholder": "inventories/production.ini",
+          "required": false,
+          "priority": 2
+        },
+        {
+          "key": "credential",
+          "type": "select",
+          "label": "认证凭据",
+          "description": "选择用于连接目标主机的SSH认证凭据",
+          "options": [],
+          "required": false,
+          "priority": 3,
+          "dynamicOptions": {
+            "endpoint": "/api/v1/ansible/credentials/",
+            "valueField": "id",
+            "labelField": "name"
+          }
+        },
+        {
+          "key": "extra_vars",
+          "type": "textarea",
+          "label": "额外变量",
+          "description": "传递给Ansible的额外变量（JSON格式或key=value格式）",
+          "placeholder": "{\n  \"app_version\": \"v1.2.3\",\n  \"environment\": \"production\"\n}",
+          "required": false,
+          "priority": 4
+        },
+        {
+          "key": "tags",
+          "type": "text",
+          "label": "标签",
+          "description": "只运行带有指定标签的任务（逗号分隔）",
+          "placeholder": "deploy,config",
+          "required": false,
+          "priority": 5
+        },
+        {
+          "key": "skip_tags",
+          "type": "text",
+          "label": "跳过标签",
+          "description": "跳过带有指定标签的任务（逗号分隔）",
+          "placeholder": "debug,test",
+          "required": false,
+          "priority": 6
+        },
+        {
+          "key": "limit",
+          "type": "text",
+          "label": "限制主机",
+          "description": "限制执行的目标主机或主机组",
+          "placeholder": "webservers",
+          "required": false,
+          "priority": 7
+        },
+        {
+          "key": "become",
+          "type": "boolean",
+          "label": "提升权限",
+          "description": "是否使用sudo等权限提升方式执行",
+          "defaultValue": false,
+          "required": false,
+          "priority": 8
+        },
+        {
+          "key": "check_mode",
+          "type": "boolean",
+          "label": "检查模式",
+          "description": "启用检查模式（dry-run），不会实际执行更改",
+          "defaultValue": false,
+          "required": false,
+          "priority": 9
+        },
+        {
+          "key": "verbose",
+          "type": "select",
+          "label": "详细输出",
+          "description": "设置输出详细级别",
+          "options": [
+            {"value": "0", "label": "正常"},
+            {"value": "1", "label": "详细 (-v)"},
+            {"value": "2", "label": "更详细 (-vv)"},
+            {"value": "3", "label": "调试 (-vvv)"},
+            {"value": "4", "label": "完整调试 (-vvvv)"}
+          ],
+          "defaultValue": "0",
+          "required": false,
+          "priority": 10
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "执行Ansible Playbook",
+        "examples": [
+          {
+            "input": {
+              "playbook": "deploy.yml",
+              "inventory": "production.ini",
+              "extra_vars": "{\"app_version\": \"v1.2.3\"}"
+            },
+            "output": "sh 'ansible-playbook -i production.ini deploy.yml --extra-vars \"{\\\"app_version\\\": \\\"v1.2.3\\\"}\"'"
+          },
+          {
+            "input": {
+              "playbook": "deploy.yml",
+              "tags": "deploy,config",
+              "become": true,
+              "check_mode": true
+            },
+            "output": "sh 'ansible-playbook deploy.yml --tags deploy,config --become --check'"
+          }
+        ]
+      }
     }
   },
   "parameterTypes": {

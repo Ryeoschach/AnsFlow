@@ -4,7 +4,10 @@ import {
   JenkinsJob, JenkinsBuild, User,
   CreatePipelineRequest, UpdatePipelineRequest,
   CreateExecutionRequest, UpdateExecutionRequest,
-  AtomicStep, PipelineRun, PipelineToolMapping
+  AtomicStep, PipelineRun, PipelineToolMapping,
+  AnsibleInventory, AnsiblePlaybook, AnsibleCredential,
+  ValidationResult, ExecutePlaybookRequest, ExecutePlaybookResponse,
+  ExecutionLogsResponse, AnsibleStats, AnsibleExecutionList
 } from '../types'
 
 class ApiService {
@@ -117,6 +120,47 @@ class ApiService {
 
   async getProject(id: number): Promise<any> {
     const response = await this.api.get(`/projects/projects/${id}/`)
+    return response.data
+  }
+
+  // Projects - Extended methods
+  async createProject(project: any): Promise<any> {
+    const response = await this.api.post('/projects/projects/', project)
+    return response.data
+  }
+
+  async updateProject(id: number, project: any): Promise<any> {
+    const response = await this.api.put(`/projects/projects/${id}/`, project)
+    return response.data
+  }
+
+  async deleteProject(id: number): Promise<void> {
+    await this.api.delete(`/projects/projects/${id}/`)
+  }
+
+  async getProjectEnvironments(projectId: number): Promise<any[]> {
+    const response = await this.api.get(`/projects/projects/${projectId}/environments/`)
+    return response.data
+  }
+
+  async getProjectMembers(projectId: number): Promise<any[]> {
+    const response = await this.api.get(`/projects/memberships/?project=${projectId}`)
+    return response.data.results || response.data
+  }
+
+  async addProjectMember(projectId: number, memberData: any): Promise<any> {
+    const response = await this.api.post(`/projects/projects/${projectId}/add_member/`, memberData)
+    return response.data
+  }
+
+  async removeProjectMember(projectId: number, userId: number): Promise<void> {
+    await this.api.delete(`/projects/projects/${projectId}/remove_member/`, {
+      data: { user_id: userId }
+    })
+  }
+
+  async createEnvironment(projectId: number, envData: any): Promise<any> {
+    const response = await this.api.post(`/projects/projects/${projectId}/create_environment/`, envData)
     return response.data
   }
 
@@ -419,6 +463,166 @@ class ApiService {
 
   async testGitCredential(id: number): Promise<{ success: boolean; message: string; tested_at?: string }> {
     const response = await this.api.post(`/cicd/git-credentials/${id}/test_connection/`)
+    return response.data
+  }
+
+  // Analytics相关API
+  async getExecutionStats(params?: any): Promise<any> {
+    const response = await this.api.get('/analytics/execution-stats/', { params })
+    return response.data
+  }
+
+  async getExecutionTrends(params?: any): Promise<any[]> {
+    const response = await this.api.get('/analytics/execution-trends/', { params })
+    return response.data.results || response.data
+  }
+
+  async getPipelineStats(params?: any): Promise<any[]> {
+    const response = await this.api.get('/analytics/pipeline-stats/', { params })
+    return response.data.results || response.data
+  }
+
+  async getRecentExecutions(params?: any): Promise<any[]> {
+    const response = await this.api.get('/analytics/recent-executions/', { params })
+    return response.data.results || response.data
+  }
+
+  // Ansible Integration API Methods
+  
+  // Inventories
+  async getAnsibleInventories(params?: any): Promise<AnsibleInventory[]> {
+    const response = await this.api.get('/ansible/inventories/', { params })
+    return response.data.results || response.data
+  }
+
+  async getAnsibleInventory(id: number): Promise<AnsibleInventory> {
+    const response = await this.api.get(`/ansible/inventories/${id}/`)
+    return response.data
+  }
+
+  async createAnsibleInventory(data: Partial<AnsibleInventory>): Promise<AnsibleInventory> {
+    const response = await this.api.post('/ansible/inventories/', data)
+    return response.data
+  }
+
+  async updateAnsibleInventory(id: number, data: Partial<AnsibleInventory>): Promise<AnsibleInventory> {
+    const response = await this.api.put(`/ansible/inventories/${id}/`, data)
+    return response.data
+  }
+
+  async deleteAnsibleInventory(id: number): Promise<void> {
+    await this.api.delete(`/ansible/inventories/${id}/`)
+  }
+
+  async validateAnsibleInventory(id: number): Promise<ValidationResult> {
+    const response = await this.api.post(`/ansible/inventories/${id}/validate_inventory/`)
+    return response.data
+  }
+
+  // Playbooks
+  async getAnsiblePlaybooks(params?: any): Promise<AnsiblePlaybook[]> {
+    const response = await this.api.get('/ansible/playbooks/', { params })
+    return response.data.results || response.data
+  }
+
+  async getAnsiblePlaybook(id: number): Promise<AnsiblePlaybook> {
+    const response = await this.api.get(`/ansible/playbooks/${id}/`)
+    return response.data
+  }
+
+  async createAnsiblePlaybook(data: Partial<AnsiblePlaybook>): Promise<AnsiblePlaybook> {
+    const response = await this.api.post('/ansible/playbooks/', data)
+    return response.data
+  }
+
+  async updateAnsiblePlaybook(id: number, data: Partial<AnsiblePlaybook>): Promise<AnsiblePlaybook> {
+    const response = await this.api.put(`/ansible/playbooks/${id}/`, data)
+    return response.data
+  }
+
+  async deleteAnsiblePlaybook(id: number): Promise<void> {
+    await this.api.delete(`/ansible/playbooks/${id}/`)
+  }
+
+  async validateAnsiblePlaybook(id: number): Promise<ValidationResult> {
+    const response = await this.api.post(`/ansible/playbooks/${id}/validate_playbook/`)
+    return response.data
+  }
+
+  async validatePlaybookContent(content: string): Promise<ValidationResult> {
+    const response = await this.api.post('/ansible/playbooks/validate/', { content })
+    return response.data
+  }
+
+  async createPlaybookFromTemplate(id: number, data: any): Promise<AnsiblePlaybook> {
+    const response = await this.api.post(`/ansible/playbooks/${id}/create_from_template/`, data)
+    return response.data
+  }
+
+  // Credentials
+  async getAnsibleCredentials(params?: any): Promise<AnsibleCredential[]> {
+    const response = await this.api.get('/ansible/credentials/', { params })
+    return response.data.results || response.data
+  }
+
+  async getAnsibleCredential(id: number): Promise<AnsibleCredential> {
+    const response = await this.api.get(`/ansible/credentials/${id}/`)
+    return response.data
+  }
+
+  async createAnsibleCredential(data: any): Promise<AnsibleCredential> {
+    const response = await this.api.post('/ansible/credentials/', data)
+    return response.data
+  }
+
+  async updateAnsibleCredential(id: number, data: any): Promise<AnsibleCredential> {
+    const response = await this.api.put(`/ansible/credentials/${id}/`, data)
+    return response.data
+  }
+
+  async deleteAnsibleCredential(id: number): Promise<void> {
+    await this.api.delete(`/ansible/credentials/${id}/`)
+  }
+
+  async testAnsibleCredential(id: number): Promise<any> {
+    const response = await this.api.post(`/ansible/credentials/${id}/test_connection/`)
+    return response.data
+  }
+
+  // Executions
+  async getAnsibleExecutions(params?: any): Promise<AnsibleExecutionList[]> {
+    const response = await this.api.get('/ansible/executions/', { params })
+    return response.data.results || response.data
+  }
+
+  async getAnsibleExecution(id: number): Promise<AnsibleExecution> {
+    const response = await this.api.get(`/ansible/executions/${id}/`)
+    return response.data
+  }
+
+  async executeAnsiblePlaybook(playbookId: number, data: ExecutePlaybookRequest): Promise<ExecutePlaybookResponse> {
+    const response = await this.api.post(`/ansible/playbooks/${playbookId}/execute/`, data)
+    return response.data
+  }
+
+  async cancelAnsibleExecution(id: number): Promise<any> {
+    const response = await this.api.post(`/ansible/executions/${id}/cancel/`)
+    return response.data
+  }
+
+  async getAnsibleExecutionLogs(id: number): Promise<ExecutionLogsResponse> {
+    const response = await this.api.get(`/ansible/executions/${id}/logs/`)
+    return response.data
+  }
+
+  // Statistics
+  async getAnsibleStats(): Promise<AnsibleStats> {
+    const response = await this.api.get('/ansible/stats/overview/')
+    return response.data
+  }
+
+  async getRecentAnsibleExecutions(limit: number = 10): Promise<AnsibleExecutionList[]> {
+    const response = await this.api.get(`/ansible/executions/recent/?limit=${limit}`)
     return response.data
   }
 }

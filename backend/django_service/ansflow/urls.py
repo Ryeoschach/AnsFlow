@@ -42,6 +42,8 @@ urlpatterns = [
     path('api/v1/pipelines/', include('pipelines.urls')),
     path('api/v1/projects/', include('project_management.urls')),
     path('api/v1/cicd/', include('cicd_integrations.urls')),
+    path('api/v1/analytics/', include('analytics.urls')),
+    path('api/v1/ansible/', include('ansible_integration.urls')),
     
     # API Documentation
     path('api/schema/', include([

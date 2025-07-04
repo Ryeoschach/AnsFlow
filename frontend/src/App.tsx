@@ -5,12 +5,15 @@ import { useAuthStore } from '@stores/auth'
 import MainLayout from '@components/layout/MainLayout'
 import Login from './pages/Login'
 import Dashboard from './pages/Dashboard'
+import Analytics from './pages/Analytics'
+import Projects from './pages/Projects'
 import Pipelines from './pages/Pipelines'
 import PipelineDetail from './pages/PipelineDetail'
 import Tools from './pages/Tools'
 import Executions from './pages/Executions'
 import ExecutionDetailFixed from '@pages/ExecutionDetailFixed'
 import Settings from '@pages/Settings'
+import Ansible from './pages/Ansible'
 
 const { Content } = Layout
 
@@ -59,11 +62,14 @@ function App() {
       <Routes>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/analytics" element={<Analytics />} />
+        <Route path="/projects" element={<Projects />} />
         <Route path="/pipelines" element={<Pipelines />} />
         <Route path="/pipelines/:id" element={<PipelineDetail />} />
         <Route path="/tools" element={<Tools />} />
         <Route path="/executions" element={<Executions />} />
         <Route path="/executions/:id" element={<ExecutionDetailFixed />} />
+        <Route path="/ansible" element={<Ansible />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

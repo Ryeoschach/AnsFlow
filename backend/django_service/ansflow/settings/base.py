@@ -61,6 +61,8 @@ LOCAL_APPS = [
     'audit',
     'cicd_integrations',
     'realtime',
+    'analytics',
+    'ansible_integration',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS

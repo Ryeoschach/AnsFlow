@@ -85,15 +85,62 @@ class PipelineStep(models.Model):
         ('skipped', 'Skipped'),
     ]
     
+    # 步骤类型 - 新增
+    STEP_TYPE_CHOICES = [
+        ('command', 'Shell Command'),
+        ('ansible', 'Ansible Playbook'),
+        ('script', 'Script Execution'),
+        ('deploy', 'Deployment'),
+        ('test', 'Test Execution'),
+    ]
+    
     pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='steps')
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     status = models.CharField(max_length=20, choices=STEP_STATUS_CHOICES, default='pending')
     
+    # 步骤类型 - 新增字段
+    step_type = models.CharField(
+        max_length=20, 
+        choices=STEP_TYPE_CHOICES, 
+        default='command',
+        help_text="Type of step to execute"
+    )
+    
     # Step configuration
-    command = models.TextField(help_text="Command or script to execute")
+    command = models.TextField(blank=True, help_text="Command or script to execute")
     environment_vars = models.JSONField(default=dict, help_text="Environment variables for this step")
     timeout_seconds = models.IntegerField(default=300, help_text="Timeout in seconds")
+    
+    # Ansible配置 - 新增字段
+    ansible_playbook = models.ForeignKey(
+        'ansible_integration.AnsiblePlaybook',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pipeline_steps',
+        help_text="Ansible playbook to execute (for ansible step type)"
+    )
+    ansible_inventory = models.ForeignKey(
+        'ansible_integration.AnsibleInventory',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pipeline_steps',
+        help_text="Ansible inventory to use (for ansible step type)"
+    )
+    ansible_credential = models.ForeignKey(
+        'ansible_integration.AnsibleCredential',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pipeline_steps',
+        help_text="Ansible credential to use (for ansible step type)"
+    )
+    ansible_parameters = models.JSONField(
+        default=dict,
+        help_text="Additional parameters for Ansible execution"
+    )
     
     # Step execution order
     order = models.PositiveIntegerField(default=0)
