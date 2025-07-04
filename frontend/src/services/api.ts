@@ -7,7 +7,7 @@ import {
   AtomicStep, PipelineRun, PipelineToolMapping,
   AnsibleInventory, AnsiblePlaybook, AnsibleCredential,
   ValidationResult, ExecutePlaybookRequest, ExecutePlaybookResponse,
-  ExecutionLogsResponse, AnsibleStats, AnsibleExecutionList
+  ExecutionLogsResponse, AnsibleStats, AnsibleExecutionList, AnsibleExecution
 } from '../types'
 
 class ApiService {
