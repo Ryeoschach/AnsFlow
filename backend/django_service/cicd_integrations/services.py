@@ -345,7 +345,8 @@ class UnifiedCICDEngine:
         atomic_steps = list(
             AtomicStep.objects.filter(
                 pipeline=execution.pipeline
-            ).order_by('order')
+            ).select_related('ansible_playbook', 'ansible_inventory', 'ansible_credential')
+            .order_by('order')
         )
         
         # 转换为流水线定义格式
@@ -354,9 +355,32 @@ class UnifiedCICDEngine:
             step = {
                 'name': atomic_step.name,
                 'type': atomic_step.step_type,
-                'parameters': atomic_step.parameters,
+                'parameters': atomic_step.parameters.copy(),  # 复制参数避免修改原数据
                 'description': atomic_step.description
             }
+            
+            # 对于ansible步骤，添加特殊的参数处理
+            if atomic_step.step_type == 'ansible':
+                ansible_params = {}
+                
+                # 添加Ansible特有的参数
+                if atomic_step.ansible_playbook:
+                    # 可以是playbook文件路径或内容
+                    ansible_params['playbook_path'] = atomic_step.ansible_playbook.name
+                    ansible_params['playbook'] = atomic_step.ansible_playbook.name
+                
+                if atomic_step.ansible_inventory:
+                    # inventory文件路径或内容
+                    ansible_params['inventory_path'] = 'hosts'  # 默认inventory文件名
+                    ansible_params['inventory'] = 'hosts'
+                
+                if atomic_step.ansible_credential:
+                    # 可以添加认证相关的环境变量或参数
+                    ansible_params['ansible_user'] = atomic_step.ansible_credential.username
+                
+                # 合并ansible特有参数到step参数中
+                step['parameters'].update(ansible_params)
+            
             steps.append(step)
         
         pipeline_definition = PipelineDefinition(

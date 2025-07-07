@@ -4,6 +4,7 @@ Jenkins CI/CD 适配器实现
 import asyncio
 import json
 import logging
+import html
 from typing import Dict, Any, List, Optional, Tuple
 from datetime import datetime
 import httpx
@@ -91,14 +92,18 @@ class JenkinsAdapter(CICDAdapter):
             params = step.get('parameters', {})
             description = step.get('description', '')
             
+            # 使用安全的stage名称
+            safe_step_name = self._safe_stage_name(step_name)
+            safe_description = self._safe_description(description)
+            
             # 根据步骤类型生成不同的 Jenkins 代码
             stage_script = self._generate_stage_script(step_type, params)
             
-            # 添加描述作为注释
-            comment = f"// {description}" if description else ""
+            # 添加安全的描述作为注释
+            comment = f"// {safe_description}" if safe_description else ""
             
             stage = f"""
-        stage('{step_name}') {{
+        stage('{safe_step_name}') {{
             steps {{
                 {comment}
                 {stage_script}
@@ -231,6 +236,71 @@ class JenkinsAdapter(CICDAdapter):
             else:
                 return self._safe_shell_command(f"echo '{message}'")
         
+        elif step_type == 'ansible':
+            # Ansible步骤 - 专门处理
+            playbook_path = params.get('playbook_path', params.get('playbook', ''))
+            inventory_path = params.get('inventory_path', params.get('inventory', 'hosts'))
+            extra_vars = params.get('extra_vars', {})
+            limit = params.get('limit', '')
+            tags = params.get('tags', '')
+            skip_tags = params.get('skip_tags', '')
+            check_mode = params.get('check_mode', False)
+            verbose = params.get('verbose', False)
+            ansible_user = params.get('ansible_user', '')
+            
+            # 如果有自定义命令，优先使用
+            custom_command = params.get('command', '')
+            if custom_command:
+                return self._safe_shell_command(custom_command)
+            
+            # 构建ansible-playbook命令
+            ansible_cmd_parts = ['ansible-playbook']
+            
+            # 添加inventory
+            if inventory_path:
+                ansible_cmd_parts.extend(['-i', inventory_path])
+            
+            # 添加用户
+            if ansible_user:
+                ansible_cmd_parts.extend(['-u', ansible_user])
+            
+            # 添加extra-vars
+            if extra_vars:
+                if isinstance(extra_vars, dict):
+                    # 将字典转为ansible格式
+                    vars_str = ' '.join([f'{k}={v}' for k, v in extra_vars.items()])
+                    ansible_cmd_parts.extend(['--extra-vars', f'"{vars_str}"'])
+                else:
+                    ansible_cmd_parts.extend(['--extra-vars', f'"{extra_vars}"'])
+            
+            # 添加其他选项
+            if limit:
+                ansible_cmd_parts.extend(['--limit', limit])
+            if tags:
+                ansible_cmd_parts.extend(['--tags', tags])
+            if skip_tags:
+                ansible_cmd_parts.extend(['--skip-tags', skip_tags])
+            if check_mode:
+                ansible_cmd_parts.append('--check')
+            if verbose:
+                ansible_cmd_parts.append('-v')
+            
+            # 添加playbook路径
+            if playbook_path:
+                ansible_cmd_parts.append(playbook_path)
+            else:
+                # 如果没有指定playbook，返回错误信息
+                return self._safe_shell_command("echo 'Error: No Ansible playbook specified' && exit 1")
+            
+            ansible_command = ' '.join(ansible_cmd_parts)
+            
+            # 添加注释说明这是一个Ansible步骤
+            comment = "// Ansible Playbook Execution"
+            return f"""
+                {self._safe_shell_command('echo "Starting Ansible playbook execution..."')}
+                {self._safe_shell_command(ansible_command)}
+                {self._safe_shell_command('echo "Ansible playbook execution completed"')}"""
+
         elif step_type == 'custom':
             # 自定义步骤
             command = params.get('command', params.get('script', 'echo "No command specified"'))
@@ -365,6 +435,9 @@ pipeline {{
         # 生成 Jenkinsfile
         jenkinsfile = await self.create_pipeline_file(definition)
         
+        # 对Jenkinsfile内容进行XML转义，防止特殊字符导致XML解析错误
+        escaped_jenkinsfile = html.escape(jenkinsfile)
+        
         # Jenkins Job 配置 XML
         job_config = f"""<?xml version='1.1' encoding='UTF-8'?>
 <flow-definition plugin="workflow-job@2.40">
@@ -377,7 +450,7 @@ pipeline {{
     </org.jenkinsci.plugins.workflow.job.properties.PipelineTriggersJobProperty>
   </properties>
   <definition class="org.jenkinsci.plugins.workflow.cps.CpsFlowDefinition" plugin="workflow-cps@2.92">
-    <script>{jenkinsfile}</script>
+    <script>{escaped_jenkinsfile}</script>
     <sandbox>true</sandbox>
   </definition>
   <triggers/>
@@ -1114,3 +1187,75 @@ pipeline {{
         except Exception as e:
             logger.error(f"Error getting queue info: {e}")
             return []
+    
+    def _safe_stage_name(self, name: str) -> str:
+        """
+        生成安全的Jenkins Pipeline stage名称
+        处理中文字符和特殊字符
+        """
+        if not name:
+            return "Unnamed Stage"
+        
+        # 中文到英文的映射
+        chinese_to_english = {
+            '代码拉取': 'Code Checkout',
+            '构建项目': 'Build Project', 
+            '构建应用': 'Build Application',
+            '构建': 'Build',
+            '测试': 'Test',
+            '单元测试': 'Unit Test',
+            '集成测试': 'Integration Test',
+            '部署': 'Deploy',
+            'Ansible部署': 'Ansible Deploy',
+            '安全扫描': 'Security Scan',
+            '通知': 'Notify',
+            '环境准备': 'Environment Setup',
+            '清理': 'Cleanup'
+        }
+        
+        # 如果有直接映射，使用映射
+        if name in chinese_to_english:
+            return chinese_to_english[name]
+        
+        # 否则尝试移除特殊字符并保留ASCII字符
+        import re
+        # 保留字母、数字、空格、连字符和下划线
+        safe_name = re.sub(r'[^\w\s\-]', '', name, flags=re.ASCII)
+        
+        # 如果结果为空（全是中文），使用通用名称
+        if not safe_name.strip():
+            return f"Stage {hash(name) % 1000}"
+        
+        return safe_name.strip()
+    
+    def _safe_description(self, description: str) -> str:
+        """
+        生成安全的描述信息（移除中文字符避免XML问题）
+        """
+        if not description:
+            return ""
+        
+        # 中文描述到英文的映射
+        chinese_desc_to_english = {
+            '从Git仓库拉取代码': 'Checkout code from Git repository',
+            '编译和构建项目': 'Compile and build project',
+            '使用Ansible进行自动化部署': 'Deploy using Ansible automation',
+            '执行单元测试': 'Execute unit tests',
+            '执行集成测试': 'Execute integration tests',
+            '安全漏洞扫描': 'Security vulnerability scan',
+            '发送通知消息': 'Send notification message'
+        }
+        
+        # 如果有直接映射，使用映射
+        if description in chinese_desc_to_english:
+            return chinese_desc_to_english[description]
+        
+        # 否则移除非ASCII字符
+        import re
+        safe_desc = re.sub(r'[^\w\s\-\.\,\!\?]', '', description, flags=re.ASCII)
+        
+        # 如果结果为空，返回通用描述
+        if not safe_desc.strip():
+            return "Pipeline step execution"
+        
+        return safe_desc.strip()

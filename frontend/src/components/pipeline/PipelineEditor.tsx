@@ -11,7 +11,8 @@ import {
   Select,
   Divider,
   Alert,
-  Collapse
+  Collapse,
+  Modal
 } from 'antd'
 import {
   PlusOutlined,
@@ -21,11 +22,13 @@ import {
   ArrowUpOutlined,
   ArrowDownOutlined,
   SettingOutlined,
-  QuestionCircleOutlined
+  QuestionCircleOutlined,
+  EyeOutlined
 } from '@ant-design/icons'
 import { AtomicStep, Pipeline, GitCredential, PipelineStep } from '../../types'
 import apiService from '../../services/api'
 import ParameterDocumentation from '../ParameterDocumentation'
+import PipelinePreview from './PipelinePreview'
 
 const { Text } = Typography
 const { Option } = Select
@@ -152,13 +155,27 @@ const normalizeStepForDisplay = (step: PipelineStep | AtomicStep): AtomicStep =>
     return step
   } else {
     // 将PipelineStep转换为AtomicStep格式用于显示
+    // 确保正确传递参数，包括ansible相关的ID
+    const parameters = step.ansible_parameters || {}
+    
+    // 如果有ansible相关的ID，添加到parameters中
+    if (step.ansible_playbook) {
+      parameters.playbook_id = step.ansible_playbook
+    }
+    if (step.ansible_inventory) {
+      parameters.inventory_id = step.ansible_inventory
+    }
+    if (step.ansible_credential) {
+      parameters.credential_id = step.ansible_credential
+    }
+    
     return {
       id: step.id,
       name: step.name,
       step_type: step.step_type,
       description: step.description || '',
       order: step.order,
-      parameters: step.ansible_parameters || {},
+      parameters: parameters,
       pipeline: 0, // 临时值
       is_active: true,
       created_at: new Date().toISOString(),
@@ -198,6 +215,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   // 添加参数说明状态
   const [selectedStepType, setSelectedStepType] = useState<string>('')
   const [showParameterDoc, setShowParameterDoc] = useState(false)
+  // 添加预览功能状态
+  const [previewVisible, setPreviewVisible] = useState(false)
   // 添加Git凭据状态
   const [gitCredentials, setGitCredentials] = useState<GitCredential[]>([])
   // 添加Ansible资源状态
@@ -433,18 +452,58 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         ansible_credential: values.step_type === 'ansible' ? values.ansible_credential_id : undefined
       }
 
+      console.log('📝 Step edit - constructed stepData:', {
+        stepType: stepData.step_type,
+        parameters: stepData.parameters,
+        fullStepData: stepData
+      })
+
+      // 更新本地状态
+      let updatedSteps
       if (editingStep) {
-        const updatedSteps = steps.map(step => 
-          step.id === editingStep.id 
-            ? { 
-                ...step, 
-                ...stepData,
-                git_credential: values.git_credential_id || null
+        console.log('🔄 Step edit - updating existing step:', {
+          editingStepId: editingStep.id,
+          originalStep: editingStep,
+          newStepData: stepData
+        })
+        
+        updatedSteps = steps.map(step => {
+          if (step.id === editingStep.id) {
+            // 完全替换步骤内容，确保所有字段都更新
+            const updatedStep: AtomicStep = {
+              // 保留必要的系统字段
+              id: step.id,
+              pipeline: isAtomicStep(step) ? step.pipeline : (pipeline?.id || 0),
+              created_at: isAtomicStep(step) ? step.created_at : new Date().toISOString(),
+              // 使用新的表单数据完全替换内容字段
+              name: stepData.name,
+              step_type: stepData.step_type,
+              description: stepData.description,
+              parameters: stepData.parameters,
+              order: step.order, // 保持原有顺序
+              is_active: true,
+              git_credential: values.git_credential_id || null,
+              // 兼容性字段
+              ansible_playbook: stepData.ansible_playbook,
+              ansible_inventory: stepData.ansible_inventory,
+              ansible_credential: stepData.ansible_credential
+            }
+            
+            console.log('🔄 Step edit - step after update:', {
+              originalStep: step,
+              newStepData: stepData,
+              updatedStep: updatedStep,
+              parametersComparison: {
+                original: isAtomicStep(step) ? step.parameters : {},
+                new: updatedStep.parameters
               }
-            : step
-        )
-        setSteps(updatedSteps)
-        message.success('步骤更新成功')
+            })
+            return updatedStep
+          }
+          return step
+        })
+        
+        console.log('🔄 Step edit - all steps after update:', updatedSteps)
       } else {
         const newStep: AtomicStep = {
           id: Date.now(), // 临时ID，后端会重新分配
@@ -454,13 +513,127 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           created_at: new Date().toISOString(),
           git_credential: values.git_credential_id || null
         }
-        setSteps([...steps, newStep])
-        message.success('步骤添加成功')
+        updatedSteps = [...steps, newStep]
+        console.log('➕ Step edit - added new step:', newStep)
       }
 
+      setSteps(updatedSteps)
+
+      // 立即保存到后端
+      console.log('🔍 Step edit - checking if pipeline exists:', !!pipeline, pipeline?.id)
+      
+      if (pipeline) {
+        try {
+          console.log('🚀 Step edit - starting auto-save process')
+          
+          // 显示保存中状态
+          const saveMessage = message.loading('正在保存步骤到数据库...', 0)
+          
+          // 获取最新的流水线基本信息
+          console.log('📋 Step edit - validating pipeline form...')
+          const pipelineInfo = await pipelineForm.validateFields().catch((error) => {
+            console.log('⚠️ Step edit - pipeline form validation failed:', error)
+            return {
+              name: pipeline.name,
+              description: pipeline.description,
+              execution_mode: pipeline.execution_mode,
+              execution_tool: pipeline.execution_tool,
+              tool_job_name: pipeline.tool_job_name,
+              is_active: pipeline.is_active
+            }
+          })
+          
+          console.log('📋 Step edit - pipeline info:', pipelineInfo)
+          console.log('📋 Step edit - pipeline info:', pipelineInfo)
+          
+          // 准备保存数据
+          const updateData = {
+            name: pipelineInfo.name || pipeline.name,
+            description: pipelineInfo.description || pipeline.description,
+            project: pipeline.project,
+            is_active: pipelineInfo.is_active !== undefined ? pipelineInfo.is_active : pipeline.is_active,
+            execution_mode: pipelineInfo.execution_mode || pipeline.execution_mode,
+            execution_tool: pipelineInfo.execution_tool || pipeline.execution_tool,
+            tool_job_name: pipelineInfo.tool_job_name || pipeline.tool_job_name,
+            tool_job_config: pipeline.tool_job_config,
+            steps: updatedSteps.map((step, index) => {
+              // 直接使用步骤的参数，不通过getStepParameters处理
+              const stepParams = isAtomicStep(step) ? (step.parameters || {}) : (step.ansible_parameters || {})
+              
+              console.log(`🔍 Step ${index + 1} (${step.name}) - building API payload:`, {
+                stepId: step.id,
+                stepName: step.name,
+                stepType: step.step_type,
+                directParams: stepParams,
+                isEditedStep: editingStep && step.id === editingStep.id,
+                fullStep: step
+              })
+              
+              return {
+                name: step.name,
+                step_type: step.step_type,
+                description: step.description || '',
+                parameters: stepParams,
+                order: index + 1,
+                is_active: true,
+                git_credential: isAtomicStep(step) ? step.git_credential : null
+              }
+            })
+          }
+
+          console.log('🚀 Step edit - sending API request to update pipeline:', updateData.steps.length, 'steps')
+          console.log('🚀 Step edit - sending API request to update pipeline:', updateData.steps.length, 'steps')
+          console.log('🚀 Step edit - API payload:', updateData)
+
+          // 调用API保存
+          console.log('🌐 Step edit - calling apiService.updatePipeline...')
+          const updatedPipeline = await apiService.updatePipeline(pipeline.id, updateData)
+          console.log('✅ Step edit - API request successful:', {
+            returnedSteps: updatedPipeline.steps?.length || 0,
+            returnedAtomicSteps: updatedPipeline.atomic_steps?.length || 0,
+            fullResponse: updatedPipeline
+          })
+          
+          // 关闭loading消息
+          saveMessage()
+          
+          // 更新本地状态为服务器返回的最新数据
+          if (updatedPipeline.steps && updatedPipeline.steps.length > 0) {
+            console.log('🔄 Step edit - updating local state with API response steps')
+            setSteps(updatedPipeline.steps.sort((a, b) => a.order - b.order))
+          } else if (updatedPipeline.atomic_steps && updatedPipeline.atomic_steps.length > 0) {
+            console.log('🔄 Step edit - updating local state with API response atomic_steps (compatibility)')
+            setSteps(updatedPipeline.atomic_steps.sort((a, b) => a.order - b.order))
+          }
+          
+          message.success(editingStep ? '步骤更新并保存成功' : '步骤添加并保存成功')
+          console.log('✅ Step edit - auto-save completed successfully')
+          
+          // 注意：这里不调用 onSave 回调，避免页面跳转
+          // onSave 回调通常用于父组件处理保存后的页面跳转
+          // 在步骤编辑的自动保存场景下，我们希望保持在当前页面
+          
+        } catch (error) {
+          console.error('❌ Step edit - auto-save failed:', error)
+          console.error('❌ Step edit - error details:', error instanceof Error ? error.message : String(error))
+          message.error('步骤保存到数据库失败，请手动点击"保存流水线"')
+        }
+      } else {
+        console.log('⚠️ Step edit - no pipeline found, showing manual save message')
+        message.success(editingStep ? '步骤更新成功（请保存流水线）' : '步骤添加成功（请保存流水线）')
+      }
+
+      // 不管是添加还是编辑步骤，都关闭步骤编辑抽屉，回到流水线主编辑页面
       setStepFormVisible(false)
+      
+      // 清理编辑状态
+      setEditingStep(null)
+      setSelectedStepType('')
+      setShowParameterDoc(false)
+      form.resetFields()
     } catch (error) {
       console.error('Failed to save step:', error)
+      message.error('步骤操作失败')
     }
   }
 
@@ -483,16 +656,93 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       
       console.log('Updating pipeline info:', values)
       
-      // 通知父组件 pipeline 数据已更新
-      if (onSave) {
-        onSave(updatedPipelineData)
-      }
+      // 注意：这里不调用 onSave 回调，避免页面跳转
+      // 流水线基本信息编辑完成后应该保持在当前页面
       
       setPipelineInfoVisible(false)
       message.success('流水线信息更新成功')
     } catch (error) {
       console.error('Failed to update pipeline info:', error)
       message.error('更新流水线信息失败')
+    }
+  }
+
+  // 添加预览处理函数
+  const handlePreviewPipeline = () => {
+    if (!pipeline) {
+      message.error('请先选择或创建流水线')
+      return
+    }
+
+    if (steps.length === 0) {
+      message.warning('请先添加流水线步骤')
+      return
+    }
+
+    setPreviewVisible(true)
+  }
+
+  const handleExecuteFromPreview = async (pipeline: Pipeline) => {
+    try {
+      // 首先检查当前编辑的内容是否已保存
+      const hasUnsavedChanges = steps.length > 0 && JSON.stringify(steps) !== JSON.stringify(pipeline.steps || [])
+      
+      if (hasUnsavedChanges) {
+        // 询问用户是否要保存当前编辑的内容
+        const shouldSave = await new Promise((resolve) => {
+          Modal.confirm({
+            title: '保存并执行流水线？',
+            content: '检测到您有未保存的编辑内容。建议先保存当前内容，以确保执行的流水线与预览一致。',
+            okText: '保存并执行',
+            cancelText: '直接执行',
+            onOk: () => resolve(true),
+            onCancel: () => resolve(false),
+          })
+        })
+
+        if (shouldSave) {
+          // 保存当前编辑内容
+          await handleSavePipeline()
+          message.info('流水线已保存，开始执行...')
+        } else {
+          message.warning('将执行数据库中已保存的流水线版本')
+        }
+      }
+
+      // 确保流水线配置了执行工具
+      let toolId = null
+      if (typeof pipeline.execution_tool === 'number') {
+        toolId = pipeline.execution_tool
+      } else if (pipeline.execution_tool && typeof pipeline.execution_tool === 'object') {
+        toolId = pipeline.execution_tool.id
+      }
+
+      // 检查流水线是否配置了执行工具
+      if (!toolId) {
+        message.error('流水线未配置执行工具，请先编辑流水线设置执行工具')
+        return
+      }
+
+      // 使用与列表页面相同的API调用方式
+      const execution = await apiService.createExecution({
+        pipeline_id: pipeline.id,
+        cicd_tool_id: toolId,
+        trigger_type: 'manual',
+        parameters: {}
+      })
+      
+      message.success('流水线执行已启动')
+      console.log('执行ID:', execution.id)
+      
+      // 关闭预览窗口
+      setPreviewVisible(false)
+      
+      // 可以导航到执行详情页面
+      // navigate(`/executions/${execution.id}`)
+    } catch (error) {
+      console.error('执行流水线失败:', error)
+      const errorMessage = error instanceof Error ? error.message : '执行流水线失败'
+      message.error(errorMessage)
     }
   }
 
@@ -605,6 +855,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           <Button onClick={onClose}>取消</Button>
           <Button icon={<SettingOutlined />} onClick={handleEditPipelineInfo}>
             编辑信息
+          </Button>
+          <Button icon={<EyeOutlined />} onClick={handlePreviewPipeline}>
+            预览Pipeline
           </Button>
           <Button icon={<PlusOutlined />} onClick={handleAddStep}>
             添加步骤
@@ -728,9 +981,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         width={500}
         footer={
           <Space style={{ float: 'right' }}>
-            <Button onClick={() => setStepFormVisible(false)}>取消</Button>
+            <Button onClick={() => setStepFormVisible(false)}>关闭</Button>
             <Button type="primary" onClick={handleStepSubmit}>
-              {editingStep ? '更新' : '添加'}
+              {editingStep ? '更新步骤' : '添加步骤'}
             </Button>
           </Space>
         }
@@ -1215,6 +1468,17 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           </Form.Item>
         </Form>
       </Drawer>
+
+      {/* Pipeline预览组件 */}
+      {pipeline && (
+        <PipelinePreview
+          visible={previewVisible}
+          pipeline={pipeline}
+          steps={steps.map(normalizeStepForDisplay)}
+          onClose={() => setPreviewVisible(false)}
+          onExecute={handleExecuteFromPreview}
+        />
+      )}
     </Drawer>
   )
 }

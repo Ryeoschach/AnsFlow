@@ -5,6 +5,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .views import CICDToolViewSet, AtomicStepViewSet, PipelineExecutionViewSet, GitCredentialViewSet
 from .views.analytics import AnalyticsViewSet
+from .views.pipeline_preview import pipeline_preview
 
 # 创建路由器
 router = DefaultRouter()
@@ -18,4 +19,5 @@ app_name = 'cicd_integrations'
 
 urlpatterns = [
     path('', include(router.urls)),
+    path('pipelines/preview/', pipeline_preview, name='pipeline-preview'),
 ]

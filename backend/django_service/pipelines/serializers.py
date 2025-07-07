@@ -123,16 +123,49 @@ class PipelineSerializer(serializers.ModelSerializer):
             # 删除现有的Pipeline步骤
             instance.steps.all().delete()
             
-            # 创建新的Pipeline步骤
+            # 同时删除现有的AtomicStep（这是关键修复）
+            instance.atomic_steps.all().delete()
+            
+            # 创建新的Pipeline步骤和AtomicStep
             self._create_pipeline_steps(instance, steps_data)
         
         return instance
     
     def _create_pipeline_steps(self, pipeline, steps_data):
-        """创建Pipeline步骤的辅助方法"""
+        """创建Pipeline步骤的辅助方法 - 同时创建PipelineStep和AtomicStep"""
         for step_data in steps_data:
             try:
-                # 转换步骤数据格式以匹配PipelineStep模型
+                # 创建AtomicStep（这是预览API使用的数据源）
+                atomic_step_data = {
+                    'pipeline': pipeline,
+                    'name': step_data.get('name', ''),
+                    'description': step_data.get('description', ''),
+                    'step_type': step_data.get('step_type', 'custom'),
+                    'order': step_data.get('order', 0),
+                    'parameters': step_data.get('parameters', {}),
+                    'is_active': True,
+                    'created_by': pipeline.created_by,
+                }
+                
+                # 处理Ansible相关字段（如果需要）
+                parameters = step_data.get('parameters', {})
+                if step_data.get('step_type') == 'ansible':
+                    playbook_id = parameters.get('playbook_id')
+                    inventory_id = parameters.get('inventory_id')
+                    credential_id = parameters.get('credential_id')
+                    
+                    if playbook_id:
+                        atomic_step_data['ansible_playbook_id'] = playbook_id
+                    if inventory_id:
+                        atomic_step_data['ansible_inventory_id'] = inventory_id
+                    if credential_id:
+                        atomic_step_data['ansible_credential_id'] = credential_id
+                
+                print(f"Creating AtomicStep with data: {atomic_step_data}")
+                created_atomic_step = AtomicStep.objects.create(**atomic_step_data)
+                print(f"Successfully created AtomicStep: {created_atomic_step.id} - {created_atomic_step.name}")
+                
+                # 同时创建PipelineStep（为了向后兼容）
                 pipeline_step_data = {
                     'pipeline': pipeline,
                     'name': step_data.get('name', ''),
@@ -144,7 +177,6 @@ class PipelineSerializer(serializers.ModelSerializer):
                 }
                 
                 # 处理Ansible相关字段
-                parameters = step_data.get('parameters', {})
                 if step_data.get('step_type') == 'ansible':
                     playbook_id = parameters.get('playbook_id')
                     inventory_id = parameters.get('inventory_id')
@@ -167,7 +199,7 @@ class PipelineSerializer(serializers.ModelSerializer):
                 print(f"Successfully created PipelineStep: {created_step.id} - {created_step.name}")
                 
             except Exception as e:
-                print(f"Error creating PipelineStep: {e}")
+                print(f"Error creating pipeline steps: {e}")
                 print(f"Step data causing error: {step_data}")
                 raise
     

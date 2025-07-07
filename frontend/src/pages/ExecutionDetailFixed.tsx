@@ -488,8 +488,25 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
               icon={<ArrowLeftOutlined />} 
               onClick={() => navigate('/executions')}
             >
-              返回
+              返回执行列表
             </Button>
+            {/* 添加流水线相关导航 */}
+            {execution?.pipeline && (
+              <Space>
+                <Button 
+                  type="dashed"
+                  onClick={() => navigate(`/pipelines/${execution.pipeline}`)}
+                >
+                  查看流水线详情
+                </Button>
+                <Button 
+                  type="dashed"
+                  onClick={() => navigate('/pipelines')}
+                >
+                  所有流水线
+                </Button>
+              </Space>
+            )}
             <Title level={3} style={{ margin: 0 }}>
               执行详情 #{executionId}
             </Title>

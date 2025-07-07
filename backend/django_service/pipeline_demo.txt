@@ -1,0 +1,190 @@
+# 流水线：070401
+# 实际内容生成的pipeline
+pipeline {
+    agent any
+    
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    
+    environment {
+        APP_ENV = 'development'
+    }
+    
+    stages {
+        stage('111') {
+            steps {
+                sh 'echo "执行fetch_code步骤"'
+            }
+        }
+        stage('22') {
+            steps {
+                sh 'ansible-playbook -i hosts playbook.yml'
+            }
+        }
+        stage('333') {
+            steps {
+                sh 'echo 'Hello World''
+            }
+        }
+        stage('ansible测试') {
+            steps {
+                sh 'ansible-playbook -i hosts playbook.yml'
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo 'Pipeline 执行成功!'
+        }
+        failure {
+            echo 'Pipeline 执行失败!'
+        }
+    }
+}
+
+# 编辑预览
+pipeline {
+    agent any
+    
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    
+    environment {
+        APP_ENV = 'development'
+    }
+    
+    stages {
+        stage('111') {
+            steps {
+                sh 'echo "执行fetch_code步骤"'
+            }
+        }
+        stage('22') {
+            steps {
+                sh 'ansible-playbook -i hosts playbook.yml'
+            }
+        }
+        stage('333') {
+            steps {
+                sh 'echo 'Hello World''
+            }
+        }
+        stage('ansible测试') {
+            steps {
+                sh 'ansible-playbook -i hosts playbook.yml'
+            }
+        }
+    }
+    
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo 'Pipeline 执行成功!'
+        }
+        failure {
+            echo 'Pipeline 执行失败!'
+        }
+    }
+}
+
+#步骤详情
+1. 111
+fetch_code
+参数:
+{
+  "branch": "main",
+  "repository": "https://github.com/user/repo.git",
+  "repository_url": "https://github.com/user/repo.git"
+}
+2. 22
+ansible
+参数:
+{
+  "playbook": "playbooks/deploy.yml",
+  "playbook_id": 4,
+  "inventory_id": 3,
+  "credential_id": 3
+}
+3. 333
+custom
+参数:
+{
+  "command": "echo 'Hello World'"
+}
+4. ansible测试
+ansible
+参数:
+{
+  "playbook_id": 4,
+  "inventory_id": 3,
+  "credential_id": 3
+}
+
+# jenkins实际执行的pipeline
+pipeline {
+    agent any
+    
+    options {
+        timeout(time: 60, unit: 'MINUTES')
+        buildDiscarder(logRotator(numToKeepStr: '10'))
+    }
+    
+    stages {
+        stage('111') {
+            steps {
+                
+                
+                checkout([
+                    $class: 'GitSCM',
+                    branches: [[name: 'main']],
+                    userRemoteConfigs: [[url: 'https://github.com/user/repo.git']]
+                ])
+            }
+        }
+        stage('22') {
+            steps {
+                
+                
+                sh 'echo "Starting Ansible playbook execution..."'
+                sh 'ansible-playbook -i hosts -u test test-playbook'
+                sh 'echo "Ansible playbook execution completed"'
+            }
+        }
+        stage('333') {
+            steps {
+                
+                sh 'echo \'Hello World\''
+            }
+        }
+        stage('ansible测试') {
+            steps {
+                
+                
+                sh 'echo "Starting Ansible playbook execution..."'
+                sh 'ansible-playbook -i hosts -u test test-playbook'
+                sh 'echo "Ansible playbook execution completed"'
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+        success {
+            echo 'Pipeline completed successfully!'
+        }
+        failure {
+            echo 'Pipeline failed!'
+        }
+    }
+}
