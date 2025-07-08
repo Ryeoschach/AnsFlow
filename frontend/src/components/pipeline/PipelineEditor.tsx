@@ -5,9 +5,22 @@ import {
   Typography,
   Drawer,
   Form,
-  Modal
+  Modal,
+  Button,
+  Dropdown
 } from 'antd'
-import { SettingOutlined } from '@ant-design/icons'
+import { 
+  SettingOutlined,
+  EyeOutlined,
+  PlusOutlined,
+  SaveOutlined,
+  ThunderboltOutlined,
+  ShareAltOutlined,
+  BarChartOutlined,
+  ReloadOutlined,
+  CheckCircleOutlined,
+  MoreOutlined
+} from '@ant-design/icons'
 import { 
   AtomicStep, 
   Pipeline, 
@@ -1173,36 +1186,317 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
     return null
   }
 
+  // 响应式计算函数
+  const getDrawerWidth = () => {
+    const screenWidth = typeof window !== 'undefined' ? window.innerWidth : 1200
+    if (screenWidth < 768) {
+      return '100%' // 小屏幕全屏显示
+    } else if (screenWidth < 1024) {
+      return '90%' // 中等屏幕90%
+    } else if (screenWidth < 1440) {
+      return '85%' // 大屏幕85%
+    } else {
+      return '80%' // 超大屏幕80%
+    }
+  }
+
+  // 现代化头部组件
+  const renderModernHeader = () => {
+    const screenWidth = typeof window !== 'undefined' ? window.innerWidth : 1200
+    const pipelineName = pipeline ? pipeline.name : '新建流水线'
+    const isMobile = screenWidth < 768
+    const isTablet = screenWidth >= 768 && screenWidth < 1024
+    
+    return (
+      <div style={{
+        background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+        color: 'white',
+        padding: isMobile ? '24px 16px 16px 24px' : '36px 20px 20px 32px',
+        margin: '-24px -24px 0 -24px',
+        borderRadius: '0 0 12px 12px',
+        boxShadow: '0 4px 20px rgba(0,0,0,0.1)'
+      }}>
+        {/* 标题行 */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          marginBottom: isMobile ? '12px' : '16px',
+          marginLeft: isMobile ? '0' : '8px' // 与下面的卡片标题对齐
+        }}>
+          <div style={{
+            background: 'rgba(255,255,255,0.2)',
+            padding: '8px',
+            borderRadius: '8px',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <SettingOutlined style={{ fontSize: isMobile ? '16px' : '18px' }} />
+          </div>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <h3 style={{
+              margin: 0,
+              fontSize: isMobile ? '16px' : '18px',
+              fontWeight: 600,
+              color: 'white',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap'
+            }}>
+              {pipelineName}
+            </h3>
+            <p style={{
+              margin: 0,
+              fontSize: isMobile ? '12px' : '14px',
+              opacity: 0.8,
+              color: 'white'
+            }}>
+              {pipeline ? '编辑流水线配置' : '创建新的流水线'}
+            </p>
+          </div>
+        </div>
+        
+        {/* 工具栏 */}
+        <div style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: isMobile ? '8px' : '12px',
+          alignItems: 'center',
+          justifyContent: 'flex-end', // 右对齐按钮组
+          marginRight: isMobile ? '0' : '35px' // 与下面的步骤卡片按钮对齐
+        }}>
+          {/* 主要操作按钮 */}
+          <div style={{
+            display: 'flex',
+            gap: isMobile ? '6px' : '8px',
+            flexWrap: 'wrap'
+          }}>
+            <Button 
+              size={isMobile ? 'small' : 'middle'}
+              style={{ 
+                background: 'rgba(255,255,255,0.2)', 
+                borderColor: 'rgba(255,255,255,0.3)',
+                color: 'white'
+              }}
+              onClick={onClose}
+            >
+              取消
+            </Button>
+            <Button 
+              size={isMobile ? 'small' : 'middle'}
+              style={{ 
+                background: 'rgba(255,255,255,0.2)', 
+                borderColor: 'rgba(255,255,255,0.3)',
+                color: 'white'
+              }}
+              icon={<SettingOutlined />} 
+              onClick={handleEditPipelineInfo}
+            >
+              {isMobile ? '编辑' : '编辑信息'}
+            </Button>
+            <Button 
+              size={isMobile ? 'small' : 'middle'}
+              style={{ 
+                background: 'rgba(255,255,255,0.2)', 
+                borderColor: 'rgba(255,255,255,0.3)',
+                color: 'white'
+              }}
+              icon={<EyeOutlined />} 
+              onClick={handlePreviewPipeline}
+            >
+              {isMobile ? '预览' : '预览Pipeline'}
+            </Button>
+            <Button 
+              size={isMobile ? 'small' : 'middle'}
+              style={{ 
+                background: 'rgba(255,255,255,0.2)', 
+                borderColor: 'rgba(255,255,255,0.3)',
+                color: 'white'
+              }}
+              icon={<PlusOutlined />} 
+              onClick={handleAddStep}
+            >
+              {isMobile ? '添加' : '添加步骤'}
+            </Button>
+          </div>
+          
+          {/* 分隔线 */}
+          {!isMobile && (
+            <div style={{
+              width: '1px',
+              height: '24px',
+              background: 'rgba(255,255,255,0.3)'
+            }} />
+          )}
+          
+          {/* 高级功能按钮组 */}
+          <div style={{
+            display: 'flex',
+            gap: isMobile ? '6px' : '8px',
+            flexWrap: 'wrap'
+          }}>
+            <Button 
+              size={isMobile ? 'small' : 'middle'}
+              type={showAdvancedOptions ? "primary" : "default"}
+              style={showAdvancedOptions ? {} : { 
+                background: 'rgba(255,255,255,0.15)', 
+                borderColor: 'rgba(255,255,255,0.3)',
+                color: 'white'
+              }}
+              icon={<ThunderboltOutlined />} 
+              onClick={handleAdvancedOptionsToggle}
+            >
+              {isMobile ? '高级' : '高级功能'}
+            </Button>
+            {!isMobile && (
+              <>
+                <Button 
+                  size="middle"
+                  style={{ 
+                    background: 'rgba(255,255,255,0.15)', 
+                    borderColor: 'rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                  icon={<ShareAltOutlined />} 
+                  onClick={handleParallelGroupManager}
+                >
+                  并行组
+                </Button>
+                <Button 
+                  size="middle"
+                  style={{ 
+                    background: 'rgba(255,255,255,0.15)', 
+                    borderColor: 'rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                  icon={<BarChartOutlined />} 
+                  onClick={handleWorkflowAnalyzer}
+                >
+                  分析
+                </Button>
+                <Button 
+                  size="middle"
+                  style={{ 
+                    background: 'rgba(255,255,255,0.15)', 
+                    borderColor: 'rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                  icon={<ReloadOutlined />} 
+                  onClick={handleExecutionRecovery}
+                >
+                  恢复
+                </Button>
+                <Button 
+                  size="middle"
+                  style={{ 
+                    background: 'rgba(255,255,255,0.15)', 
+                    borderColor: 'rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                  icon={<CheckCircleOutlined />} 
+                  onClick={() => setShowValidationPanel(!showValidationPanel)}
+                >
+                  {showValidationPanel ? '隐藏验证' : '验证'}
+                </Button>
+              </>
+            )}
+            {isMobile && (
+              <Dropdown 
+                menu={{ 
+                  items: [
+                    {
+                      key: 'parallel',
+                      label: '并行组管理',
+                      icon: <ShareAltOutlined />,
+                      onClick: handleParallelGroupManager
+                    },
+                    {
+                      key: 'analyzer',
+                      label: '工作流分析',
+                      icon: <BarChartOutlined />,
+                      onClick: handleWorkflowAnalyzer
+                    },
+                    {
+                      key: 'recovery',
+                      label: '执行恢复',
+                      icon: <ReloadOutlined />,
+                      onClick: handleExecutionRecovery
+                    },
+                    {
+                      key: 'validation',
+                      label: showValidationPanel ? '隐藏验证' : '工作流验证',
+                      icon: <CheckCircleOutlined />,
+                      onClick: () => setShowValidationPanel(!showValidationPanel)
+                    }
+                  ]
+                }}
+                trigger={['click']}
+                placement="bottomRight"
+              >
+                <Button 
+                  size="small"
+                  style={{ 
+                    background: 'rgba(255,255,255,0.15)', 
+                    borderColor: 'rgba(255,255,255,0.3)',
+                    color: 'white'
+                  }}
+                  icon={<MoreOutlined />}
+                >
+                  更多
+                </Button>
+              </Dropdown>
+            )}
+          </div>
+          
+          {/* 分隔线 */}
+          {!isMobile && (
+            <div style={{
+              width: '1px',
+              height: '24px',
+              background: 'rgba(255,255,255,0.3)'
+            }} />
+          )}
+          
+          {/* 保存按钮 */}
+          <Button 
+            size={isMobile ? 'small' : 'middle'}
+            type="primary"
+            style={{
+              background: 'rgba(255,255,255,0.9)',
+              borderColor: 'rgba(255,255,255,0.9)',
+              color: '#667eea',
+              fontWeight: 600,
+              boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+            }}
+            icon={<SaveOutlined />} 
+            onClick={handleSavePipeline}
+          >
+            {isMobile ? '保存' : '保存流水线'}
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <Drawer
-      title={
-        <Space>
-          <SettingOutlined />
-          <span>{pipeline ? `编辑流水线: ${pipeline.name}` : '新建流水线'}</span>
-        </Space>
-      }
+      title={null}
       open={visible}
       onClose={onClose}
-      width="80%"
+      width={getDrawerWidth()}
       placement="right"
-      extra={
-        <PipelineToolbar
-          showAdvancedOptions={showAdvancedOptions}
-          showValidationPanel={showValidationPanel}
-          onClose={onClose || (() => {})}
-          onEditPipelineInfo={handleEditPipelineInfo}
-          onPreviewPipeline={handlePreviewPipeline}
-          onAdvancedOptionsToggle={handleAdvancedOptionsToggle}
-          onParallelGroupManager={handleParallelGroupManager}
-          onWorkflowAnalyzer={handleWorkflowAnalyzer}
-          onExecutionRecovery={handleExecutionRecovery}
-          onToggleValidationPanel={() => setShowValidationPanel(!showValidationPanel)}
-          onAddStep={handleAddStep}
-          onSavePipeline={handleSavePipeline}
-        />
-      }
+      headerStyle={{ display: 'none' }}
+      bodyStyle={{ padding: 0 }}
     >
-      <div style={{ padding: '0' }}>
+      {/* 现代化自定义头部 */}
+      {renderModernHeader()}
+      
+      {/* 主要内容区域 */}
+      <div style={{ 
+        padding: typeof window !== 'undefined' && window.innerWidth < 768 ? '16px' : '24px',
+        paddingTop: '20px'
+      }}>
         <PipelineStepList
           steps={steps}
           showAdvancedOptions={showAdvancedOptions}
