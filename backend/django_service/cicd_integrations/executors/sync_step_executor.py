@@ -144,8 +144,9 @@ class SyncStepExecutor:
                     step_execution.completed_at = timezone.now()
                 
                 if result:
-                    step_execution.result = result
+                    step_execution.output = result
                     step_execution.logs = result.get('output', '')
+                    step_execution.error_message = result.get('error_message', '')
                 
                 step_execution.save()
                 
