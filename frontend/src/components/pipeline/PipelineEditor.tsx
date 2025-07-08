@@ -1,38 +1,36 @@
 import React, { useState, useEffect } from 'react'
 import { 
-  Card, 
-  Button, 
   Space, 
   message, 
   Typography,
   Drawer,
   Form,
-  Input,
-  Select,
-  Divider,
-  Alert,
-  Collapse,
   Modal
 } from 'antd'
-import {
-  PlusOutlined,
-  EditOutlined,
-  DeleteOutlined,
-  SaveOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
-  SettingOutlined,
-  QuestionCircleOutlined,
-  EyeOutlined
-} from '@ant-design/icons'
-import { AtomicStep, Pipeline, GitCredential, PipelineStep } from '../../types'
+import { SettingOutlined } from '@ant-design/icons'
+import { 
+  AtomicStep, 
+  Pipeline, 
+  GitCredential, 
+  PipelineStep, 
+  EnhancedPipelineStep,
+  ParallelGroup,
+  ValidationResult
+} from '../../types'
 import apiService from '../../services/api'
-import ParameterDocumentation from '../ParameterDocumentation'
+import PipelineStepList from './PipelineStepList'
+import PipelineStepForm from './PipelineStepForm'
+import PipelineInfoForm from './PipelineInfoForm'
+import PipelineToolbar from './PipelineToolbar'
 import PipelinePreview from './PipelinePreview'
+import WorkflowStepFormNew from './WorkflowStepFormNew'
+import ParallelGroupManager from './ParallelGroupManager'
+import SimpleParallelGroupManager from './SimpleParallelGroupManager'
+import WorkflowAnalyzerEnhanced from './WorkflowAnalyzerEnhanced'
+import ExecutionRecovery from './ExecutionRecovery'
+import WorkflowValidation from './WorkflowValidation'
 
 const { Text } = Typography
-const { Option } = Select
-const { TextArea } = Input
 
 // 优化Select组件的样式
 const selectStyles = `
@@ -193,6 +191,8 @@ const STEP_TYPES = [
   { value: 'security_scan', label: '安全扫描', description: '安全漏洞扫描' },
   { value: 'deploy', label: '部署', description: '部署到目标环境' },
   { value: 'ansible', label: 'Ansible自动化', description: '执行Ansible Playbook自动化任务' },
+  { value: 'approval', label: '手动审批', description: '需要人工审批才能继续执行' },
+  { value: 'condition', label: '条件分支', description: '根据条件决定是否执行后续步骤' },
   { value: 'notify', label: '通知', description: '发送通知消息' },
   { value: 'custom', label: '自定义', description: '自定义步骤' },
 ]
@@ -223,6 +223,22 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   const [ansiblePlaybooks, setAnsiblePlaybooks] = useState<any[]>([])
   const [ansibleInventories, setAnsibleInventories] = useState<any[]>([])
   const [ansibleCredentials, setAnsibleCredentials] = useState<any[]>([])
+  
+  // 高级工作流功能状态
+  const [parallelGroups, setParallelGroups] = useState<ParallelGroup[]>([])
+  const [parallelGroupManagerVisible, setParallelGroupManagerVisible] = useState(false)
+  const [workflowAnalyzerVisible, setWorkflowAnalyzerVisible] = useState(false)
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState(false)
+  const [workflowStepFormVisible, setWorkflowStepFormVisible] = useState(false)
+  const [editingEnhancedStep, setEditingEnhancedStep] = useState<EnhancedPipelineStep | null>(null)
+  
+  // 执行恢复功能状态
+  const [executionRecoveryVisible, setExecutionRecoveryVisible] = useState(false)
+  const [currentExecution, setCurrentExecution] = useState<any>(null)
+  
+  // 工作流验证状态
+  const [validationResult, setValidationResult] = useState<ValidationResult | null>(null)
+  const [showValidationPanel, setShowValidationPanel] = useState(false)
 
   // 清理状态的effect
   useEffect(() => {
@@ -248,6 +264,17 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           }
           
           setSteps(initialSteps)
+          
+          // 加载并行组数据
+          try {
+            const parallelGroupsData = await apiService.getParallelGroups(pipeline.id)
+            console.log('Loaded parallel groups:', parallelGroupsData.length, 'groups')
+            setParallelGroups(parallelGroupsData)
+          } catch (parallelGroupError) {
+            console.error('Failed to load parallel groups:', parallelGroupError)
+            // 并行组加载失败不影响主流程，设置为空数组
+            setParallelGroups([])
+          }
           
           // 使用完整的流水线数据初始化表单
           pipelineForm.setFieldsValue({
@@ -296,6 +323,13 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       setAnsiblePlaybooks([])
       setAnsibleInventories([])
       setAnsibleCredentials([])
+      // 清理高级工作流状态
+      setParallelGroups([])
+      setParallelGroupManagerVisible(false)
+      setWorkflowAnalyzerVisible(false)
+      setShowAdvancedOptions(false)
+      setWorkflowStepFormVisible(false)
+      setEditingEnhancedStep(null)
       form.resetFields()
       pipelineForm.resetFields()
     }
@@ -329,6 +363,234 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
   // 当pipeline内容变化时不自动更新steps，避免污染编辑中的内容
   // 用户需要手动重新打开编辑器来获取最新数据
+
+  // 高级工作流功能处理函数
+  const handleWorkflowStepEdit = (step: PipelineStep | AtomicStep) => {
+    // 将普通步骤转换为增强步骤
+    const enhancedStep: EnhancedPipelineStep = {
+      ...step,
+      condition: undefined,
+      parallel_group_id: undefined,
+      approval_config: undefined,
+      retry_policy: undefined,
+      notification_config: undefined
+    }
+    setEditingEnhancedStep(enhancedStep)
+    setWorkflowStepFormVisible(true)
+  }
+
+  const handleWorkflowStepSave = async (enhancedStep: EnhancedPipelineStep) => {
+    try {
+      // 更新本地状态
+      setSteps(prevSteps => 
+        prevSteps.map(step => 
+          step.id === enhancedStep.id ? enhancedStep : step
+        )
+      )
+
+      // 持久化到后端
+      if (pipeline) {
+        const advancedConfig = {
+          condition: enhancedStep.condition,
+          parallel_group_id: enhancedStep.parallel_group_id,
+          approval_config: enhancedStep.approval_config,
+          retry_policy: enhancedStep.retry_policy,
+          notification_config: enhancedStep.notification_config
+        }
+
+        await apiService.updateStepAdvancedConfig(
+          pipeline.id,
+          enhancedStep.id,
+          advancedConfig
+        )
+
+        message.success('高级配置已保存并同步到服务器')
+      } else {
+        message.success('高级配置已保存（将在保存流水线时同步）')
+      }
+
+      setWorkflowStepFormVisible(false)
+      setEditingEnhancedStep(null)
+    } catch (error) {
+      console.error('Failed to save advanced config:', error)
+      message.error('高级配置保存失败')
+    }
+  }
+
+  const handleParallelGroupSave = async (groups: ParallelGroup[]) => {
+    try {
+      if (!pipeline) {
+        message.error('请先选择流水线')
+        return
+      }
+
+      console.log('🔄 开始保存并行组:', groups.length, '个组')
+      console.log('📊 当前并行组状态:', groups)
+
+      // 确保 parallelGroups 是数组
+      const safeParallelGroups = Array.isArray(parallelGroups) ? parallelGroups : []
+      
+      // 保存并行组到后端
+      const savePromises = groups.map(async (group) => {
+        // 为每个组设置流水线ID
+        const groupWithPipeline = {
+          ...group,
+          pipeline: pipeline.id
+        }
+
+        console.log('💾 处理并行组:', group.id, group.name, '包含步骤:', group.steps)
+
+        if (safeParallelGroups.find(existing => existing.id === group.id)) {
+          // 更新现有并行组
+          console.log('📝 更新现有并行组:', group.id)
+          return await apiService.updateParallelGroup(group.id, groupWithPipeline)
+        } else {
+          // 创建新并行组
+          console.log('🆕 创建新并行组:', group.id)
+          return await apiService.createParallelGroup(groupWithPipeline)
+        }
+      })
+
+      // 删除本地已删除但后端仍存在的组
+      const deletedGroups = safeParallelGroups.filter(
+        existing => !groups.find(group => group.id === existing.id)
+      )
+      console.log('🗑️ 需要删除的并行组:', deletedGroups.length, '个')
+      
+      const deletePromises = deletedGroups.map(group => {
+        console.log('🗑️ 删除并行组:', group.id)
+        return apiService.deleteParallelGroup(group.id)
+      })
+
+      // 等待所有操作完成
+      console.log('⏳ 等待所有API操作完成...')
+      await Promise.all([...savePromises, ...deletePromises])
+
+      // 重要：同步更新步骤的并行组关联
+      console.log('🔗 开始同步步骤的并行组关联...')
+      
+      // 首先清除所有步骤的并行组关联
+      const updatedSteps = steps.map(step => ({
+        ...step,
+        parallel_group: undefined // 清除旧的关联
+      }))
+
+      // 为每个组中的步骤设置新的并行组关联
+      groups.forEach(group => {
+        if (group.steps && group.steps.length > 0) {
+          group.steps.forEach(stepId => {
+            const stepIndex = updatedSteps.findIndex(step => step.id === stepId)
+            if (stepIndex !== -1) {
+              console.log(`🔗 关联步骤 ${stepId} 到并行组 ${group.id}`)
+              updatedSteps[stepIndex] = {
+                ...updatedSteps[stepIndex],
+                parallel_group: group.id
+              }
+            }
+          })
+        }
+      })
+
+      // 保存更新后的步骤到后端
+      if (updatedSteps.length > 0) {
+        console.log('💾 保存步骤的并行组关联到后端...')
+        
+        const pipelineInfo = await pipelineForm.validateFields().catch(() => ({
+          name: pipeline.name,
+          description: pipeline.description,
+          execution_mode: pipeline.execution_mode,
+          execution_tool: pipeline.execution_tool,
+          tool_job_name: pipeline.tool_job_name,
+          is_active: pipeline.is_active
+        }))
+
+        const updateData = {
+          name: pipelineInfo.name || pipeline.name,
+          description: pipelineInfo.description || pipeline.description,
+          project: pipeline.project,
+          is_active: pipelineInfo.is_active !== undefined ? pipelineInfo.is_active : pipeline.is_active,
+          execution_mode: pipelineInfo.execution_mode || pipeline.execution_mode,
+          execution_tool: pipelineInfo.execution_tool || pipeline.execution_tool,
+          tool_job_name: pipelineInfo.tool_job_name || pipeline.tool_job_name,
+          tool_job_config: pipeline.tool_job_config,
+          steps: updatedSteps.map((step, index) => {
+            const stepParams = getStepParameters(step)
+            return {
+              id: step.id, // 保持步骤ID，确保更新而不是重新创建
+              name: step.name,
+              step_type: step.step_type,
+              description: step.description || '',
+              parameters: stepParams,
+              order: index + 1,
+              is_active: true,
+              parallel_group: step.parallel_group, // 关键：保存并行组关联
+              git_credential: isAtomicStep(step) ? step.git_credential : null
+            }
+          })
+        }
+
+        console.log('🚀 保存包含并行组关联的流水线数据...')
+        const updatedPipeline = await apiService.updatePipeline(pipeline.id, updateData)
+        
+        // 更新本地步骤状态
+        if (updatedPipeline.steps && updatedPipeline.steps.length > 0) {
+          setSteps(updatedPipeline.steps.sort((a, b) => a.order - b.order))
+        }
+      }
+
+      // 更新本地并行组状态
+      setParallelGroups(groups)
+      setParallelGroupManagerVisible(false)
+      console.log('✅ 并行组及步骤关联保存成功')
+      message.success('并行组配置已保存，步骤关联已同步')
+
+    } catch (error) {
+      console.error('❌ 并行组保存失败:', error)
+      message.error('并行组保存失败，请重试')
+    }
+  }
+
+  const handleAdvancedOptionsToggle = () => {
+    setShowAdvancedOptions(!showAdvancedOptions)
+  }
+
+  const handleParallelGroupManager = () => {
+    setParallelGroupManagerVisible(true)
+  }
+
+  const handleWorkflowAnalyzer = () => {
+    setWorkflowAnalyzerVisible(true)
+  }
+
+  const handleExecutionRecovery = async () => {
+    if (!pipeline) {
+      message.error('请先选择流水线')
+      return
+    }
+
+    try {
+      // 获取最近的失败执行
+      const executions = await apiService.getExecutions(pipeline.id)
+      const failedExecution = executions.find((exec: any) => exec.status === 'failed')
+      
+      if (!failedExecution) {
+        message.warning('没有找到失败的执行记录')
+        return
+      }
+
+      setCurrentExecution(failedExecution)
+      setExecutionRecoveryVisible(true)
+    } catch (error) {
+      console.error('Failed to load executions:', error)
+      message.error('加载执行记录失败')
+    }
+  }
+
+  const handleExecutionResumeSuccess = (resumedExecution: any) => {
+    setExecutionRecoveryVisible(false)
+    setCurrentExecution(null)
+    message.success(`执行已恢复，执行ID: ${resumedExecution.id}`)
+  }
 
   const handleAddStep = () => {
     setEditingStep(null)
@@ -825,6 +1087,10 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         return '🚀'
       case 'ansible':
         return '🤖'
+      case 'approval':
+        return '✋'
+      case 'condition':
+        return '🔀'
       case 'notify':
         return '📢'
       case 'custom':
@@ -851,623 +1117,92 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       width="80%"
       placement="right"
       extra={
-        <Space>
-          <Button onClick={onClose}>取消</Button>
-          <Button icon={<SettingOutlined />} onClick={handleEditPipelineInfo}>
-            编辑信息
-          </Button>
-          <Button icon={<EyeOutlined />} onClick={handlePreviewPipeline}>
-            预览Pipeline
-          </Button>
-          <Button icon={<PlusOutlined />} onClick={handleAddStep}>
-            添加步骤
-          </Button>
-          <Button type="primary" icon={<SaveOutlined />} onClick={handleSavePipeline}>
-            保存流水线
-          </Button>
-        </Space>
+        <PipelineToolbar
+          showAdvancedOptions={showAdvancedOptions}
+          showValidationPanel={showValidationPanel}
+          onClose={onClose || (() => {})}
+          onEditPipelineInfo={handleEditPipelineInfo}
+          onPreviewPipeline={handlePreviewPipeline}
+          onAdvancedOptionsToggle={handleAdvancedOptionsToggle}
+          onParallelGroupManager={handleParallelGroupManager}
+          onWorkflowAnalyzer={handleWorkflowAnalyzer}
+          onExecutionRecovery={handleExecutionRecovery}
+          onToggleValidationPanel={() => setShowValidationPanel(!showValidationPanel)}
+          onAddStep={handleAddStep}
+          onSavePipeline={handleSavePipeline}
+        />
       }
     >
       <div style={{ padding: '0' }}>
-        <Card 
-          title="流水线步骤配置"
-          size="small"
-        >
-          {steps.length === 0 ? (
-            <div style={{ textAlign: 'center', padding: '40px', color: '#999' }}>
-              <p>暂无流水线步骤</p>
-              <Button type="dashed" icon={<PlusOutlined />} onClick={handleAddStep}>
-                添加第一个步骤
-              </Button>
-            </div>
-          ) : (
-            <div>
-              {steps.map((step, index) => (
-                <Card
-                  key={step.id}
-                  size="small"
-                  style={{ marginBottom: 16 }}
-                  title={
-                    <Space>
-                      <span>{getStepIcon(step.step_type)}</span>
-                      <span>步骤 {index + 1}: {step.name}</span>
-                      <Text type="secondary">({getStepTypeLabel(step.step_type)})</Text>
-                    </Space>
-                  }
-                  extra={
-                    <Space>
-                      <Button 
-                        type="text" 
-                        size="small" 
-                        icon={<ArrowUpOutlined />}
-                        onClick={() => handleMoveStep(step.id, 'up')}
-                        disabled={index === 0}
-                      />
-                      <Button 
-                        type="text" 
-                        size="small" 
-                        icon={<ArrowDownOutlined />}
-                        onClick={() => handleMoveStep(step.id, 'down')}
-                        disabled={index === steps.length - 1}
-                      />
-                      <Button 
-                        type="text" 
-                        size="small" 
-                        icon={<EditOutlined />}
-                        onClick={() => handleEditStep(step)}
-                      />
-                      <Button 
-                        type="text" 
-                        size="small" 
-                        icon={<DeleteOutlined />}
-                        danger
-                        onClick={() => handleDeleteStep(step.id)}
-                      />
-                    </Space>
-                  }
-                >
-                  {step.description && (
-                    <Text type="secondary">{step.description}</Text>
-                  )}
-                  
-                  {/* Ansible步骤特殊显示 */}
-                  {step.step_type === 'ansible' && (() => {
-                    const ansibleConfig = getStepAnsibleConfig(step)
-                    return (
-                      <div style={{ marginTop: 8 }}>
-                        <Text strong>Ansible配置:</Text>
-                        <div style={{ marginLeft: 16, marginTop: 4 }}>
-                          {ansibleConfig.playbook_id && (
-                            <div><Text type="secondary">Playbook ID: </Text>{ansibleConfig.playbook_id}</div>
-                          )}
-                          {ansibleConfig.inventory_id && (
-                            <div><Text type="secondary">Inventory ID: </Text>{ansibleConfig.inventory_id}</div>
-                          )}
-                          {ansibleConfig.credential_id && (
-                            <div><Text type="secondary">Credential ID: </Text>{ansibleConfig.credential_id}</div>
-                          )}
-                        </div>
-                      </div>
-                    )
-                  })()}
-                  
-                  {/* 显示清理后的参数（不包含ansible字段） */}
-                  {(() => {
-                    const stepParams = getStepParameters(step)
-                    const displayParams = { ...stepParams }
-                    if (step.step_type === 'ansible') {
-                      delete displayParams.playbook_id
-                      delete displayParams.inventory_id
-                      delete displayParams.credential_id
-                    }
-                    return Object.keys(displayParams).length > 0 && (
-                      <div style={{ marginTop: 8 }}>
-                        <Text strong>参数: </Text>
-                        <Text code>{JSON.stringify(displayParams, null, 2)}</Text>
-                      </div>
-                    )
-                  })()}
-                </Card>
-              ))}
-            </div>
-          )}
-        </Card>
+        <PipelineStepList
+          steps={steps}
+          showAdvancedOptions={showAdvancedOptions}
+          onAddStep={handleAddStep}
+          onEditStep={handleEditStep}
+          onDeleteStep={handleDeleteStep}
+          onMoveStep={handleMoveStep}
+          onWorkflowStepEdit={handleWorkflowStepEdit}
+          getStepTypeLabel={getStepTypeLabel}
+          getStepIcon={getStepIcon}
+          getStepParameters={getStepParameters}
+          getStepAnsibleConfig={getStepAnsibleConfig}
+        />
       </div>
 
-      <Drawer
-        title={editingStep ? '编辑步骤' : '新建步骤'}
-        open={stepFormVisible}
+      <PipelineStepForm
+        visible={stepFormVisible}
+        form={form}
+        editingStep={editingStep}
+        selectedStepType={selectedStepType}
+        showParameterDoc={showParameterDoc}
+        gitCredentials={gitCredentials}
+        ansiblePlaybooks={ansiblePlaybooks}
+        ansibleInventories={ansibleInventories}
+        ansibleCredentials={ansibleCredentials}
+        stepTypes={STEP_TYPES}
         onClose={() => setStepFormVisible(false)}
-        width={500}
-        footer={
-          <Space style={{ float: 'right' }}>
-            <Button onClick={() => setStepFormVisible(false)}>关闭</Button>
-            <Button type="primary" onClick={handleStepSubmit}>
-              {editingStep ? '更新步骤' : '添加步骤'}
-            </Button>
-          </Space>
-        }
-      >
-        <Form form={form} layout="vertical">
-          <Form.Item
-            name="name"
-            label="步骤名称"
-            rules={[{ required: true, message: '请输入步骤名称' }]}
-          >
-            <Input placeholder="输入步骤名称" />
-          </Form.Item>
-
-          <Form.Item
-            name="step_type"
-            label="步骤类型"
-            rules={[{ required: true, message: '请选择步骤类型' }]}
-          >
-            <Select 
-              placeholder="选择步骤类型"
-              optionLabelProp="label"
-              onChange={(value) => {
-                setSelectedStepType(value)
-                setShowParameterDoc(true)
-              }}
-            >
-              {STEP_TYPES.map(type => (
-                <Option 
-                  key={type.value} 
-                  value={type.value}
-                  label={type.label}
-                >
-                  <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
-                    <div style={{ fontWeight: 500, marginBottom: 2 }}>
-                      {type.label}
-                    </div>
-                    <div style={{ 
-                      fontSize: 12, 
-                      color: '#999',
-                      whiteSpace: 'normal',
-                      wordBreak: 'break-word',
-                      lineHeight: '1.3'
-                    }}>
-                      {type.description}
-                    </div>
-                  </div>
-                </Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="description"
-            label="步骤描述"
-          >
-            <Input placeholder="输入步骤描述（可选）" />
-          </Form.Item>
-
-          <Form.Item
-            name="order"
-            label="执行顺序"
-            rules={[{ required: true, message: '请输入执行顺序' }]}
-          >
-            <Input type="number" placeholder="执行顺序" />
-          </Form.Item>
-
-          <Divider>参数配置</Divider>
+        onSubmit={handleStepSubmit}
+        onStepTypeChange={(value: string) => {
+          setSelectedStepType(value)
+          setShowParameterDoc(true)
           
-          {/* 参数说明按钮 */}
-          {selectedStepType && (
-            <Alert
-              message={
-                <Space>
-                  <span>需要参数配置帮助？</span>
-                  <Button 
-                    type="link" 
-                    size="small" 
-                    icon={<QuestionCircleOutlined />}
-                    onClick={() => setShowParameterDoc(!showParameterDoc)}
-                  >
-                    {showParameterDoc ? '隐藏参数说明' : '查看参数说明'}
-                  </Button>
-                </Space>
-              }
-              type="info"
-              showIcon
-              style={{ marginBottom: 16 }}
-            />
-          )}
+          // 为特殊步骤类型提供自动配置提示
+          if (value === 'approval') {
+            message.info('审批步骤已选择，建议使用高级配置设置审批人员')
+          } else if (value === 'condition') {
+            message.info('条件步骤已选择，建议使用高级配置设置执行条件')
+          }
+        }}
+        onToggleParameterDoc={() => setShowParameterDoc(!showParameterDoc)}
+        onParameterSelect={(paramKey: string, paramValue: any) => {
+          // 将选择的参数示例插入到参数文本框
+          const currentParams = form.getFieldValue('parameters') || '{}'
+          try {
+            const params = JSON.parse(currentParams)
+            params[paramKey] = paramValue
+            form.setFieldsValue({
+              parameters: JSON.stringify(params, null, 2)
+            })
+            message.success(`已插入参数: ${paramKey}`)
+          } catch (error) {
+            // 如果当前参数不是有效JSON，直接替换
+            const newParams = { [paramKey]: paramValue }
+            form.setFieldsValue({
+              parameters: JSON.stringify(newParams, null, 2)
+            })
+            message.success(`已插入参数: ${paramKey}`)
+          }
+        }}
+      />
 
-          {/* 参数说明组件 */}
-          {selectedStepType && showParameterDoc && (
-            <div style={{ marginBottom: 16 }}>
-              <ParameterDocumentation 
-                stepType={selectedStepType}
-                visible={showParameterDoc}
-                onParameterSelect={(paramKey, paramValue) => {
-                  // 将选择的参数示例插入到参数文本框
-                  const currentParams = form.getFieldValue('parameters') || '{}'
-                  try {
-                    const params = JSON.parse(currentParams)
-                    params[paramKey] = paramValue
-                    form.setFieldsValue({
-                      parameters: JSON.stringify(params, null, 2)
-                    })
-                    message.success(`已插入参数: ${paramKey}`)
-                  } catch (error) {
-                    // 如果当前参数不是有效JSON，直接替换
-                    const newParams = { [paramKey]: paramValue }
-                    form.setFieldsValue({
-                      parameters: JSON.stringify(newParams, null, 2)
-                    })
-                    message.success(`已插入参数: ${paramKey}`)
-                  }
-                }}
-              />
-            </div>
-          )}
-
-          {/* Git凭据选择 - 仅在代码拉取步骤显示 */}
-          {selectedStepType === 'fetch_code' && (
-            <Form.Item
-              name="git_credential_id"
-              label={
-                <Space>
-                  <span>Git认证凭据</span>
-                  <Button 
-                    type="link" 
-                    size="small"
-                    onClick={() => {
-                      // 打开系统设置中的Git凭据管理
-                      window.open('/settings?module=git-credentials', '_blank')
-                    }}
-                  >
-                    管理凭据
-                  </Button>
-                </Space>
-              }
-              tooltip="选择用于拉取代码的Git认证凭据，如果不选择则使用公开仓库或默认认证"
-            >
-              <Select 
-                placeholder="选择Git凭据（可选）"
-                allowClear
-                optionLabelProp="label"
-                notFoundContent={
-                  <div style={{ textAlign: 'center', padding: '20px' }}>
-                    <Text type="secondary">暂无Git凭据</Text>
-                    <br />
-                    <Button 
-                      type="link" 
-                      size="small"
-                      onClick={() => {
-                        window.open('/settings?module=git-credentials', '_blank')
-                      }}
-                    >
-                      去创建凭据
-                    </Button>
-                  </div>
-                }
-              >
-                {gitCredentials.map(credential => (
-                  <Select.Option 
-                    key={credential.id} 
-                    value={credential.id}
-                    label={credential.name}
-                  >
-                    <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
-                      <div style={{ fontWeight: 500, marginBottom: 2 }}>
-                        {credential.name}
-                      </div>
-                      <div style={{ 
-                        fontSize: 12, 
-                        color: '#999',
-                        whiteSpace: 'normal',
-                        wordBreak: 'break-word',
-                        lineHeight: '1.3'
-                      }}>
-                        {credential.platform_display} - {credential.server_url}
-                      </div>
-                    </div>
-                  </Select.Option>
-                ))}
-              </Select>
-            </Form.Item>
-          )}
-          
-          {/* Ansible资源选择 - 仅在ansible步骤显示 */}
-          {selectedStepType === 'ansible' && (
-            <>
-              <Form.Item
-                name="ansible_playbook_id"
-                label={
-                  <Space>
-                    <span>Ansible Playbook</span>
-                    <Button 
-                      type="link" 
-                      size="small"
-                      onClick={() => {
-                        window.open('/ansible?tab=playbooks', '_blank')
-                      }}
-                    >
-                      管理Playbook
-                    </Button>
-                  </Space>
-                }
-                tooltip="选择要执行的Ansible Playbook"
-                rules={[{ required: true, message: '请选择Ansible Playbook' }]}
-              >
-                <Select 
-                  placeholder="选择Ansible Playbook"
-                  optionLabelProp="label"
-                  notFoundContent={
-                    <div style={{ textAlign: 'center', padding: '20px' }}>
-                      <Text type="secondary">暂无Playbook</Text>
-                      <br />
-                      <Button 
-                        type="link" 
-                        size="small"
-                        onClick={() => {
-                          window.open('/ansible?tab=playbooks', '_blank')
-                        }}
-                      >
-                        去创建Playbook
-                      </Button>
-                    </div>
-                  }
-                >
-                  {ansiblePlaybooks.map(playbook => (
-                    <Select.Option 
-                      key={playbook.id} 
-                      value={playbook.id}
-                      label={playbook.name}
-                    >
-                      <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
-                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
-                          {playbook.name}
-                        </div>
-                        <div style={{ 
-                          fontSize: 12, 
-                          color: '#999',
-                          whiteSpace: 'normal',
-                          wordBreak: 'break-word',
-                          lineHeight: '1.3'
-                        }}>
-                          {playbook.description || '无描述'}
-                        </div>
-                      </div>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-
-              <Form.Item
-                name="ansible_inventory_id"
-                label={
-                  <Space>
-                    <span>Ansible Inventory</span>
-                    <Button 
-                      type="link" 
-                      size="small"
-                      onClick={() => {
-                        window.open('/ansible?tab=inventories', '_blank')
-                      }}
-                    >
-                      管理Inventory
-                    </Button>
-                  </Space>
-                }
-                tooltip="选择目标主机清单（可选）"
-              >
-                <Select 
-                  placeholder="选择Ansible Inventory（可选）"
-                  allowClear
-                  optionLabelProp="label"
-                  notFoundContent={
-                    <div style={{ textAlign: 'center', padding: '20px' }}>
-                      <Text type="secondary">暂无Inventory</Text>
-                      <br />
-                      <Button 
-                        type="link" 
-                        size="small"
-                        onClick={() => {
-                          window.open('/ansible?tab=inventories', '_blank')
-                        }}
-                      >
-                        去创建Inventory
-                      </Button>
-                    </div>
-                  }
-                >
-                  {ansibleInventories.map(inventory => (
-                    <Select.Option 
-                      key={inventory.id} 
-                      value={inventory.id}
-                      label={inventory.name}
-                    >
-                      <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
-                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
-                          {inventory.name}
-                        </div>
-                        <div style={{ 
-                          fontSize: 12, 
-                          color: '#999',
-                          whiteSpace: 'normal',
-                          wordBreak: 'break-word',
-                          lineHeight: '1.3'
-                        }}>
-                          {inventory.description || '无描述'}
-                        </div>
-                      </div>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-
-              <Form.Item
-                name="ansible_credential_id"
-                label={
-                  <Space>
-                    <span>Ansible Credential</span>
-                    <Button 
-                      type="link" 
-                      size="small"
-                      onClick={() => {
-                        window.open('/ansible?tab=credentials', '_blank')
-                      }}
-                    >
-                      管理Credential
-                    </Button>
-                  </Space>
-                }
-                tooltip="选择SSH认证凭据（可选）"
-              >
-                <Select 
-                  placeholder="选择Ansible Credential（可选）"
-                  allowClear
-                  optionLabelProp="label"
-                  notFoundContent={
-                    <div style={{ textAlign: 'center', padding: '20px' }}>
-                      <Text type="secondary">暂无Credential</Text>
-                      <br />
-                      <Button 
-                        type="link" 
-                        size="small"
-                        onClick={() => {
-                          window.open('/ansible?tab=credentials', '_blank')
-                        }}
-                      >
-                        去创建Credential
-                      </Button>
-                    </div>
-                  }
-                >
-                  {ansibleCredentials.map(credential => (
-                    <Select.Option 
-                      key={credential.id} 
-                      value={credential.id}
-                      label={credential.name}
-                    >
-                      <div style={{ lineHeight: '1.4', padding: '4px 0' }}>
-                        <div style={{ fontWeight: 500, marginBottom: 2 }}>
-                          {credential.name}
-                        </div>
-                        <div style={{ 
-                          fontSize: 12, 
-                          color: '#999',
-                          whiteSpace: 'normal',
-                          wordBreak: 'break-word',
-                          lineHeight: '1.3'
-                        }}>
-                          {credential.username} - {credential.credential_type}
-                        </div>
-                      </div>
-                    </Select.Option>
-                  ))}
-                </Select>
-              </Form.Item>
-            </>
-          )}
-          
-          <Form.Item
-            name="parameters"
-            label={
-              <Space>
-                <span>步骤参数</span>
-                <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                  (JSON格式)
-                </Typography.Text>
-              </Space>
-            }
-          >
-            <TextArea 
-              placeholder='输入JSON格式的参数，例如: {"timeout": 300, "retry": 3}'
-              rows={6}
-            />
-          </Form.Item>
-        </Form>
-      </Drawer>
-
-      {/* 流水线基本信息编辑 Drawer */}
-      <Drawer
-        title="编辑流水线信息"
-        open={pipelineInfoVisible}
+      {/* 流水线基本信息编辑 */}
+      <PipelineInfoForm
+        visible={pipelineInfoVisible}
+        form={pipelineForm}
+        tools={tools}
         onClose={() => setPipelineInfoVisible(false)}
-        width={500}
-        footer={
-          <Space style={{ float: 'right' }}>
-            <Button onClick={() => setPipelineInfoVisible(false)}>取消</Button>
-            <Button type="primary" onClick={handlePipelineInfoSubmit}>
-              保存
-            </Button>
-          </Space>
-        }
-      >
-        <Form form={pipelineForm} layout="vertical">
-          <Form.Item
-            name="name"
-            label="流水线名称"
-            rules={[{ required: true, message: '请输入流水线名称' }]}
-          >
-            <Input placeholder="输入流水线名称" />
-          </Form.Item>
-
-          <Form.Item
-            name="description"
-            label="描述"
-          >
-            <Input.TextArea 
-              placeholder="输入流水线描述（可选）" 
-              rows={3} 
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="execution_mode"
-            label="执行模式"
-            tooltip="本地执行：使用本地Celery执行；远程工具：在CI/CD工具中执行；混合模式：部分本地、部分远程执行"
-          >
-            <Select placeholder="选择执行模式">
-              <Select.Option value="local">本地执行</Select.Option>
-              <Select.Option value="remote">远程工具</Select.Option>
-              <Select.Option value="hybrid">混合模式</Select.Option>
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="execution_tool"
-            label="执行工具"
-            tooltip="选择用于远程或混合模式执行的CI/CD工具"
-          >
-            <Select 
-              placeholder="选择CI/CD工具（可选）" 
-              allowClear
-            >
-              {tools.map((tool: any) => (
-                <Select.Option 
-                  key={tool.id} 
-                  value={tool.id}
-                >
-                  {tool.name} ({tool.tool_type})
-                </Select.Option>
-              ))}
-            </Select>
-          </Form.Item>
-
-          <Form.Item
-            name="tool_job_name"
-            label="工具作业名称"
-            tooltip="在CI/CD工具中的作业名称"
-          >
-            <Input placeholder="输入工具中的作业名称（可选）" />
-          </Form.Item>
-
-          <Form.Item
-            name="is_active"
-            label="状态"
-          >
-            <Select>
-              <Select.Option value={true}>活跃</Select.Option>
-              <Select.Option value={false}>停用</Select.Option>
-            </Select>
-          </Form.Item>
-        </Form>
-      </Drawer>
+        onSubmit={handlePipelineInfoSubmit}
+      />
 
       {/* Pipeline预览组件 */}
       {pipeline && (
@@ -1478,6 +1213,61 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           onClose={() => setPreviewVisible(false)}
           onExecute={handleExecuteFromPreview}
         />
+      )}
+
+      {/* 高级工作流功能组件 */}
+      
+      {/* 步骤高级配置组件 */}
+      <WorkflowStepFormNew
+        visible={workflowStepFormVisible}
+        editingStep={editingEnhancedStep}
+        availableSteps={steps as EnhancedPipelineStep[]}
+        parallelGroups={parallelGroups}
+        onClose={() => {
+          setWorkflowStepFormVisible(false)
+          setEditingEnhancedStep(null)
+        }}
+        onSave={handleWorkflowStepSave}
+        onParallelGroupChange={setParallelGroups}
+      />
+
+      {/* 并行组管理组件 */}
+      <ParallelGroupManager
+        visible={parallelGroupManagerVisible}
+        parallelGroups={parallelGroups}
+        availableSteps={steps as EnhancedPipelineStep[]}
+        onClose={() => setParallelGroupManagerVisible(false)}
+        onChange={handleParallelGroupSave}
+      />
+
+      {/* 工作流分析组件 */}
+      <WorkflowAnalyzerEnhanced
+        visible={workflowAnalyzerVisible}
+        steps={steps}
+        parallelGroups={parallelGroups}
+        onClose={() => setWorkflowAnalyzerVisible(false)}
+      />
+
+      {/* 执行恢复组件 */}
+      <ExecutionRecovery
+        visible={executionRecoveryVisible}
+        execution={currentExecution}
+        onClose={() => {
+          setExecutionRecoveryVisible(false)
+          setCurrentExecution(null)
+        }}
+        onResumeSuccess={handleExecutionResumeSuccess}
+      />
+
+      {/* 流水线验证组件 */}
+      {showValidationPanel && (
+        <div style={{ marginTop: 16 }}>
+          <WorkflowValidation
+            steps={steps as PipelineStep[]}
+            onValidationComplete={setValidationResult}
+            autoValidate={true}
+          />
+        </div>
       )}
     </Drawer>
   )

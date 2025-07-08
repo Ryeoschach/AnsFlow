@@ -1,0 +1,25 @@
+{
+  "timestamp": "2025-07-07T09:26:00.680Z",
+  "tests": {
+    "componentIntegrity": {
+      "PipelineEditor.tsx": true,
+      "PipelineStepList.tsx": true,
+      "PipelineStepForm.tsx": true,
+      "PipelineInfoForm.tsx": true,
+      "PipelineToolbar.tsx": true,
+      "WorkflowStepFormNew.tsx": true,
+      "ExecutionRecovery.tsx": true,
+      "WorkflowAnalyzerEnhanced.tsx": true,
+      "ParallelGroupManager.tsx": true,
+      "WorkflowValidation.tsx": true
+    },
+    "apiServiceIntegrity": true,
+    "typeDefinitions": true,
+    "featureIntegration": true
+  },
+  "summary": {
+    "totalComponents": 10,
+    "existingComponents": 10,
+    "completionRate": "100.0"
+  }
+}

@@ -171,7 +171,23 @@ export interface PipelineStep {
   command?: string
   environment_vars?: Record<string, any>
   timeout_seconds?: number
+  timeout?: number  // 兼容字段
   order: number
+  
+  // 高级工作流字段
+  dependencies?: number[]  // 依赖的步骤ID列表
+  parallel_group?: string  // 并行组ID (与后端字段名一致)
+  parallelGroup?: string  // 兼容字段，用于向后兼容
+  conditions?: Array<{
+    field: string
+    operator: 'equals' | 'not_equals' | 'contains' | 'not_contains' | 'greater_than' | 'less_than'
+    value: any
+    logic?: 'and' | 'or'
+  }>
+  approval_required?: boolean
+  approval_users?: string[]
+  retry_policy?: RetryPolicy
+  notification_config?: NotificationConfig
   
   // Ansible配置
   ansible_playbook?: number | null
@@ -389,3 +405,262 @@ export interface SystemStats {
 
 // 导出Ansible相关类型
 export * from './ansible'
+
+// 工作流高级功能类型定义
+
+// 步骤执行条件类型
+export interface StepCondition {
+  type: 'always' | 'on_success' | 'on_failure' | 'expression'
+  expression?: string  // 条件表达式，如 "${previous_step.result.status} == 'success'"
+  depends_on?: number[]  // 依赖的步骤ID列表
+}
+
+// 并行执行组类型
+export interface ParallelGroup {
+  id: string
+  name: string
+  description?: string
+  steps: number[]  // 并行执行的步骤ID列表
+  sync_policy: 'wait_all' | 'wait_any' | 'fail_fast'  // 同步策略
+  timeout_seconds?: number
+}
+
+// 手动审批配置类型
+export interface ApprovalConfig {
+  approvers: string[]  // 审批人用户名列表
+  approval_message?: string  // 审批提示信息
+  timeout_hours?: number  // 审批超时时间（小时）
+  auto_approve_on_timeout?: boolean  // 超时后是否自动批准
+  required_approvals?: number  // 需要的最少审批数量，默认为1
+}
+
+// 增强的流水线步骤类型，支持高级工作流功能
+export interface EnhancedPipelineStep extends PipelineStep {
+  // 条件执行
+  condition?: StepCondition
+  
+  // 并行执行 (使用与后端一致的字段名)
+  parallel_group_id?: string  // 兼容字段
+  
+  // 手动审批
+  requires_approval?: boolean
+  approval_config?: ApprovalConfig
+  approval_status?: 'pending' | 'approved' | 'rejected' | 'timeout'
+  approved_by?: string
+  approved_at?: string
+  
+  // 执行策略
+  retry_policy?: {
+    max_retries: number
+    retry_delay_seconds: number
+    retry_on_failure: boolean
+  }
+  
+  // 通知配置
+  notification_config?: NotificationConfig
+}
+
+// 工作流执行上下文
+export interface WorkflowContext {
+  pipeline_id: number
+  execution_id: number
+  variables: Record<string, any>  // 全局变量
+  step_results: Record<number, any>  // 各步骤执行结果
+  current_step?: number
+  parallel_groups: ParallelGroup[]
+  pending_approvals: number[]  // 等待审批的步骤ID
+}
+
+// 条件表达式评估结果
+export interface ConditionEvaluationResult {
+  should_execute: boolean
+  reason?: string
+  evaluated_expression?: string
+}
+
+// 并行执行状态
+export interface ParallelExecutionStatus {
+  group_id: string
+  status: 'running' | 'completed' | 'failed' | 'waiting'
+  completed_steps: number[]
+  failed_steps: number[]
+  running_steps: number[]
+  start_time?: string
+  end_time?: string
+}
+
+// 审批请求类型
+export interface ApprovalRequest {
+  id: number
+  pipeline_execution: number
+  step_id: number
+  step_name: string
+  requester: string
+  approval_config: ApprovalConfig
+  status: 'pending' | 'approved' | 'rejected' | 'timeout'
+  requested_at: string
+  responded_at?: string
+  responder?: string
+  response_comment?: string
+  timeout_at?: string
+}
+
+// 审批响应类型
+export interface ApprovalResponse {
+  action: 'approve' | 'reject'
+  comment?: string
+}
+
+// 工作流分析结果
+export interface WorkflowAnalysis {
+  total_steps: number
+  parallel_groups: number
+  approval_steps: number
+  conditional_steps: number
+  estimated_duration_minutes?: number
+  critical_path?: number[]  // 关键路径上的步骤ID
+  potential_bottlenecks?: string[]
+}
+
+// 重试策略配置
+export interface RetryPolicy {
+  max_retries: number
+  retry_delay_seconds: number
+  retry_on_failure: boolean
+  backoff_strategy?: 'fixed' | 'linear' | 'exponential'
+  max_delay_seconds?: number
+}
+
+// 通知配置
+export interface NotificationConfig {
+  on_success?: boolean
+  on_failure?: boolean
+  on_approval_required?: boolean
+  channels?: Array<'email' | 'dingtalk' | 'wechat' | 'slack' | 'webhook'>
+  recipients?: string[]
+  webhook_url?: string
+  message_template?: string
+}
+
+// 工作流指标数据
+export interface WorkflowMetrics {
+  total_steps: number
+  parallel_steps: number
+  conditional_steps: number
+  approval_steps: number
+  estimated_duration: number
+  complexity_score: number
+  critical_path: number[]
+  risk_factors: Array<{
+    type: 'high' | 'medium' | 'low'
+    message: string
+    step_id?: number
+  }>
+  performance_metrics: {
+    avg_step_duration: number
+    failure_rate: number
+    success_rate: number
+    retry_rate: number
+  }
+  historical_data: Array<{
+    date: string
+    duration: number
+    success: boolean
+    steps_count: number
+  }>
+}
+
+// 依赖关系信息
+export interface DependencyInfo {
+  step_id: number
+  step_name: string
+  dependencies: number[]
+  dependents: number[]
+  is_critical: boolean
+  parallel_group?: string
+  depth_level: number
+}
+
+// 优化建议
+export interface OptimizationSuggestion {
+  type: 'performance' | 'reliability' | 'maintainability' | 'security'
+  priority: 'high' | 'medium' | 'low'
+  title: string
+  description: string
+  impact: string
+  effort: string
+  steps_affected: number[]
+  implementation_guide?: string
+  estimated_benefit?: string
+}
+
+// 执行恢复相关类型
+export interface ExecutionRecoveryInfo {
+  failed_steps: Array<{
+    id: number
+    name: string
+    error: string
+    failed_at: string
+    logs?: string[]
+    retry_count: number
+    max_retries: number
+  }>
+  recovery_points: Array<{
+    step_id: number
+    step_name: string
+    description: string
+    recommended: boolean
+  }>
+  can_recover: boolean
+  last_successful_step?: number
+  execution_progress: {
+    total_steps: number
+    completed_steps: number
+    failed_steps: number
+    pending_steps: number
+  }
+}
+
+// 步骤执行信息
+export interface StepExecutionInfo {
+  id: number
+  name: string
+  step_type: string
+  status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled'
+  started_at?: string
+  completed_at?: string
+  error_message?: string
+  order: number
+  logs?: string[]
+  retry_count?: number
+  max_retries?: number
+  duration_seconds?: number
+}
+
+// 恢复选项
+export interface RecoveryOptions {
+  from_step_id: number
+  skip_failed: boolean
+  modify_parameters: boolean
+  parameters: Record<string, any>
+  recovery_strategy: 'continue' | 'restart_from' | 'skip_and_continue'
+  force_retry: boolean
+  custom_timeout?: number
+  notification_settings?: NotificationConfig
+}
+
+// 工作流验证相关类型
+export interface ValidationIssue {
+  type: 'success' | 'warning' | 'error' | 'info'
+  message: string
+  stepId?: number
+  field?: string
+  suggestion?: string
+}
+
+export interface ValidationResult {
+  isValid: boolean
+  hasWarnings?: boolean
+  issues: ValidationIssue[]
+  suggestions: string[]
+}

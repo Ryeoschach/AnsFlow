@@ -7,7 +7,8 @@ import {
   AtomicStep, PipelineRun, PipelineToolMapping,
   AnsibleInventory, AnsiblePlaybook, AnsibleCredential,
   ValidationResult, ExecutePlaybookRequest, ExecutePlaybookResponse,
-  ExecutionLogsResponse, AnsibleStats, AnsibleExecutionList, AnsibleExecution
+  ExecutionLogsResponse, AnsibleStats, AnsibleExecutionList, AnsibleExecution,
+  ConditionEvaluationResult, ApprovalConfig, ApprovalRequest, ParallelGroup
 } from '../types'
 
 class ApiService {
@@ -623,6 +624,324 @@ class ApiService {
 
   async getRecentAnsibleExecutions(limit: number = 10): Promise<AnsibleExecutionList[]> {
     const response = await this.api.get(`/ansible/executions/recent/?limit=${limit}`)
+    return response.data
+  }
+
+  // Advanced Workflow Features
+  
+  // 从失败步骤恢复执行流水线
+  async resumePipelineFromStep(executionId: number, stepId: number, parameters?: Record<string, any>): Promise<PipelineExecution> {
+    const response = await this.api.post(`/pipelines/executions/${executionId}/resume/`, {
+      step_id: stepId,
+      parameters: parameters || {}
+    })
+    return response.data
+  }
+
+  // 获取执行历史和失败步骤信息
+  async getExecutionStepHistory(executionId: number): Promise<any[]> {
+    const response = await this.api.get(`/pipelines/executions/${executionId}/steps/`)
+    return response.data
+  }
+
+  // 评估条件表达式
+  async evaluateStepCondition(
+    pipelineId: number, 
+    stepId: number, 
+    condition: any, 
+    context: Record<string, any>
+  ): Promise<{ result: boolean; error?: string }> {
+    const response = await this.api.post(`/pipelines/${pipelineId}/steps/${stepId}/evaluate-condition/`, {
+      condition,
+      context
+    })
+    return response.data
+  }
+
+  // 审批相关API
+  async submitApproval(
+    executionId: number, 
+    stepId: number, 
+    approved: boolean, 
+    comment?: string
+  ): Promise<{ success: boolean }> {
+    const response = await this.api.post(`/pipelines/executions/${executionId}/steps/${stepId}/approve/`, {
+      approved,
+      comment
+    })
+    return response.data
+  }
+
+  // 并行组执行相关API
+  async createParallelGroup(groupData: any): Promise<any> {
+    console.log('🔄 API调用: 创建并行组', groupData)
+    const response = await this.api.post('/pipelines/parallel-groups/', groupData)
+    console.log('✅ API响应: 创建并行组', response.data)
+    return response.data
+  }
+
+  async updateParallelGroup(groupId: string, groupData: any): Promise<any> {
+    console.log('🔄 API调用: 更新并行组', groupId, groupData)
+    const response = await this.api.put(`/pipelines/parallel-groups/${groupId}/`, groupData)
+    console.log('✅ API响应: 更新并行组', response.data)
+    return response.data
+  }
+
+  async deleteParallelGroup(groupId: string): Promise<void> {
+    console.log('🔄 API调用: 删除并行组', groupId)
+    await this.api.delete(`/pipelines/parallel-groups/${groupId}/`)
+    console.log('✅ API响应: 删除并行组成功')
+  }
+
+  async getParallelGroups(pipelineId?: number): Promise<any[]> {
+    const url = pipelineId ? `/pipelines/parallel-groups/?pipeline=${pipelineId}` : '/pipelines/parallel-groups/'
+    console.log('🔄 API调用: 获取并行组', url)
+    const response = await this.api.get(url)
+    console.log('✅ API响应: 获取并行组', response.data)
+    
+    // 处理Django Rest Framework的分页响应
+    if (response.data && Array.isArray(response.data.results)) {
+      return response.data.results
+    } else if (Array.isArray(response.data)) {
+      return response.data
+    } else {
+      console.warn('Unexpected parallel groups data format:', response.data)
+      return []
+    }
+  }
+
+  // 工作流分析API
+  async analyzeWorkflowDependencies(pipelineId: number): Promise<{
+    dependencies: any[];
+    cycles: any[];
+    critical_path: any[];
+    parallelization_suggestions: any[];
+  }> {
+    const response = await this.api.get(`/pipelines/${pipelineId}/analyze-workflow/`)
+    return response.data
+  }
+
+  async getWorkflowMetrics(pipelineId: number): Promise<{
+    total_steps: number;
+    parallel_steps: number;
+    conditional_steps: number;
+    approval_steps: number;
+    estimated_duration: number;
+    complexity_score: number;
+  }> {
+    const response = await this.api.get(`/pipelines/${pipelineId}/workflow-metrics/`)
+    return response.data
+  }
+
+  // 重试机制API
+  async retryFailedStep(
+    executionId: number, 
+    stepId: number, 
+    retryConfig?: { max_retries?: number; delay_seconds?: number }
+  ): Promise<PipelineExecution> {
+    const response = await this.api.post(`/pipelines/executions/${executionId}/steps/${stepId}/retry/`, retryConfig)
+    return response.data
+  }
+
+  // 通知配置API
+  async updateNotificationConfig(pipelineId: number, stepId: number, config: any): Promise<any> {
+    const response = await this.api.put(`/pipelines/${pipelineId}/steps/${stepId}/notifications/`, config)
+    return response.data
+  }
+
+  async testNotification(config: any): Promise<{ success: boolean; message: string }> {
+    const response = await this.api.post('/notifications/test/', config)
+    return response.data
+  }
+
+  // 高级步骤配置持久化
+  async updateStepAdvancedConfig(
+    pipelineId: number, 
+    stepId: number, 
+    config: {
+      condition?: any;
+      parallel_group_id?: string;
+      approval_config?: any;
+      retry_policy?: any;
+      notification_config?: any;
+    }
+  ): Promise<any> {
+    const response = await this.api.put(`/pipelines/${pipelineId}/steps/${stepId}/advanced-config/`, config)
+    return response.data
+  }
+
+  async getStepAdvancedConfig(pipelineId: number, stepId: number): Promise<any> {
+    const response = await this.api.get(`/pipelines/${pipelineId}/steps/${stepId}/advanced-config/`)
+    return response.data
+  }
+
+  // 条件表达式验证和测试
+  async validateConditionExpression(expression: string, context?: any): Promise<{ valid: boolean; error?: string }> {
+    const response = await this.api.post('/workflow/validate-condition/', { 
+      expression, 
+      context 
+    })
+    return response.data
+  }
+
+  async testStepCondition(
+    pipelineId: number, 
+    stepId: number, 
+    expression: string, 
+    context: any
+  ): Promise<ConditionEvaluationResult> {
+    const response = await this.api.post(`/pipelines/${pipelineId}/steps/${stepId}/test-condition/`, {
+      expression,
+      context
+    })
+    return response.data
+  }
+
+  // 审批管理API
+  async createApprovalRequest(
+    executionId: number,
+    stepId: number,
+    config: ApprovalConfig
+  ): Promise<ApprovalRequest> {
+    const response = await this.api.post('/workflow/approvals/', {
+      pipeline_execution: executionId,
+      step_id: stepId,
+      approval_config: config
+    })
+    return response.data
+  }
+
+  async submitApprovalResponse(
+    approvalId: number,
+    response: { action: 'approve' | 'reject'; comment?: string }
+  ): Promise<ApprovalRequest> {
+    const apiResponse = await this.api.post(`/workflow/approvals/${approvalId}/respond/`, response)
+    return apiResponse.data
+  }
+
+  async getPendingApprovals(userId?: string): Promise<ApprovalRequest[]> {
+    const params = userId ? { user: userId } : {}
+    const response = await this.api.get('/workflow/approvals/pending/', { params })
+    return response.data.results || response.data
+  }
+
+  async getApprovalHistory(pipelineId?: number, stepId?: number): Promise<ApprovalRequest[]> {
+    const params: any = {}
+    if (pipelineId) params.pipeline_id = pipelineId
+    if (stepId) params.step_id = stepId
+    
+    const response = await this.api.get('/workflow/approvals/history/', { params })
+    return response.data.results || response.data
+  }
+
+  // 执行恢复API (从失败步骤继续)
+  async getExecutionRecoveryInfo(executionId: number): Promise<{
+    failed_steps: any[];
+    recovery_points: any[];
+    can_recover: boolean;
+    last_successful_step?: number;
+  }> {
+    const response = await this.api.get(`/pipelines/executions/${executionId}/recovery-info/`)
+    return response.data
+  }
+
+  async resumeFromFailedStep(
+    executionId: number, 
+    fromStepId: number, 
+    skipFailed?: boolean,
+    parameters?: Record<string, any>
+  ): Promise<PipelineExecution> {
+    const response = await this.api.post(`/pipelines/executions/${executionId}/resume/`, {
+      from_step_id: fromStepId,
+      skip_failed: skipFailed || false,
+      parameters: parameters || {}
+    })
+    return response.data
+  }
+
+  async getStepExecutionLogs(executionId: number, stepId: number): Promise<{
+    logs: string[];
+    status: string;
+    error?: string;
+    start_time?: string;
+    end_time?: string;
+  }> {
+    const response = await this.api.get(`/pipelines/executions/${executionId}/steps/${stepId}/logs/`)
+    return response.data
+  }
+
+  // 工作流分析增强API
+  async getWorkflowPerformanceMetrics(pipelineId: number, timeRange?: string): Promise<{
+    avg_execution_time: number;
+    success_rate: number;
+    failure_patterns: any[];
+    step_performance: any[];
+    bottlenecks: any[];
+  }> {
+    const params = timeRange ? { time_range: timeRange } : {}
+    const response = await this.api.get(`/pipelines/${pipelineId}/analytics/performance/`, { params })
+    return response.data
+  }
+
+  async getWorkflowDependencyGraph(pipelineId: number): Promise<{
+    nodes: any[];
+    edges: any[];
+    critical_path: number[];
+    parallel_groups: any[];
+  }> {
+    const response = await this.api.get(`/pipelines/${pipelineId}/analytics/dependency-graph/`)
+    return response.data
+  }
+
+  async getWorkflowOptimizationSuggestions(pipelineId: number): Promise<{
+    suggestions: Array<{
+      type: 'parallelization' | 'caching' | 'timeout' | 'retry';
+      description: string;
+      impact: 'high' | 'medium' | 'low';
+      affected_steps: number[];
+    }>;
+  }> {
+    const response = await this.api.get(`/pipelines/${pipelineId}/analytics/optimization-suggestions/`)
+    return response.data
+  }
+
+  // 通知配置API
+  async testNotificationChannel(channelType: string, config: any): Promise<{ success: boolean; message: string }> {
+    const response = await this.api.post('/notifications/test/', {
+      channel_type: channelType,
+      config
+    })
+    return response.data
+  }
+
+  async getAvailableNotificationChannels(): Promise<string[]> {
+    const response = await this.api.get('/notifications/channels/')
+    return response.data
+  }
+
+  // 并行组增强管理
+  async optimizeParallelGroups(pipelineId: number): Promise<{
+    suggestions: Array<{
+      current_groups: ParallelGroup[];
+      optimized_groups: ParallelGroup[];
+      performance_gain: number;
+    }>;
+  }> {
+    const response = await this.api.get(`/pipelines/${pipelineId}/parallel-groups/optimize/`)
+    return response.data
+  }
+
+  async validateParallelGroupConfiguration(
+    pipelineId: number, 
+    groups: ParallelGroup[]
+  ): Promise<{
+    valid: boolean;
+    errors: string[];
+    warnings: string[];
+  }> {
+    const response = await this.api.post(`/pipelines/${pipelineId}/parallel-groups/validate/`, {
+      groups
+    })
     return response.data
   }
 }

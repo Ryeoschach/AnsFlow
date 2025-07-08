@@ -1,5 +1,8 @@
 from rest_framework import serializers
-from .models import Pipeline, PipelineStep, PipelineRun, PipelineToolMapping
+from .models import (
+    Pipeline, PipelineStep, PipelineRun, PipelineToolMapping,
+    ParallelGroup, ApprovalRequest, WorkflowExecution, StepExecutionHistory
+)
 from cicd_integrations.models import AtomicStep
 
 
@@ -18,10 +21,15 @@ class PipelineStepSerializer(serializers.ModelSerializer):
             'ansible_inventory', 'ansible_inventory_name', 
             'ansible_credential', 'ansible_credential_name',
             'ansible_parameters',
+            # 高级工作流功能字段
+            'dependencies', 'parallel_group', 'conditions',
+            'approval_required', 'approval_users', 'approval_status',
+            'approved_by', 'approved_at', 'retry_policy', 'notification_config',
             'output_log', 'error_log', 'exit_code',
             'started_at', 'completed_at'
         ]
-        read_only_fields = ['id', 'output_log', 'error_log', 'exit_code', 'started_at', 'completed_at']
+        read_only_fields = ['id', 'output_log', 'error_log', 'exit_code', 'started_at', 'completed_at',
+                           'approval_status', 'approved_by', 'approved_at']
 
 
 class AtomicStepInPipelineSerializer(serializers.ModelSerializer):
@@ -256,3 +264,125 @@ class PipelineToolMappingSerializer(serializers.ModelSerializer):
             'sync_status', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'last_sync_at', 'created_at', 'updated_at']
+
+
+# 新增高级工作流功能序列化器
+
+class ParallelGroupSerializer(serializers.ModelSerializer):
+    """并行组序列化器"""
+    steps = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = ParallelGroup
+        fields = [
+            'id', 'name', 'description', 'pipeline', 'sync_policy',
+            'timeout_seconds', 'steps', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_at', 'updated_at']
+    
+    def get_steps(self, obj):
+        """获取属于该并行组的步骤ID列表"""
+        # 查找 parallel_group 字段等于该组ID的步骤
+        steps = obj.pipeline.steps.filter(parallel_group=obj.id)
+        return [step.id for step in steps]
+
+
+class ApprovalRequestSerializer(serializers.ModelSerializer):
+    """审批请求序列化器"""
+    
+    pipeline_name = serializers.CharField(source='pipeline.name', read_only=True)
+    step_name = serializers.CharField(source='step.name', read_only=True)
+    requester_username = serializers.CharField(source='requester.username', read_only=True)
+    
+    class Meta:
+        model = ApprovalRequest
+        fields = [
+            'id', 'pipeline', 'pipeline_name', 'step', 'step_name',
+            'execution_id', 'requester', 'requester_username',
+            'approvers', 'required_approvals', 'status', 'approval_message',
+            'timeout_hours', 'auto_approve_on_timeout',
+            'approved_by', 'approved_at', 'response_comment',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'approved_by', 'approved_at', 'created_at', 'updated_at']
+
+
+class WorkflowExecutionSerializer(serializers.ModelSerializer):
+    """工作流执行序列化器"""
+    
+    pipeline_name = serializers.CharField(source='pipeline.name', read_only=True)
+    current_step_name = serializers.CharField(source='current_step.name', read_only=True)
+    
+    class Meta:
+        model = WorkflowExecution
+        fields = [
+            'id', 'pipeline', 'pipeline_name', 'execution_id',
+            'status', 'trigger_data', 'context_variables', 'step_results',
+            'current_step', 'current_step_name', 'failed_steps',
+            'pending_approvals', 'recovery_point',
+            'started_at', 'completed_at', 'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class StepExecutionHistorySerializer(serializers.ModelSerializer):
+    """步骤执行历史序列化器"""
+    
+    step_name = serializers.CharField(source='step.name', read_only=True)
+    
+    class Meta:
+        model = StepExecutionHistory
+        fields = [
+            'id', 'workflow_execution', 'step', 'step_name',
+            'status', 'retry_count', 'max_retries',
+            'logs', 'error_message', 'output_data',
+            'started_at', 'completed_at', 'duration_seconds',
+            'created_at'
+        ]
+        read_only_fields = ['id', 'created_at']
+
+
+class WorkflowAnalysisSerializer(serializers.Serializer):
+    """工作流分析结果序列化器"""
+    
+    total_steps = serializers.IntegerField()
+    parallel_groups = serializers.IntegerField()
+    approval_steps = serializers.IntegerField()
+    conditional_steps = serializers.IntegerField()
+    estimated_duration_minutes = serializers.FloatField(required=False)
+    critical_path = serializers.ListField(child=serializers.IntegerField(), required=False)
+    potential_bottlenecks = serializers.ListField(child=serializers.CharField(), required=False)
+    
+    
+class WorkflowMetricsSerializer(serializers.Serializer):
+    """工作流指标序列化器"""
+    
+    total_steps = serializers.IntegerField()
+    parallel_steps = serializers.IntegerField()
+    conditional_steps = serializers.IntegerField()
+    approval_steps = serializers.IntegerField()
+    estimated_duration = serializers.FloatField()
+    complexity_score = serializers.FloatField()
+    critical_path = serializers.ListField(child=serializers.IntegerField())
+    
+    
+class ExecutionRecoverySerializer(serializers.Serializer):
+    """执行恢复序列化器"""
+    
+    from_step_id = serializers.IntegerField()
+    skip_failed = serializers.BooleanField(default=False)
+    modify_parameters = serializers.BooleanField(default=False)
+    parameters = serializers.JSONField(default=dict)
+    recovery_strategy = serializers.ChoiceField(
+        choices=['continue', 'restart_from', 'skip_and_continue'],
+        default='continue'
+    )
+    force_retry = serializers.BooleanField(default=False)
+    custom_timeout = serializers.IntegerField(required=False)
+    
+    
+class ApprovalResponseSerializer(serializers.Serializer):
+    """审批响应序列化器"""
+    
+    action = serializers.ChoiceField(choices=['approve', 'reject'])
+    comment = serializers.CharField(required=False, allow_blank=True)

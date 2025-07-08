@@ -149,6 +149,39 @@ class PipelineStep(models.Model):
     # Step execution order
     order = models.PositiveIntegerField(default=0)
     
+    # 高级工作流功能字段
+    # 依赖关系
+    dependencies = models.JSONField(default=list, help_text="List of step IDs this step depends on")
+    
+    # 并行执行组
+    parallel_group = models.CharField(max_length=100, blank=True, help_text="Parallel execution group name")
+    
+    # 条件执行
+    conditions = models.JSONField(default=list, help_text="Execution conditions")
+    
+    # 审批配置
+    approval_required = models.BooleanField(default=False, help_text="Whether this step requires approval")
+    approval_users = models.JSONField(default=list, help_text="List of usernames who can approve")
+    approval_status = models.CharField(
+        max_length=20,
+        choices=[
+            ('pending', 'Pending'),
+            ('approved', 'Approved'),
+            ('rejected', 'Rejected'),
+            ('timeout', 'Timeout'),
+        ],
+        blank=True,
+        help_text="Approval status"
+    )
+    approved_by = models.CharField(max_length=100, blank=True, help_text="Username of approver")
+    approved_at = models.DateTimeField(null=True, blank=True)
+    
+    # 重试策略
+    retry_policy = models.JSONField(default=dict, help_text="Retry configuration")
+    
+    # 通知配置
+    notification_config = models.JSONField(default=dict, help_text="Notification configuration")
+    
     # Execution results
     output_log = models.TextField(blank=True, help_text="Step execution output")
     error_log = models.TextField(blank=True, help_text="Step execution errors")
@@ -238,3 +271,126 @@ class PipelineToolMapping(models.Model):
         
     def __str__(self):
         return f"{self.pipeline.name} → {self.tool.name} ({self.external_job_name})"
+
+
+class ParallelGroup(models.Model):
+    """并行执行组模型"""
+    
+    SYNC_POLICY_CHOICES = [
+        ('wait_all', 'Wait All'),
+        ('wait_any', 'Wait Any'),
+        ('fail_fast', 'Fail Fast'),
+    ]
+    
+    id = models.CharField(max_length=100, primary_key=True)
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='parallel_groups')
+    sync_policy = models.CharField(max_length=20, choices=SYNC_POLICY_CHOICES, default='wait_all')
+    timeout_seconds = models.IntegerField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Parallel Group"
+        verbose_name_plural = "Parallel Groups"
+        
+    def __str__(self):
+        return f"{self.pipeline.name} - {self.name}"
+
+
+class ApprovalRequest(models.Model):
+    """审批请求模型"""
+    
+    STATUS_CHOICES = [
+        ('pending', 'Pending'),
+        ('approved', 'Approved'),
+        ('rejected', 'Rejected'),
+        ('timeout', 'Timeout'),
+    ]
+    
+    pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='approval_requests')
+    step = models.ForeignKey(PipelineStep, on_delete=models.CASCADE, related_name='approval_requests')
+    execution_id = models.CharField(max_length=100, help_text="Pipeline execution ID")
+    
+    requester_username = models.CharField(max_length=100, help_text="Username of the requester")
+    approvers = models.JSONField(default=list, help_text="List of approved usernames")
+    required_approvals = models.IntegerField(default=1)
+    
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='pending')
+    approval_message = models.TextField(blank=True)
+    timeout_hours = models.IntegerField(null=True, blank=True)
+    auto_approve_on_timeout = models.BooleanField(default=False)
+    
+    approved_by = models.CharField(max_length=100, blank=True)
+    approved_at = models.DateTimeField(null=True, blank=True)
+    response_comment = models.TextField(blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    
+    class Meta:
+        verbose_name = "Approval Request"
+        verbose_name_plural = "Approval Requests"
+        
+    def __str__(self):
+        return f"Approval for {self.step.name} - {self.status}"
+
+
+class WorkflowExecution(models.Model):
+    """工作流执行记录模型"""
+    
+    pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='workflow_executions')
+    execution_id = models.CharField(max_length=100, unique=True)
+    
+    status = models.CharField(max_length=20, choices=Pipeline.STATUS_CHOICES, default='pending')
+    trigger_data = models.JSONField(default=dict)
+    context_variables = models.JSONField(default=dict, help_text="Workflow context variables")
+    step_results = models.JSONField(default=dict, help_text="Results from each step")
+    
+    current_step = models.ForeignKey(PipelineStep, on_delete=models.SET_NULL, null=True, blank=True)
+    failed_steps = models.JSONField(default=list, help_text="List of failed step IDs")
+    pending_approvals = models.JSONField(default=list, help_text="List of step IDs waiting for approval")
+    
+    recovery_point = models.IntegerField(null=True, blank=True, help_text="Step ID to resume from")
+    
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Workflow Execution"
+        verbose_name_plural = "Workflow Executions"
+        
+    def __str__(self):
+        return f"{self.pipeline.name} - {self.execution_id}"
+
+
+class StepExecutionHistory(models.Model):
+    """步骤执行历史模型"""
+    
+    workflow_execution = models.ForeignKey(WorkflowExecution, on_delete=models.CASCADE, related_name='step_histories')
+    step = models.ForeignKey(PipelineStep, on_delete=models.CASCADE)
+    
+    status = models.CharField(max_length=20, choices=PipelineStep.STEP_STATUS_CHOICES, default='pending')
+    retry_count = models.IntegerField(default=0)
+    max_retries = models.IntegerField(default=0)
+    
+    logs = models.TextField(blank=True)
+    error_message = models.TextField(blank=True)
+    output_data = models.JSONField(default=dict)
+    
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+    duration_seconds = models.IntegerField(null=True, blank=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    
+    class Meta:
+        verbose_name = "Step Execution History"
+        verbose_name_plural = "Step Execution Histories"
+        ordering = ['-created_at']
+        
+    def __str__(self):
+        return f"{self.step.name} - {self.status}"
