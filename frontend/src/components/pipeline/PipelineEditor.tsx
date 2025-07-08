@@ -427,12 +427,36 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       console.log('🔄 开始保存并行组:', groups.length, '个组')
       console.log('📊 当前并行组状态:', groups)
 
-      // 确保 parallelGroups 是数组
+      // 数据验证
+      const safeGroups = Array.isArray(groups) ? groups : []
       const safeParallelGroups = Array.isArray(parallelGroups) ? parallelGroups : []
       
-      // 保存并行组到后端
-      const savePromises = groups.map(async (group) => {
-        // 为每个组设置流水线ID
+      // 验证步骤数据
+      if (!Array.isArray(steps) || steps.length === 0) {
+        message.error('没有可分配的步骤')
+        return
+      }
+
+      // 验证并行组数据
+      for (const group of safeGroups) {
+        if (!group.id || !group.name) {
+          message.error('并行组数据不完整')
+          return
+        }
+        
+        if (group.steps && group.steps.length > 0) {
+          // 验证步骤是否存在
+          const invalidSteps = group.steps.filter(stepId => !steps.find(s => s.id === stepId))
+          if (invalidSteps.length > 0) {
+            message.error(`并行组 ${group.name} 中包含不存在的步骤: ${invalidSteps.join(', ')}`)
+            return
+          }
+        }
+      }
+
+      // 1. 保存并行组到后端
+      console.log('💾 第一步：保存并行组到后端...')
+      const savePromises = safeGroups.map(async (group) => {
         const groupWithPipeline = {
           ...group,
           pipeline: pipeline.id
@@ -440,61 +464,74 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
         console.log('💾 处理并行组:', group.id, group.name, '包含步骤:', group.steps)
 
-        if (safeParallelGroups.find(existing => existing.id === group.id)) {
-          // 更新现有并行组
-          console.log('📝 更新现有并行组:', group.id)
-          return await apiService.updateParallelGroup(group.id, groupWithPipeline)
-        } else {
-          // 创建新并行组
-          console.log('🆕 创建新并行组:', group.id)
-          return await apiService.createParallelGroup(groupWithPipeline)
+        try {
+          // 判断是否为新创建的组
+          const isNewGroup = group.id.startsWith('parallel_') && !safeParallelGroups.find(existing => existing.id === group.id)
+          
+          if (isNewGroup) {
+            console.log('🆕 创建新并行组:', group.id)
+            return await apiService.createParallelGroup(groupWithPipeline)
+          } else {
+            console.log('📝 更新现有并行组:', group.id)
+            return await apiService.updateParallelGroup(group.id, groupWithPipeline)
+          }
+        } catch (error: any) {
+          console.error('❌ 保存并行组失败:', group.id, error)
+          throw new Error(`保存并行组 ${group.name} 失败: ${error?.message || '未知错误'}`)
         }
       })
 
-      // 删除本地已删除但后端仍存在的组
+      // 2. 删除本地已删除但后端仍存在的组
       const deletedGroups = safeParallelGroups.filter(
-        existing => !groups.find(group => group.id === existing.id)
+        existing => !safeGroups.find(group => group.id === existing.id)
       )
       console.log('🗑️ 需要删除的并行组:', deletedGroups.length, '个')
       
-      const deletePromises = deletedGroups.map(group => {
+      const deletePromises = deletedGroups.map(async (group) => {
         console.log('🗑️ 删除并行组:', group.id)
-        return apiService.deleteParallelGroup(group.id)
-      })
-
-      // 等待所有操作完成
-      console.log('⏳ 等待所有API操作完成...')
-      await Promise.all([...savePromises, ...deletePromises])
-
-      // 重要：同步更新步骤的并行组关联
-      console.log('🔗 开始同步步骤的并行组关联...')
-      
-      // 首先清除所有步骤的并行组关联
-      const updatedSteps = steps.map(step => ({
-        ...step,
-        parallel_group: undefined // 清除旧的关联
-      }))
-
-      // 为每个组中的步骤设置新的并行组关联
-      groups.forEach(group => {
-        if (group.steps && group.steps.length > 0) {
-          group.steps.forEach(stepId => {
-            const stepIndex = updatedSteps.findIndex(step => step.id === stepId)
-            if (stepIndex !== -1) {
-              console.log(`🔗 关联步骤 ${stepId} 到并行组 ${group.id}`)
-              updatedSteps[stepIndex] = {
-                ...updatedSteps[stepIndex],
-                parallel_group: group.id
-              }
-            }
-          })
+        try {
+          return await apiService.deleteParallelGroup(group.id)
+        } catch (error) {
+          console.error('❌ 删除并行组失败:', group.id, error)
+          // 删除失败不阻塞整个流程
+          return null
         }
       })
 
-      // 保存更新后的步骤到后端
-      if (updatedSteps.length > 0) {
-        console.log('💾 保存步骤的并行组关联到后端...')
+      // 3. 等待并行组操作完成
+      console.log('⏳ 等待并行组操作完成...')
+      const savedGroups = await Promise.all(savePromises)
+      await Promise.all(deletePromises)
+      
+      console.log('✅ 并行组操作完成:', savedGroups.length, '个组已保存')
+
+      // 4. 同步更新步骤的并行组关联
+      console.log('🔗 第二步：同步步骤的并行组关联...')
+      
+      // 创建步骤的深拷贝并重新分配并行组
+      const updatedSteps = steps.map(step => {
+        // 查找步骤属于哪个并行组
+        const belongsToGroup = safeGroups.find(group => 
+          group.steps && Array.isArray(group.steps) && group.steps.includes(step.id)
+        )
         
+        return {
+          ...step,
+          parallel_group: belongsToGroup ? belongsToGroup.id : undefined
+        }
+      })
+
+      console.log('� 步骤并行组分配结果:')
+      updatedSteps.forEach(step => {
+        if (step.parallel_group) {
+          console.log(`  - 步骤 ${step.name} (${step.id}) → 并行组 ${step.parallel_group}`)
+        }
+      })
+
+      // 5. 保存更新后的步骤到后端
+      console.log('💾 第三步：保存步骤的并行组关联到后端...')
+      
+      try {
         const pipelineInfo = await pipelineForm.validateFields().catch(() => ({
           name: pipeline.name,
           description: pipeline.description,
@@ -516,37 +553,67 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           steps: updatedSteps.map((step, index) => {
             const stepParams = getStepParameters(step)
             return {
-              id: step.id, // 保持步骤ID，确保更新而不是重新创建
+              id: step.id,
               name: step.name,
               step_type: step.step_type,
               description: step.description || '',
               parameters: stepParams,
               order: index + 1,
               is_active: true,
-              parallel_group: step.parallel_group, // 关键：保存并行组关联
+              parallel_group: step.parallel_group, // 保存并行组关联
               git_credential: isAtomicStep(step) ? step.git_credential : null
             }
           })
         }
 
         console.log('🚀 保存包含并行组关联的流水线数据...')
+        console.log('📊 准备保存的步骤数据:')
+        updateData.steps.forEach(step => {
+          if (step.parallel_group) {
+            console.log(`  - 步骤 ${step.name} (ID: ${step.id}) → 并行组: ${step.parallel_group}`)
+          } else {
+            console.log(`  - 步骤 ${step.name} (ID: ${step.id}) → 无并行组`)
+          }
+        })
+        
         const updatedPipeline = await apiService.updatePipeline(pipeline.id, updateData)
         
-        // 更新本地步骤状态
+        // 6. 更新本地状态
         if (updatedPipeline.steps && updatedPipeline.steps.length > 0) {
-          setSteps(updatedPipeline.steps.sort((a, b) => a.order - b.order))
+          const sortedSteps = updatedPipeline.steps.sort((a, b) => a.order - b.order)
+          setSteps(sortedSteps)
+          console.log('✅ 本地步骤状态已更新:', sortedSteps.length, '个步骤')
         }
+        
+        // 更新并行组状态
+        setParallelGroups(safeGroups)
+        console.log('✅ 本地并行组状态已更新:', safeGroups.length, '个组')
+        
+        // 7. 关闭对话框并显示成功消息
+        setParallelGroupManagerVisible(false)
+        console.log('🎉 并行组保存完成!')
+        message.success(`并行组配置已保存，共 ${safeGroups.length} 个组，步骤关联已同步`)
+        
+        // 8. 可选：刷新数据确保一致性
+        setTimeout(async () => {
+          try {
+            const refreshedGroups = await apiService.getParallelGroups(pipeline.id)
+            setParallelGroups(refreshedGroups)
+            console.log('🔄 并行组数据已刷新')
+          } catch (error) {
+            console.warn('⚠️ 刷新并行组数据失败:', error)
+          }
+        }, 1000)
+        
+      } catch (error: any) {
+        console.error('❌ 保存流水线失败:', error)
+        message.error('保存流水线失败: ' + (error?.message || '未知错误'))
+        throw error
       }
 
-      // 更新本地并行组状态
-      setParallelGroups(groups)
-      setParallelGroupManagerVisible(false)
-      console.log('✅ 并行组及步骤关联保存成功')
-      message.success('并行组配置已保存，步骤关联已同步')
-
-    } catch (error) {
+    } catch (error: any) {
       console.error('❌ 并行组保存失败:', error)
-      message.error('并行组保存失败，请重试')
+      message.error('并行组保存失败: ' + (error?.message || '未知错误'))
     }
   }
 
@@ -1039,7 +1106,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
             parameters: stepParams,
             order: index + 1, // 重新排序，确保顺序正确
             is_active: true,
-            git_credential: isAtomicStep(step) ? step.git_credential : null
+            git_credential: isAtomicStep(step) ? step.git_credential : null,
+            // 🔥 关键修复：保留并行组关联
+            parallel_group: isPipelineStep(step) ? (step.parallel_group || '') : ''
             // 注意：不再传递独立的ansible字段，因为它们已经保存在parameters中
           }
         })

@@ -60,6 +60,56 @@ const ParallelGroupManager: React.FC<ParallelGroupManagerProps> = ({
     editingGroup: editingGroup?.id || null
   })
 
+  // 数据同步验证方法
+  const validateDataSync = () => {
+    console.log('🔍 验证数据同步状态...')
+    
+    const issues: string[] = []
+    
+    // 检查每个并行组的步骤配置
+    safeParallelGroups.forEach(group => {
+      const groupId = group.id
+      const groupSteps = group.steps || []
+      
+      // 检查组中配置的步骤是否实际存在
+      groupSteps.forEach(stepId => {
+        const step = safeAvailableSteps.find(s => s.id === stepId)
+        if (!step) {
+          issues.push(`并行组 ${groupId} 中的步骤 ${stepId} 不存在`)
+        } else if (step.parallel_group !== groupId) {
+          issues.push(`步骤 ${stepId} 的parallel_group字段(${step.parallel_group})与所属组(${groupId})不匹配`)
+        }
+      })
+    })
+    
+    // 检查有parallel_group字段的步骤是否都在对应的并行组中
+    safeAvailableSteps.forEach(step => {
+      if (step.parallel_group) {
+        const group = safeParallelGroups.find(g => g.id === step.parallel_group)
+        if (!group) {
+          issues.push(`步骤 ${step.id} 引用的并行组 ${step.parallel_group} 不存在`)
+        } else if (!group.steps || !group.steps.includes(step.id)) {
+          issues.push(`步骤 ${step.id} 未在其所属并行组 ${step.parallel_group} 的steps数组中`)
+        }
+      }
+    })
+    
+    if (issues.length > 0) {
+      console.warn('⚠️ 发现数据同步问题:', issues)
+    } else {
+      console.log('✅ 数据同步验证通过')
+    }
+    
+    return issues
+  }
+
+  // 在组件挂载时验证数据
+  React.useEffect(() => {
+    if (visible && safeParallelGroups.length > 0 && safeAvailableSteps.length > 0) {
+      validateDataSync()
+    }
+  }, [visible, safeParallelGroups, safeAvailableSteps])
+
   // 创建新并行组
   const handleCreateGroup = () => {
     setEditingGroup(null)
@@ -78,13 +128,19 @@ const ParallelGroupManager: React.FC<ParallelGroupManagerProps> = ({
     // 动态获取属于该组的步骤
     const groupSteps = getStepsForGroup(group.id)
     
-    // 设置表单值，使用动态获取的步骤
+    console.log('📝 编辑并行组:', group.id, '包含步骤:', groupSteps)
+    console.log('📋 组配置的步骤:', group.steps)
+    console.log('📋 从字段获取的步骤:', groupSteps)
+    
+    // 设置表单值，优先使用组配置的步骤，如果为空则使用动态获取的步骤
+    const stepsToUse = (group.steps && group.steps.length > 0) ? group.steps : groupSteps
+    
     form.setFieldsValue({
       ...group,
-      steps: groupSteps // 使用动态获取的步骤ID数组
+      steps: stepsToUse
     })
     
-    console.log('📝 编辑并行组:', group.id, '包含步骤:', groupSteps)
+    console.log('📝 最终使用的步骤:', stepsToUse)
     setFormVisible(true)
   }
 
@@ -172,11 +228,34 @@ const ParallelGroupManager: React.FC<ParallelGroupManagerProps> = ({
 
   // 根据步骤的parallel_group字段动态获取属于该组的步骤
   const getStepsForGroup = (groupId: string) => {
-    if (!Array.isArray(safeAvailableSteps) || safeAvailableSteps.length === 0) return []
+    console.log('🔍 获取并行组步骤:', groupId, '可用步骤:', safeAvailableSteps.length)
     
-    return safeAvailableSteps
+    if (!Array.isArray(safeAvailableSteps) || safeAvailableSteps.length === 0) {
+      console.warn('⚠️ availableSteps 不是数组或为空')
+      return []
+    }
+    
+    // 方法1: 从步骤的parallel_group字段获取（主要数据源）
+    const stepsFromField = safeAvailableSteps
       .filter(step => step.parallel_group === groupId)
       .map(step => step.id)
+    
+    console.log('📋 从步骤字段获取:', stepsFromField)
+    
+    // 方法2: 从并行组的steps数组获取（备选数据源）
+    let stepsFromGroup: number[] = []
+    const group = safeParallelGroups.find(g => g.id === groupId)
+    if (group && Array.isArray(group.steps)) {
+      stepsFromGroup = group.steps
+    }
+    
+    console.log('📋 从并行组配置获取:', stepsFromGroup)
+    
+    // 优先使用步骤字段的数据，如果为空则使用并行组配置的数据
+    const result = stepsFromField.length > 0 ? stepsFromField : stepsFromGroup
+    
+    console.log('✅ 最终结果:', result)
+    return result
   }
 
   return (
@@ -381,7 +460,14 @@ const ParallelGroupManager: React.FC<ParallelGroupManagerProps> = ({
             >
               {Array.isArray(safeAvailableSteps) && safeAvailableSteps.length > 0 ? (
                 safeAvailableSteps
-                  .filter(step => !step.parallel_group || step.parallel_group === editingGroup?.id)
+                  .filter(step => {
+                    // 如果正在编辑现有组，显示该组的步骤以及未分配的步骤
+                    if (editingGroup) {
+                      return !step.parallel_group || step.parallel_group === editingGroup.id
+                    }
+                    // 如果创建新组，只显示未分配的步骤
+                    return !step.parallel_group
+                  })
                   .map(step => (
                     <Option key={step.id} value={step.id} label={`${step.step_type || 'unknown'} - ${step.name || 'unnamed'}`}>
                       <Space>

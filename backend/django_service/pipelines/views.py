@@ -921,10 +921,13 @@ class ParallelGroupViewSet(viewsets.ModelViewSet):
             pipeline_id = group_data['pipeline']
             step_ids = self.request.data.get('steps', [])
             
+            # 将 group_id 转换为字符串，因为 parallel_group 字段是 CharField
+            group_id_str = str(group_id)
+            
             # 清除该组的现有关联
             PipelineStep.objects.filter(
                 pipeline_id=pipeline_id,
-                parallel_group=group_id
+                parallel_group=group_id_str
             ).update(parallel_group='')
             
             # 设置新的关联
@@ -932,7 +935,7 @@ class ParallelGroupViewSet(viewsets.ModelViewSet):
                 PipelineStep.objects.filter(
                     id__in=step_ids,
                     pipeline_id=pipeline_id
-                ).update(parallel_group=group_id)
+                ).update(parallel_group=group_id_str)
                 
         except Exception as e:
             # 记录错误但不影响主要操作
@@ -943,9 +946,11 @@ class ParallelGroupViewSet(viewsets.ModelViewSet):
         instance = self.get_object()
         
         # 清除相关步骤的并行组关联
+        # 将 instance.id 转换为字符串，因为 parallel_group 字段是 CharField
+        group_id_str = str(instance.id)
         PipelineStep.objects.filter(
             pipeline=instance.pipeline,
-            parallel_group=instance.id
+            parallel_group=group_id_str
         ).update(parallel_group='')
         
         return super().destroy(request, *args, **kwargs)

@@ -182,6 +182,8 @@ class PipelineSerializer(serializers.ModelSerializer):
                     'order': step_data.get('order', 0),
                     'status': 'pending',  # 默认状态
                     'ansible_parameters': step_data.get('parameters', {}),
+                    # 关键修复：处理并行组字段
+                    'parallel_group': step_data.get('parallel_group', ''),
                 }
                 
                 # 处理Ansible相关字段
@@ -202,9 +204,13 @@ class PipelineSerializer(serializers.ModelSerializer):
                     # Git凭据存储在parameters中
                     pipeline_step_data['ansible_parameters']['git_credential_id'] = step_data['git_credential']
                 
+                # 调试日志：显示并行组字段
+                if step_data.get('parallel_group'):
+                    print(f"🔗 步骤 '{step_data.get('name')}' 分配到并行组: {step_data.get('parallel_group')}")
+                
                 print(f"Creating PipelineStep with data: {pipeline_step_data}")
                 created_step = PipelineStep.objects.create(**pipeline_step_data)
-                print(f"Successfully created PipelineStep: {created_step.id} - {created_step.name}")
+                print(f"Successfully created PipelineStep: {created_step.id} - {created_step.name} - parallel_group: {created_step.parallel_group}")
                 
             except Exception as e:
                 print(f"Error creating pipeline steps: {e}")
@@ -270,7 +276,13 @@ class PipelineToolMappingSerializer(serializers.ModelSerializer):
 
 class ParallelGroupSerializer(serializers.ModelSerializer):
     """并行组序列化器"""
-    steps = serializers.SerializerMethodField()
+    steps = serializers.ListField(
+        child=serializers.IntegerField(),
+        required=False,
+        allow_empty=True,
+        write_only=False,
+        help_text="步骤ID列表"
+    )
     
     class Meta:
         model = ParallelGroup
@@ -280,11 +292,93 @@ class ParallelGroupSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ['created_at', 'updated_at']
     
-    def get_steps(self, obj):
-        """获取属于该并行组的步骤ID列表"""
-        # 查找 parallel_group 字段等于该组ID的步骤
-        steps = obj.pipeline.steps.filter(parallel_group=obj.id)
-        return [step.id for step in steps]
+    def to_representation(self, instance):
+        """自定义序列化输出，包含关联的步骤"""
+        data = super().to_representation(instance)
+        
+        # 获取属于该并行组的步骤ID列表
+        group_id_str = str(instance.id)
+        steps = instance.pipeline.steps.filter(parallel_group=group_id_str)
+        data['steps'] = [step.id for step in steps]
+        
+        return data
+    
+    def create(self, validated_data):
+        """创建并行组并处理步骤关联"""
+        # 提取steps数据
+        steps_data = validated_data.pop('steps', [])
+        
+        # 创建并行组（不包含steps字段）
+        parallel_group = super().create(validated_data)
+        
+        # 处理步骤关联
+        if steps_data:
+            self._update_step_associations(parallel_group, steps_data)
+        
+        return parallel_group
+    
+    def update(self, instance, validated_data):
+        """更新并行组并处理步骤关联"""
+        # 提取steps数据
+        steps_data = validated_data.pop('steps', None)
+        
+        # 更新并行组基本信息
+        parallel_group = super().update(instance, validated_data)
+        
+        # 如果提供了steps数据，更新步骤关联
+        if steps_data is not None:
+            self._update_step_associations(parallel_group, steps_data)
+        
+        return parallel_group
+        
+        # 如果提供了steps数据，更新步骤关联
+        if steps_data is not None:
+            self._update_step_associations(parallel_group, steps_data)
+        
+        return parallel_group
+    
+    def _update_step_associations(self, parallel_group, steps_data):
+        """更新步骤与并行组的关联"""
+        from .models import PipelineStep
+        
+        # 确保并行组有有效的ID
+        if not parallel_group.id:
+            print(f"❌ 并行组没有有效的ID，无法关联步骤")
+            return
+        
+        # 将 parallel_group.id 转换为字符串，因为 parallel_group 字段是 CharField
+        group_id_str = str(parallel_group.id)
+        
+        print(f"🔗 更新并行组 {parallel_group.id} 的步骤关联: {steps_data}")
+        
+        # 1. 清除该并行组的所有现有关联
+        cleared_count = PipelineStep.objects.filter(
+            pipeline=parallel_group.pipeline,
+            parallel_group=group_id_str
+        ).update(parallel_group='')
+        
+        print(f"✅ 已清除并行组 {parallel_group.id} 的 {cleared_count} 个现有关联")
+        
+        # 2. 设置新的关联
+        if steps_data:
+            updated_count = PipelineStep.objects.filter(
+                pipeline=parallel_group.pipeline,
+                id__in=steps_data
+            ).update(parallel_group=group_id_str)
+            
+            print(f"✅ 已将 {updated_count} 个步骤关联到并行组 {parallel_group.id}")
+            
+            # 验证更新结果
+            associated_steps = PipelineStep.objects.filter(
+                pipeline=parallel_group.pipeline,
+                parallel_group=group_id_str
+            )
+            
+            print(f"🔍 验证: 并行组 {parallel_group.id} 现在包含 {associated_steps.count()} 个步骤")
+            for step in associated_steps:
+                print(f"  - 步骤 {step.name} (ID: {step.id})")
+        else:
+            print(f"📝 并行组 {parallel_group.id} 没有分配任何步骤")
 
 
 class ApprovalRequestSerializer(serializers.ModelSerializer):

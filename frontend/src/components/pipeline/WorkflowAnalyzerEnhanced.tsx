@@ -22,7 +22,8 @@ import {
   Empty,
   Select,
   DatePicker,
-  Tooltip
+  Tooltip,
+  Badge
 } from 'antd'
 import {
   FundOutlined,
@@ -143,7 +144,25 @@ const WorkflowAnalyzerEnhanced: React.FC<WorkflowAnalyzerProps> = ({
   // 本地分析
   const localAnalysis = useMemo(() => {
     const totalSteps = steps.length
-    const parallelSteps = steps.filter(s => s.parallel_group_id).length
+    
+    // 计算并行组信息
+    const parallelGroupsInfo = parallelGroups.map(group => {
+      const groupSteps = steps.filter(step => step.parallel_group === group.id)
+      return {
+        id: group.id,
+        name: group.name,
+        stepCount: groupSteps.length,
+        steps: groupSteps.map(step => ({
+          id: step.id,
+          name: step.name,
+          step_type: step.step_type
+        }))
+      }
+    }).filter(group => group.stepCount > 0) // 只显示有步骤的并行组
+
+    // 计算总并行步骤数
+    const parallelSteps = parallelGroupsInfo.reduce((total, group) => total + group.stepCount, 0)
+    
     const conditionalSteps = steps.filter(s => s.condition && s.condition.type !== 'always').length
     const approvalSteps = steps.filter(s => s.requires_approval).length
     
@@ -189,7 +208,8 @@ const WorkflowAnalyzerEnhanced: React.FC<WorkflowAnalyzerProps> = ({
       approvalSteps,
       complexityScore: Math.min(complexityScore, 100),
       estimatedDuration,
-      parallelGroups: parallelGroups.length
+      parallelGroups: parallelGroups.length,
+      parallelGroupsInfo // 新增：详细的并行组信息
     }
   }, [steps, parallelGroups])
 
@@ -379,38 +399,118 @@ const WorkflowAnalyzerEnhanced: React.FC<WorkflowAnalyzerProps> = ({
           <Row gutter={16} style={{ marginBottom: 24 }}>
             <Col span={12}>
               <Card title="复杂度评分" size="small">
-                <Progress
-                  type="circle"
-                  percent={localAnalysis.complexityScore}
-                  strokeColor={getComplexityColor(localAnalysis.complexityScore)}
-                  format={(percent) => `${percent}/100`}
-                />
-                <div style={{ marginTop: 16 }}>
-                  <Text type="secondary">
-                    {localAnalysis.complexityScore < 30 && '简单'}
-                    {localAnalysis.complexityScore >= 30 && localAnalysis.complexityScore < 60 && '中等'}
-                    {localAnalysis.complexityScore >= 60 && '复杂'}
-                    的工作流配置
-                  </Text>
+                <div style={{ textAlign: 'center' }}>
+                  <Progress
+                    type="dashboard"
+                    percent={localAnalysis.complexityScore}
+                    format={(percent) => `${percent}分`}
+                    strokeColor={{
+                      '0%': '#108ee9',
+                      '100%': localAnalysis.complexityScore > 70 ? '#ff4d4f' : '#87d068',
+                    }}
+                  />
+                  <div style={{ marginTop: 8 }}>
+                    <Text type="secondary">
+                      {localAnalysis.complexityScore < 30 && '简单'}
+                      {localAnalysis.complexityScore >= 30 && localAnalysis.complexityScore < 70 && '中等'}
+                      {localAnalysis.complexityScore >= 70 && '复杂'}
+                    </Text>
+                  </div>
                 </div>
               </Card>
             </Col>
             <Col span={12}>
-              <Card title="预估执行时间" size="small">
-                <Progress
-                  type="circle"
-                  percent={Math.min((localAnalysis.estimatedDuration / 180) * 100, 100)}
-                  status={getDurationStatus(localAnalysis.estimatedDuration)}
-                  format={() => `${localAnalysis.estimatedDuration}分钟`}
-                />
-                <div style={{ marginTop: 16 }}>
-                  <Text type="secondary">
-                    基于步骤类型和并行配置的预估
-                  </Text>
+              <Card title="预计执行时间" size="small">
+                <div style={{ textAlign: 'center' }}>
+                  <Statistic
+                    value={localAnalysis.estimatedDuration}
+                    suffix="分钟"
+                    precision={1}
+                    valueStyle={{ fontSize: '24px' }}
+                  />
+                  <div style={{ marginTop: 8 }}>
+                    <Text type="secondary">
+                      约 {Math.ceil(localAnalysis.estimatedDuration / 60)} 小时
+                    </Text>
+                  </div>
                 </div>
               </Card>
             </Col>
           </Row>
+
+          {/* 并行组详细信息 */}
+          {localAnalysis.parallelGroupsInfo && localAnalysis.parallelGroupsInfo.length > 0 && (
+            <Row gutter={16} style={{ marginBottom: 24 }}>
+              <Col span={24}>
+                <Card title={
+                  <Space>
+                    <ShareAltOutlined />
+                    <span>并行组详情</span>
+                    <Tag color="blue">{localAnalysis.parallelGroupsInfo.length} 个并行组</Tag>
+                    <Tag color="green">{localAnalysis.parallelSteps} 个并行步骤</Tag>
+                  </Space>
+                } size="small">
+                  <Row gutter={[16, 16]}>
+                    {localAnalysis.parallelGroupsInfo.map((group, index) => (
+                      <Col span={8} key={group.id}>
+                        <Card 
+                          size="small"
+                          style={{ 
+                            border: '1px solid #d9d9d9',
+                            borderRadius: '6px',
+                            height: '100%'
+                          }}
+                          bodyStyle={{ padding: '12px' }}
+                        >
+                          <Space direction="vertical" style={{ width: '100%' }} size="small">
+                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                              <Text strong style={{ fontSize: '14px' }}>{group.name}</Text>
+                              <Tag color="processing">{group.stepCount} 步骤</Tag>
+                            </div>
+                            <Divider style={{ margin: '8px 0' }} />
+                            <div style={{ maxHeight: '120px', overflowY: 'auto' }}>
+                              {group.steps.map((step, stepIndex) => (
+                                <div key={step.id} style={{ 
+                                  display: 'flex', 
+                                  alignItems: 'center', 
+                                  marginBottom: stepIndex < group.steps.length - 1 ? '4px' : '0',
+                                  fontSize: '12px'
+                                }}>
+                                  <Badge 
+                                    count={stepIndex + 1} 
+                                    size="small" 
+                                    style={{ backgroundColor: '#52c41a', marginRight: '8px' }}
+                                  />
+                                  <div style={{ flex: 1, minWidth: 0 }}>
+                                    <div style={{ 
+                                      fontWeight: 500, 
+                                      overflow: 'hidden', 
+                                      textOverflow: 'ellipsis',
+                                      whiteSpace: 'nowrap'
+                                    }}>
+                                      {step.name}
+                                    </div>
+                                    <Text type="secondary" style={{ fontSize: '11px' }}>
+                                      {step.step_type}
+                                    </Text>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </Space>
+                        </Card>
+                      </Col>
+                    ))}
+                  </Row>
+                  <div style={{ marginTop: '16px', textAlign: 'center' }}>
+                    <Text type="secondary" style={{ fontSize: '12px' }}>
+                      💡 这些步骤将并行执行，可以显著提高流水线效率
+                    </Text>
+                  </div>
+                </Card>
+              </Col>
+            </Row>
+          )}
 
           <Alert
             message="分析说明"
@@ -510,7 +610,7 @@ const WorkflowAnalyzerEnhanced: React.FC<WorkflowAnalyzerProps> = ({
                           {step.condition && step.condition.type !== 'always' && (
                             <Tag color="orange">条件执行</Tag>
                           )}
-                          {step.parallel_group_id && (
+                          {(step.parallel_group || step.parallel_group_id) && (
                             <Tag color="green">并行执行</Tag>
                           )}
                           {step.requires_approval && (
