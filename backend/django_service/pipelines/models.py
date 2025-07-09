@@ -96,6 +96,18 @@ class PipelineStep(models.Model):
         ('notify', 'Notification'),
         ('custom', 'Custom Step'),
         ('script', 'Script Execution'),
+        # Docker 步骤类型
+        ('docker_build', 'Docker Build'),
+        ('docker_run', 'Docker Run'),
+        ('docker_push', 'Docker Push'),
+        ('docker_pull', 'Docker Pull'),
+        # Kubernetes 步骤类型
+        ('k8s_deploy', 'Kubernetes Deploy'),
+        ('k8s_scale', 'Kubernetes Scale'),
+        ('k8s_delete', 'Kubernetes Delete'),
+        ('k8s_wait', 'Kubernetes Wait'),
+        ('k8s_exec', 'Kubernetes Exec'),
+        ('k8s_logs', 'Kubernetes Logs'),
     ]
     
     pipeline = models.ForeignKey(Pipeline, on_delete=models.CASCADE, related_name='steps')
@@ -144,6 +156,54 @@ class PipelineStep(models.Model):
     ansible_parameters = models.JSONField(
         default=dict,
         help_text="Additional parameters for Ansible execution"
+    )
+    
+    # Docker 配置 - 新增字段
+    docker_image = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Docker image name for docker step types"
+    )
+    docker_tag = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Docker image tag"
+    )
+    docker_registry = models.ForeignKey(
+        'docker_integration.DockerRegistry',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pipeline_steps',
+        help_text="Docker registry for push/pull operations"
+    )
+    docker_config = models.JSONField(
+        default=dict,
+        help_text="Docker-specific configuration (dockerfile path, build args, etc.)"
+    )
+    
+    # Kubernetes 配置 - 新增字段
+    k8s_cluster = models.ForeignKey(
+        'kubernetes_integration.KubernetesCluster',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='pipeline_steps',
+        help_text="Kubernetes cluster for k8s step types"
+    )
+    k8s_namespace = models.CharField(
+        max_length=100,
+        blank=True,
+        help_text="Kubernetes namespace"
+    )
+    k8s_resource_name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Kubernetes resource name (deployment, service, etc.)"
+    )
+    k8s_config = models.JSONField(
+        default=dict,
+        help_text="Kubernetes-specific configuration (deployment spec, wait conditions, etc.)"
     )
     
     # Step execution order

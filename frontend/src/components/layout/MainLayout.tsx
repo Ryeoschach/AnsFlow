@@ -13,7 +13,8 @@ import {
   MenuUnfoldOutlined,
   FolderOutlined,
   BarChartOutlined,
-  ApiOutlined
+  ApiOutlined,
+  ContainerOutlined
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth'
@@ -85,6 +86,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       key: '/ansible',
       icon: <ApiOutlined />,
       label: 'Ansible',
+    },
+    {
+      key: '/docker',
+      icon: <ContainerOutlined />,
+      label: 'Docker',
     },
     {
       key: '/settings',

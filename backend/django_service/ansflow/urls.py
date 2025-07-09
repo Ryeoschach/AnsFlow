@@ -44,6 +44,8 @@ urlpatterns = [
     path('api/v1/cicd/', include('cicd_integrations.urls')),
     path('api/v1/analytics/', include('analytics.urls')),
     path('api/v1/ansible/', include('ansible_integration.urls')),
+    path('api/v1/docker/', include('docker_integration.urls')),
+    path('api/v1/kubernetes/', include('kubernetes_integration.urls')),
     
     # API Documentation
     path('api/schema/', include([

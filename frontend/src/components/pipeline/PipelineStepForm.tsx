@@ -11,8 +11,10 @@ import {
   Typography 
 } from 'antd'
 import { QuestionCircleOutlined } from '@ant-design/icons'
-import { PipelineStep, AtomicStep, GitCredential } from '../../types'
+import { PipelineStep, AtomicStep, GitCredential, DockerRegistry, KubernetesCluster, KubernetesNamespace } from '../../types'
 import ParameterDocumentation from '../ParameterDocumentation'
+import DockerStepConfig from './DockerStepConfig'
+import KubernetesStepConfig from './KubernetesStepConfig'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -28,12 +30,17 @@ interface PipelineStepFormProps {
   ansiblePlaybooks: any[]
   ansibleInventories: any[]
   ansibleCredentials: any[]
+  dockerRegistries: DockerRegistry[]
+  k8sClusters: KubernetesCluster[]
+  k8sNamespaces: KubernetesNamespace[]
   stepTypes: Array<{ value: string; label: string; description: string }>
   onClose: () => void
   onSubmit: () => void
   onStepTypeChange: (value: string) => void
   onToggleParameterDoc: () => void
   onParameterSelect: (paramKey: string, paramValue: any) => void
+  onCreateDockerRegistry?: () => void
+  onCreateK8sCluster?: () => void
 }
 
 const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
@@ -46,12 +53,17 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
   ansiblePlaybooks,
   ansibleInventories,
   ansibleCredentials,
+  dockerRegistries,
+  k8sClusters,
+  k8sNamespaces,
   stepTypes,
   onClose,
   onSubmit,
   onStepTypeChange,
   onToggleParameterDoc,
-  onParameterSelect
+  onParameterSelect,
+  onCreateDockerRegistry,
+  onCreateK8sCluster
 }) => {
   return (
     <Drawer
@@ -420,6 +432,25 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
               </Select>
             </Form.Item>
           </>
+        )}
+
+        {/* Docker 步骤配置 - 仅在 Docker 步骤显示 */}
+        {(selectedStepType?.startsWith('docker_')) && (
+          <DockerStepConfig 
+            stepType={selectedStepType}
+            dockerRegistries={dockerRegistries}
+            onCreateRegistry={onCreateDockerRegistry}
+          />
+        )}
+
+        {/* Kubernetes 步骤配置 - 仅在 Kubernetes 步骤显示 */}
+        {(selectedStepType?.startsWith('k8s_')) && (
+          <KubernetesStepConfig 
+            stepType={selectedStepType}
+            k8sClusters={k8sClusters}
+            k8sNamespaces={k8sNamespaces}
+            onCreateCluster={onCreateK8sCluster}
+          />
         )}
         
         <Form.Item

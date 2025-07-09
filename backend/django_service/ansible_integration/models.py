@@ -35,6 +35,13 @@ class AnsibleInventory(models.Model):
         ('yaml', 'YAML格式'),
     ]
     
+    SOURCE_CHOICES = [
+        ('manual', '手动输入'),
+        ('file', '文件上传'),
+        ('git', 'Git仓库'),
+        ('dynamic', '动态Inventory'),
+    ]
+    
     name = models.CharField(max_length=100, verbose_name='清单名称')
     description = models.TextField(blank=True, verbose_name='描述')
     content = models.TextField(verbose_name='清单内容')
@@ -44,6 +51,20 @@ class AnsibleInventory(models.Model):
         default='ini',
         verbose_name='格式类型'
     )
+    source_type = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default='manual',
+        verbose_name='来源类型'
+    )
+    file_path = models.CharField(max_length=500, blank=True, verbose_name='文件路径')
+    git_url = models.URLField(blank=True, verbose_name='Git仓库URL')
+    git_branch = models.CharField(max_length=100, default='main', verbose_name='Git分支')
+    dynamic_script = models.TextField(blank=True, verbose_name='动态脚本')
+    version = models.CharField(max_length=50, default='1.0', verbose_name='版本号')
+    checksum = models.CharField(max_length=64, blank=True, verbose_name='文件校验和')
+    is_validated = models.BooleanField(default=False, verbose_name='是否已验证')
+    validation_message = models.TextField(blank=True, verbose_name='验证信息')
     created_by = models.ForeignKey(
         User, 
         on_delete=models.CASCADE,
@@ -71,7 +92,16 @@ class AnsiblePlaybook(models.Model):
         ('security', '安全'),
         ('networking', '网络'),
         ('system', '系统'),
+        ('container', '容器部署'),
+        ('cloud', '云服务'),
         ('other', '其他'),
+    ]
+    
+    SOURCE_CHOICES = [
+        ('manual', '手动创建'),
+        ('file', '文件上传'),
+        ('git', 'Git仓库'),
+        ('template', '模板克隆'),
     ]
     
     name = models.CharField(max_length=100, verbose_name='Playbook名称')
@@ -85,7 +115,38 @@ class AnsiblePlaybook(models.Model):
         default='other',
         verbose_name='分类'
     )
+    source_type = models.CharField(
+        max_length=20,
+        choices=SOURCE_CHOICES,
+        default='manual',
+        verbose_name='来源类型'
+    )
+    file_path = models.CharField(max_length=500, blank=True, verbose_name='文件路径')
+    git_url = models.URLField(blank=True, verbose_name='Git仓库URL')
+    git_branch = models.CharField(max_length=100, default='main', verbose_name='Git分支')
+    git_path = models.CharField(max_length=500, blank=True, verbose_name='Git中的路径')
+    
+    # 版本和验证
+    checksum = models.CharField(max_length=64, blank=True, verbose_name='内容校验和')
+    is_validated = models.BooleanField(default=False, verbose_name='是否已验证')
+    validation_message = models.TextField(blank=True, verbose_name='验证信息')
+    syntax_check_passed = models.BooleanField(default=False, verbose_name='语法检查通过')
+    
+    # 配置参数
     parameters = models.JSONField(default=dict, verbose_name='可配置参数')
+    required_vars = models.JSONField(default=list, verbose_name='必需变量')
+    default_vars = models.JSONField(default=dict, verbose_name='默认变量')
+    
+    # 依赖和需求
+    ansible_version = models.CharField(max_length=20, blank=True, verbose_name='Ansible版本要求')
+    required_collections = models.JSONField(default=list, verbose_name='需要的Collection')
+    required_roles = models.JSONField(default=list, verbose_name='需要的Role')
+    
+    # 执行统计
+    execution_count = models.IntegerField(default=0, verbose_name='执行次数')
+    success_count = models.IntegerField(default=0, verbose_name='成功次数')
+    last_executed = models.DateTimeField(null=True, blank=True, verbose_name='最后执行时间')
+    
     created_by = models.ForeignKey(
         User, 
         on_delete=models.CASCADE,
@@ -281,3 +342,190 @@ class AnsibleExecution(models.Model):
         self.status = 'cancelled'
         self.completed_at = timezone.now()
         self.save(update_fields=['status', 'completed_at'])
+
+
+class AnsibleInventoryVersion(models.Model):
+    """Ansible主机清单版本历史"""
+    inventory = models.ForeignKey(
+        AnsibleInventory,
+        on_delete=models.CASCADE,
+        related_name='versions',
+        verbose_name='主机清单'
+    )
+    version = models.CharField(max_length=50, verbose_name='版本号')
+    content = models.TextField(verbose_name='内容快照')
+    checksum = models.CharField(max_length=64, verbose_name='内容校验和')
+    changelog = models.TextField(blank=True, verbose_name='变更说明')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='创建者'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'ansible_inventory_version'
+        verbose_name = 'Inventory版本'
+        verbose_name_plural = 'Inventory版本历史'
+        ordering = ['-created_at']
+        unique_together = ['inventory', 'version']
+
+    def __str__(self):
+        return f"{self.inventory.name} v{self.version}"
+
+
+class AnsiblePlaybookVersion(models.Model):
+    """Ansible Playbook版本历史"""
+    playbook = models.ForeignKey(
+        AnsiblePlaybook,
+        on_delete=models.CASCADE,
+        related_name='versions',
+        verbose_name='Playbook'
+    )
+    version = models.CharField(max_length=50, verbose_name='版本号')
+    content = models.TextField(verbose_name='内容快照')
+    checksum = models.CharField(max_length=64, verbose_name='内容校验和')
+    changelog = models.TextField(blank=True, verbose_name='变更说明')
+    is_release = models.BooleanField(default=False, verbose_name='是否为发布版本')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='创建者'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'ansible_playbook_version'
+        verbose_name = 'Playbook版本'
+        verbose_name_plural = 'Playbook版本历史'
+        ordering = ['-created_at']
+        unique_together = ['playbook', 'version']
+
+    def __str__(self):
+        return f"{self.playbook.name} v{self.version}"
+
+
+class AnsibleHost(models.Model):
+    """Ansible主机管理"""
+    STATUS_CHOICES = [
+        ('active', '活跃'),
+        ('inactive', '非活跃'),
+        ('failed', '连接失败'),
+        ('unknown', '未知'),
+    ]
+
+    hostname = models.CharField(max_length=255, verbose_name='主机名')
+    ip_address = models.GenericIPAddressField(verbose_name='IP地址')
+    port = models.IntegerField(default=22, verbose_name='SSH端口')
+    username = models.CharField(max_length=100, verbose_name='用户名')
+    
+    # 主机组和标签
+    groups = models.ManyToManyField(
+        'AnsibleHostGroup',
+        through='AnsibleHostGroupMembership',
+        verbose_name='主机组'
+    )
+    tags = models.JSONField(default=dict, verbose_name='主机标签')
+    
+    # 连接配置
+    connection_type = models.CharField(
+        max_length=20,
+        default='ssh',
+        verbose_name='连接类型'
+    )
+    become_method = models.CharField(
+        max_length=20,
+        default='sudo',
+        blank=True,
+        verbose_name='提权方式'
+    )
+    
+    # 状态信息
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='unknown',
+        verbose_name='状态'
+    )
+    last_check = models.DateTimeField(null=True, blank=True, verbose_name='最后检查时间')
+    check_message = models.TextField(blank=True, verbose_name='检查信息')
+    
+    # 系统信息
+    os_family = models.CharField(max_length=50, blank=True, verbose_name='操作系统家族')
+    os_distribution = models.CharField(max_length=100, blank=True, verbose_name='操作系统发行版')
+    os_version = models.CharField(max_length=50, blank=True, verbose_name='操作系统版本')
+    ansible_facts = models.JSONField(default=dict, verbose_name='Ansible Facts')
+    
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='创建者'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'ansible_host'
+        verbose_name = 'Ansible主机'
+        verbose_name_plural = 'Ansible主机'
+        ordering = ['hostname']
+        unique_together = ['hostname', 'ip_address']
+
+    def __str__(self):
+        return f"{self.hostname} ({self.ip_address})"
+
+
+class AnsibleHostGroup(models.Model):
+    """Ansible主机组"""
+    name = models.CharField(max_length=100, unique=True, verbose_name='组名')
+    description = models.TextField(blank=True, verbose_name='描述')
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='children',
+        verbose_name='父组'
+    )
+    variables = models.JSONField(default=dict, verbose_name='组变量')
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='创建者'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'ansible_host_group'
+        verbose_name = 'Ansible主机组'
+        verbose_name_plural = 'Ansible主机组'
+        ordering = ['name']
+
+    def __str__(self):
+        return self.name
+
+
+class AnsibleHostGroupMembership(models.Model):
+    """主机和主机组的关联关系"""
+    host = models.ForeignKey(
+        AnsibleHost,
+        on_delete=models.CASCADE,
+        verbose_name='主机'
+    )
+    group = models.ForeignKey(
+        AnsibleHostGroup,
+        on_delete=models.CASCADE,
+        verbose_name='主机组'
+    )
+    variables = models.JSONField(default=dict, verbose_name='主机变量')
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+
+    class Meta:
+        db_table = 'ansible_host_group_membership'
+        verbose_name = '主机组成员关系'
+        verbose_name_plural = '主机组成员关系'
+        unique_together = ['host', 'group']
+
+    def __str__(self):
+        return f"{self.host.hostname} -> {self.group.name}"

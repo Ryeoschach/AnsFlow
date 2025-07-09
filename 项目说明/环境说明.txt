@@ -1,0 +1,6 @@
+在修改代码时，请遵循以下规范：
+1、如果是后端代码，请在对应的项目如 ansflow/backend/django_service 或 ansflow/backend/fastapi_service 中编写代码。
+2、如果是前端代码，请在 ansflow/frontend 中编写代码。
+3、由于后端是基于uv来创建的虚拟环境下的开发，所以请考虑运行脚本在对应的后端项目中使用uv run python 命令
+4、所有脚本以及说明文档请分别放入对应的docs与scripts中
+5、前端或者后端服务都会自动加载并重启，不需要手动操作

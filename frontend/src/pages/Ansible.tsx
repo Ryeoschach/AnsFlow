@@ -29,7 +29,9 @@ import {
   EyeOutlined,
   PlaySquareOutlined,
   StopOutlined,
-  ReloadOutlined
+  ReloadOutlined,
+  HistoryOutlined,
+  UploadOutlined
 } from '@ant-design/icons';
 import { apiService } from '../services/api';
 import type { 
@@ -37,7 +39,12 @@ import type {
   AnsibleInventory, 
   AnsiblePlaybook, 
   AnsibleCredential, 
-  AnsibleExecutionList 
+  AnsibleExecutionList,
+  AnsibleHost,
+  AnsibleHostGroup,
+  AnsibleInventoryVersion,
+  AnsiblePlaybookVersion,
+  FileUploadResponse
 } from '../types';
 
 const { TabPane } = Tabs;
@@ -50,10 +57,15 @@ const Ansible: React.FC = () => {
   const [playbooks, setPlaybooks] = useState<AnsiblePlaybook[]>([]);
   const [credentials, setCredentials] = useState<AnsibleCredential[]>([]);
   const [executions, setExecutions] = useState<AnsibleExecutionList[]>([]);
+  const [hosts, setHosts] = useState<AnsibleHost[]>([]);
+  const [hostGroups, setHostGroups] = useState<AnsibleHostGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
-  const [modalType, setModalType] = useState<'inventory' | 'playbook' | 'credential' | 'execute'>('inventory');
+  const [modalType, setModalType] = useState<'inventory' | 'playbook' | 'credential' | 'execute' | 'host' | 'hostgroup' | 'upload' | 'versions'>('inventory');
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [versionsVisible, setVersionsVisible] = useState(false);
+  const [versionsList, setVersionsList] = useState<any[]>([]);
+  const [versionType, setVersionType] = useState<'inventory' | 'playbook'>('inventory');
   const [form] = Form.useForm();
 
   // 获取统计数据
@@ -118,18 +130,59 @@ const Ansible: React.FC = () => {
     }
   };
 
+  // 获取主机列表
+  const fetchHosts = async () => {
+    try {
+      setLoading(true);
+      const data = await apiService.getAnsibleHosts();
+      setHosts(data);
+    } catch (error) {
+      message.error('获取主机列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 获取主机组列表
+  const fetchHostGroups = async () => {
+    try {
+      setLoading(true);
+      const data = await apiService.getAnsibleHostGroups();
+      setHostGroups(data);
+    } catch (error) {
+      message.error('获取主机组列表失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
     fetchStats();
     fetchInventories();
     fetchPlaybooks();
     fetchCredentials();
     fetchExecutions();
+    fetchHosts();
+    fetchHostGroups();
   }, []);
 
   // 处理创建/编辑
   const handleModalOk = async () => {
     try {
       const values = await form.validateFields();
+      
+      // 处理文件上传
+      if (modalType === 'upload') {
+        const fileInput = document.querySelector('input[type="file"]') as HTMLInputElement;
+        const file = fileInput?.files?.[0];
+        if (!file) {
+          message.error('请选择文件');
+          return;
+        }
+        
+        await handleFileUpload(values.upload_type, file, values.name, values.description);
+        return;
+      }
       
       if (editingItem) {
         // 编辑
@@ -145,6 +198,14 @@ const Ansible: React.FC = () => {
           case 'credential':
             await apiService.updateAnsibleCredential(editingItem.id, values);
             fetchCredentials();
+            break;
+          case 'host':
+            await apiService.updateAnsibleHost(editingItem.id, values);
+            fetchHosts();
+            break;
+          case 'hostgroup':
+            await apiService.updateAnsibleHostGroup(editingItem.id, values);
+            fetchHostGroups();
             break;
         }
         message.success('更新成功');
@@ -163,6 +224,14 @@ const Ansible: React.FC = () => {
             await apiService.createAnsibleCredential(values);
             fetchCredentials();
             break;
+          case 'host':
+            await apiService.createAnsibleHost(values);
+            fetchHosts();
+            break;
+          case 'hostgroup':
+            await apiService.createAnsibleHostGroup(values);
+            fetchHostGroups();
+            break;
         }
         message.success('创建成功');
       }
@@ -176,7 +245,7 @@ const Ansible: React.FC = () => {
   };
 
   // 处理删除
-  const handleDelete = async (id: number, type: 'inventory' | 'playbook' | 'credential') => {
+  const handleDelete = async (id: number, type: 'inventory' | 'playbook' | 'credential' | 'host' | 'hostgroup') => {
     try {
       switch (type) {
         case 'inventory':
@@ -190,6 +259,14 @@ const Ansible: React.FC = () => {
         case 'credential':
           await apiService.deleteAnsibleCredential(id);
           fetchCredentials();
+          break;
+        case 'host':
+          await apiService.deleteAnsibleHost(id);
+          fetchHosts();
+          break;
+        case 'hostgroup':
+          await apiService.deleteAnsibleHostGroup(id);
+          fetchHostGroups();
           break;
       }
       message.success('删除成功');
@@ -223,6 +300,117 @@ const Ansible: React.FC = () => {
       fetchExecutions();
     } catch (error) {
       message.error('取消失败');
+    }
+  };
+
+  // 主机连通性检查
+  const handleCheckConnectivity = async (hostId: number) => {
+    try {
+      const result = await apiService.checkHostConnectivity(hostId);
+      if (result.success) {
+        message.success(`主机 ${result.hostname} 连接成功`);
+      } else {
+        message.error(`主机 ${result.hostname} 连接失败: ${result.message}`);
+      }
+      fetchHosts(); // 刷新主机状态
+    } catch (error) {
+      message.error('检查连通性失败');
+    }
+  };
+
+  // 收集主机Facts
+  const handleGatherFacts = async (hostId: number) => {
+    try {
+      const result = await apiService.gatherHostFacts(hostId);
+      if (result.success) {
+        message.success(`主机 ${result.hostname} Facts收集成功`);
+      } else {
+        message.error(`主机 ${result.hostname} Facts收集失败: ${result.message}`);
+      }
+      fetchHosts(); // 刷新主机信息
+    } catch (error) {
+      message.error('收集Facts失败');
+    }
+  };
+
+  // 文件上传处理
+  const handleFileUpload = async (uploadType: 'inventory' | 'playbook', file: File, name: string, description?: string) => {
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('name', name);
+      if (description) {
+        formData.append('description', description);
+      }
+
+      let result: FileUploadResponse;
+      if (uploadType === 'inventory') {
+        result = await apiService.uploadInventoryFile(formData);
+        fetchInventories();
+      } else {
+        result = await apiService.uploadPlaybookFile(formData);
+        fetchPlaybooks();
+      }
+      
+      message.success(result.message);
+      setModalVisible(false);
+      form.resetFields();
+    } catch (error) {
+      message.error('文件上传失败');
+    }
+  };
+
+  // 版本管理相关函数
+  const handleViewVersions = async (id: number, type: 'inventory' | 'playbook') => {
+    try {
+      setLoading(true);
+      let versions: any[];
+      if (type === 'inventory') {
+        versions = await apiService.getInventoryVersions(id);
+      } else {
+        versions = await apiService.getPlaybookVersions(id);
+      }
+      setVersionsList(versions);
+      setVersionType(type);
+      setEditingItem({ id });
+      setVersionsVisible(true);
+    } catch (error) {
+      message.error('获取版本历史失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCreateVersion = async (values: any) => {
+    try {
+      if (versionType === 'inventory') {
+        await apiService.createInventoryVersion(editingItem.id, values);
+        message.success('Inventory 版本创建成功');
+        fetchInventories();
+      } else {
+        await apiService.createPlaybookVersion(editingItem.id, values);
+        message.success('Playbook 版本创建成功');
+        fetchPlaybooks();
+      }
+      handleViewVersions(editingItem.id, versionType); // 刷新版本列表
+    } catch (error) {
+      message.error('版本创建失败');
+    }
+  };
+
+  const handleRestoreVersion = async (versionId: number) => {
+    try {
+      if (versionType === 'inventory') {
+        await apiService.restoreInventoryVersion(editingItem.id, versionId);
+        message.success('Inventory 版本恢复成功');
+        fetchInventories();
+      } else {
+        await apiService.restorePlaybookVersion(editingItem.id, versionId);
+        message.success('Playbook 版本恢复成功');
+        fetchPlaybooks();
+      }
+    } catch (error) {
+      message.error('版本恢复失败');
     }
   };
 
@@ -288,6 +476,13 @@ const Ansible: React.FC = () => {
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id, 'inventory')}>
             <Button size="small" icon={<DeleteOutlined />} danger />
           </Popconfirm>
+          <Tooltip title="版本管理">
+            <Button 
+              size="small" 
+              icon={<HistoryOutlined />}
+              onClick={() => handleViewVersions(record.id, 'inventory')}
+            />
+          </Tooltip>
         </Space>
       )
     }
@@ -365,6 +560,13 @@ const Ansible: React.FC = () => {
           <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id, 'playbook')}>
             <Button size="small" icon={<DeleteOutlined />} danger />
           </Popconfirm>
+          <Tooltip title="版本管理">
+            <Button 
+              size="small" 
+              icon={<HistoryOutlined />}
+              onClick={() => handleViewVersions(record.id, 'playbook')}
+            />
+          </Tooltip>
         </Space>
       )
     }
@@ -498,6 +700,152 @@ const Ansible: React.FC = () => {
     }
   ];
 
+  // 主机表格列
+  const hostColumns = [
+    {
+      title: '主机名',
+      dataIndex: 'hostname',
+      key: 'hostname',
+    },
+    {
+      title: 'IP地址',
+      dataIndex: 'ip_address',
+      key: 'ip_address',
+    },
+    {
+      title: '端口',
+      dataIndex: 'port',
+      key: 'port',
+      width: 80,
+    },
+    {
+      title: '用户名',
+      dataIndex: 'username',
+      key: 'username',
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => (
+        <Tag color={getStatusColor(status)}>
+          {status === 'active' ? '活跃' : status === 'failed' ? '失败' : status === 'inactive' ? '非活跃' : '未知'}
+        </Tag>
+      )
+    },
+    {
+      title: '系统信息',
+      dataIndex: 'os_distribution',
+      key: 'os_distribution',
+      render: (distribution: string, record: AnsibleHost) => 
+        distribution ? `${distribution} ${record.os_version}` : '未知'
+    },
+    {
+      title: '最后检查',
+      dataIndex: 'last_check',
+      key: 'last_check',
+      render: (date: string) => date ? new Date(date).toLocaleString() : '未检查'
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (record: AnsibleHost) => (
+        <Space>
+          <Tooltip title="检查连通性">
+            <Button 
+              size="small" 
+              icon={<ReloadOutlined />}
+              onClick={() => handleCheckConnectivity(record.id)}
+            />
+          </Tooltip>
+          <Tooltip title="收集Facts">
+            <Button 
+              size="small" 
+              icon={<EyeOutlined />}
+              onClick={() => handleGatherFacts(record.id)}
+            />
+          </Tooltip>
+          <Tooltip title="编辑">
+            <Button 
+              size="small" 
+              icon={<EditOutlined />}
+              onClick={() => {
+                setEditingItem(record);
+                setModalType('host');
+                setModalVisible(true);
+                form.setFieldsValue(record);
+              }}
+            />
+          </Tooltip>
+          <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id, 'host')}>
+            <Button size="small" icon={<DeleteOutlined />} danger />
+          </Popconfirm>
+        </Space>
+      )
+    }
+  ];
+
+  // 主机组表格列
+  const hostGroupColumns = [
+    {
+      title: '组名',
+      dataIndex: 'name',
+      key: 'name',
+    },
+    {
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
+      ellipsis: true,
+    },
+    {
+      title: '父组',
+      dataIndex: 'parent_name',
+      key: 'parent_name',
+      render: (parentName: string) => parentName || '-'
+    },
+    {
+      title: '主机数量',
+      dataIndex: 'hosts_count',
+      key: 'hosts_count',
+      render: (count: number) => <Tag>{count}</Tag>
+    },
+    {
+      title: '创建者',
+      dataIndex: 'created_by_username',
+      key: 'created_by_username',
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (date: string) => new Date(date).toLocaleString()
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (record: AnsibleHostGroup) => (
+        <Space>
+          <Tooltip title="编辑">
+            <Button 
+              size="small" 
+              icon={<EditOutlined />}
+              onClick={() => {
+                setEditingItem(record);
+                setModalType('hostgroup');
+                setModalVisible(true);
+                form.setFieldsValue(record);
+              }}
+            />
+          </Tooltip>
+          <Popconfirm title="确认删除？" onConfirm={() => handleDelete(record.id, 'hostgroup')}>
+            <Button size="small" icon={<DeleteOutlined />} danger />
+          </Popconfirm>
+        </Space>
+      )
+    }
+  ];
+
   return (
     <div style={{ padding: '24px' }}>
       <Title level={2}>Ansible 自动化部署</Title>
@@ -600,6 +948,18 @@ const Ansible: React.FC = () => {
                   新建 Playbook
                 </Button>
                 <Button 
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setModalType('upload');
+                    setModalVisible(true);
+                    setEditingItem(null);
+                    form.resetFields();
+                    form.setFieldValue('upload_type', 'playbook');
+                  }}
+                >
+                  上传文件
+                </Button>
+                <Button 
                   icon={<ReloadOutlined />}
                   onClick={fetchPlaybooks}
                 >
@@ -630,6 +990,18 @@ const Ansible: React.FC = () => {
                   }}
                 >
                   新建清单
+                </Button>
+                <Button 
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setModalType('upload');
+                    setModalVisible(true);
+                    setEditingItem(null);
+                    form.resetFields();
+                    form.setFieldValue('upload_type', 'inventory');
+                  }}
+                >
+                  上传文件
                 </Button>
                 <Button 
                   icon={<ReloadOutlined />}
@@ -679,6 +1051,70 @@ const Ansible: React.FC = () => {
               pagination={{ pageSize: 10 }}
             />
           </TabPane>
+
+          <TabPane tab="主机管理" key="hosts">
+            <div style={{ marginBottom: 16 }}>
+              <Space>
+                <Button 
+                  type="primary" 
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setModalType('host');
+                    setModalVisible(true);
+                    setEditingItem(null);
+                    form.resetFields();
+                  }}
+                >
+                  新建主机
+                </Button>
+                <Button 
+                  icon={<ReloadOutlined />}
+                  onClick={fetchHosts}
+                >
+                  刷新
+                </Button>
+              </Space>
+            </div>
+            <Table
+              columns={hostColumns}
+              dataSource={hosts}
+              rowKey="id"
+              loading={loading}
+              pagination={{ pageSize: 10 }}
+            />
+          </TabPane>
+
+          <TabPane tab="主机组管理" key="hostgroups">
+            <div style={{ marginBottom: 16 }}>
+              <Space>
+                <Button 
+                  type="primary" 
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setModalType('hostgroup');
+                    setModalVisible(true);
+                    setEditingItem(null);
+                    form.resetFields();
+                  }}
+                >
+                  新建主机组
+                </Button>
+                <Button 
+                  icon={<ReloadOutlined />}
+                  onClick={fetchHostGroups}
+                >
+                  刷新
+                </Button>
+              </Space>
+            </div>
+            <Table
+              columns={hostGroupColumns}
+              dataSource={hostGroups}
+              rowKey="id"
+              loading={loading}
+              pagination={{ pageSize: 10 }}
+            />
+          </TabPane>
         </Tabs>
       </Card>
 
@@ -688,6 +1124,9 @@ const Ansible: React.FC = () => {
           modalType === 'inventory' ? (editingItem ? '编辑清单' : '新建清单') :
           modalType === 'playbook' ? (editingItem ? '编辑 Playbook' : '新建 Playbook') :
           modalType === 'credential' ? (editingItem ? '编辑凭据' : '新建凭据') :
+          modalType === 'host' ? (editingItem ? '编辑主机' : '新建主机') :
+          modalType === 'hostgroup' ? (editingItem ? '编辑主机组' : '新建主机组') :
+          modalType === 'upload' ? '上传文件' :
           '执行 Playbook'
         }
         open={modalVisible}
@@ -781,6 +1220,90 @@ const Ansible: React.FC = () => {
             </>
           )}
 
+          {modalType === 'host' && (
+            <>
+              <Form.Item name="hostname" label="主机名" rules={[{ required: true }]}>
+                <Input placeholder="请输入主机名" />
+              </Form.Item>
+              <Form.Item name="ip_address" label="IP地址" rules={[{ required: true, type: 'string' }]}>
+                <Input placeholder="请输入IP地址" />
+              </Form.Item>
+              <Form.Item name="port" label="SSH端口" rules={[{ required: true }]}>
+                <Input type="number" placeholder="22" defaultValue={22} />
+              </Form.Item>
+              <Form.Item name="username" label="用户名" rules={[{ required: true }]}>
+                <Input placeholder="请输入用户名" />
+              </Form.Item>
+              <Form.Item name="connection_type" label="连接类型">
+                <Select placeholder="请选择连接类型" defaultValue="ssh">
+                  <Select.Option value="ssh">SSH</Select.Option>
+                  <Select.Option value="winrm">WinRM</Select.Option>
+                  <Select.Option value="local">本地</Select.Option>
+                </Select>
+              </Form.Item>
+              <Form.Item name="become_method" label="提权方式">
+                <Select placeholder="请选择提权方式" defaultValue="sudo">
+                  <Select.Option value="sudo">sudo</Select.Option>
+                  <Select.Option value="su">su</Select.Option>
+                  <Select.Option value="pbrun">pbrun</Select.Option>
+                  <Select.Option value="pfexec">pfexec</Select.Option>
+                </Select>
+              </Form.Item>
+              <Form.Item name="tags" label="主机标签">
+                <TextArea 
+                  rows={3} 
+                  placeholder="请输入JSON格式的标签（可选），如：{&quot;env&quot;: &quot;production&quot;, &quot;type&quot;: &quot;web&quot;}"
+                />
+              </Form.Item>
+            </>
+          )}
+
+          {modalType === 'hostgroup' && (
+            <>
+              <Form.Item name="name" label="组名" rules={[{ required: true }]}>
+                <Input placeholder="请输入主机组名称" />
+              </Form.Item>
+              <Form.Item name="description" label="描述">
+                <Input placeholder="请输入主机组描述" />
+              </Form.Item>
+              <Form.Item name="parent" label="父组">
+                <Select placeholder="请选择父组（可选）" allowClear>
+                  {hostGroups.map(group => (
+                    <Select.Option key={group.id} value={group.id}>
+                      {group.name}
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              <Form.Item name="variables" label="组变量">
+                <TextArea 
+                  rows={5} 
+                  placeholder="请输入JSON格式的组变量（可选），如：{&quot;env&quot;: &quot;production&quot;, &quot;db_host&quot;: &quot;localhost&quot;}"
+                />
+              </Form.Item>
+            </>
+          )}
+
+          {modalType === 'upload' && (
+            <>
+              <Form.Item name="upload_type" label="上传类型" rules={[{ required: true }]}>
+                <Select placeholder="请选择文件类型">
+                  <Select.Option value="inventory">Inventory 清单文件</Select.Option>
+                  <Select.Option value="playbook">Playbook 文件</Select.Option>
+                </Select>
+              </Form.Item>
+              <Form.Item name="name" label="名称" rules={[{ required: true }]}>
+                <Input placeholder="请输入名称" />
+              </Form.Item>
+              <Form.Item name="description" label="描述">
+                <Input placeholder="请输入描述" />
+              </Form.Item>
+              <Form.Item name="file" label="文件" rules={[{ required: true }]}>
+                <Input type="file" accept=".yml,.yaml,.ini,.txt" />
+              </Form.Item>
+            </>
+          )}
+
           {modalType === 'execute' && (
             <>
               <Form.Item name="playbook_id" label="Playbook" rules={[{ required: true }]}>
@@ -819,6 +1342,140 @@ const Ansible: React.FC = () => {
             </>
           )}
         </Form>
+      </Modal>
+
+      {/* 版本管理模态框 */}
+      <Modal
+        title={`${versionType === 'inventory' ? 'Inventory' : 'Playbook'} 版本历史`}
+        open={versionsVisible}
+        onCancel={() => {
+          setVersionsVisible(false);
+          setVersionsList([]);
+          setEditingItem(null);
+        }}
+        width={800}
+        footer={[
+          <Button key="close" onClick={() => setVersionsVisible(false)}>
+            关闭
+          </Button>,
+          <Button 
+            key="create" 
+            type="primary" 
+            onClick={() => {
+              Modal.confirm({
+                title: '创建新版本',
+                content: (
+                  <Form 
+                    onFinish={handleCreateVersion}
+                    layout="vertical"
+                  >
+                    <Form.Item name="version" label="版本号" rules={[{ required: true }]}>
+                      <Input placeholder="如: v1.1.0" />
+                    </Form.Item>
+                    <Form.Item name="changelog" label="变更说明">
+                      <TextArea rows={3} placeholder="请输入版本变更说明" />
+                    </Form.Item>
+                    {versionType === 'playbook' && (
+                      <Form.Item name="is_release" valuePropName="checked">
+                        <input type="checkbox" /> 标记为发布版本
+                      </Form.Item>
+                    )}
+                  </Form>
+                ),
+                onOk: () => {
+                  const form = document.querySelector('form');
+                  if (form) {
+                    const formData = new FormData(form);
+                    const values = Object.fromEntries(formData.entries());
+                    handleCreateVersion(values);
+                  }
+                }
+              });
+            }}
+          >
+            创建版本
+          </Button>
+        ]}
+      >
+        <Table
+          columns={[
+            {
+              title: '版本号',
+              dataIndex: 'version',
+              key: 'version',
+            },
+            {
+              title: '变更说明',
+              dataIndex: 'changelog',
+              key: 'changelog',
+              ellipsis: true,
+            },
+            {
+              title: '校验和',
+              dataIndex: 'checksum',
+              key: 'checksum',
+              width: 120,
+              render: (checksum: string) => checksum.substring(0, 8) + '...'
+            },
+            ...(versionType === 'playbook' ? [{
+              title: '发布版本',
+              dataIndex: 'is_release',
+              key: 'is_release',
+              render: (isRelease: boolean) => (
+                <Tag color={isRelease ? 'green' : 'default'}>
+                  {isRelease ? '是' : '否'}
+                </Tag>
+              )
+            }] : []),
+            {
+              title: '创建者',
+              dataIndex: 'created_by_username',
+              key: 'created_by_username',
+            },
+            {
+              title: '创建时间',
+              dataIndex: 'created_at',
+              key: 'created_at',
+              render: (date: string) => new Date(date).toLocaleString()
+            },
+            {
+              title: '操作',
+              key: 'actions',
+              render: (record: any) => (
+                <Space>
+                  <Popconfirm 
+                    title="确认恢复到此版本？" 
+                    onConfirm={() => handleRestoreVersion(record.id)}
+                  >
+                    <Button size="small" type="primary">
+                      恢复
+                    </Button>
+                  </Popconfirm>
+                  <Button 
+                    size="small"
+                    onClick={() => {
+                      Modal.info({
+                        title: '版本内容',
+                        content: (
+                          <pre style={{ maxHeight: '400px', overflow: 'auto' }}>
+                            {record.content}
+                          </pre>
+                        ),
+                        width: 800
+                      });
+                    }}
+                  >
+                    查看内容
+                  </Button>
+                </Space>
+              )
+            }
+          ]}
+          dataSource={versionsList}
+          rowKey="id"
+          loading={loading}
+          pagination={{ pageSize: 10 }}
+        />
       </Modal>
     </div>
   );

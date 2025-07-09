@@ -44,6 +44,9 @@ dependencies = [
     "daphne>=4.2.0",
     "django-celery-results>=2.6.0",
     "cryptography>=45.0.4",
+    "docker>=7.1.0",
+    # Kubernetes 集成
+    "kubernetes>=27.0.0",
 ]
 
 [project.optional-dependencies]

@@ -26,9 +26,13 @@ import {
   AuditOutlined,
   ApiOutlined,
   ToolOutlined,
-  GlobalOutlined
+  GlobalOutlined,
+  ClusterOutlined,
+  CloudUploadOutlined
 } from '@ant-design/icons'
 import GitCredentialManager from '../components/git/GitCredentialManager'
+import KubernetesSettings from '../components/kubernetes/KubernetesSettings'
+import DockerRegistrySettings from '../components/docker/DockerRegistrySettings'
 import { usePermissions, Permission } from '../hooks/usePermissions'
 import PermissionGuard from '../components/common/PermissionGuard'
 
@@ -246,6 +250,24 @@ const Settings: React.FC = () => {
     },
 
     // 集成类
+    {
+      key: 'docker-registries',
+      title: 'Docker 注册表',
+      description: 'Docker 镜像仓库配置管理',
+      icon: <CloudUploadOutlined />,
+      component: DockerRegistrySettings,
+      category: 'integration',
+      permission: Permission.INTEGRATION_VIEW
+    },
+    {
+      key: 'kubernetes-clusters',
+      title: 'Kubernetes 集群',
+      description: 'K8s 集群和命名空间管理',
+      icon: <ClusterOutlined />,
+      component: KubernetesSettings,
+      category: 'integration',
+      permission: Permission.INTEGRATION_VIEW
+    },
     {
       key: 'cloud-integration',
       title: '云服务集成',

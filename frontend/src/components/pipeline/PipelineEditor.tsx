@@ -204,6 +204,19 @@ const STEP_TYPES = [
   { value: 'security_scan', label: '安全扫描', description: '安全漏洞扫描' },
   { value: 'deploy', label: '部署', description: '部署到目标环境' },
   { value: 'ansible', label: 'Ansible自动化', description: '执行Ansible Playbook自动化任务' },
+  // Docker 步骤类型
+  { value: 'docker_build', label: 'Docker Build', description: '构建 Docker 镜像' },
+  { value: 'docker_run', label: 'Docker Run', description: '运行 Docker 容器' },
+  { value: 'docker_push', label: 'Docker Push', description: '推送镜像到注册表' },
+  { value: 'docker_pull', label: 'Docker Pull', description: '从注册表拉取镜像' },
+  // Kubernetes 步骤类型
+  { value: 'k8s_deploy', label: 'Kubernetes Deploy', description: '部署应用到 K8s 集群' },
+  { value: 'k8s_scale', label: 'Kubernetes Scale', description: '扩缩容 K8s 部署' },
+  { value: 'k8s_delete', label: 'Kubernetes Delete', description: '删除 K8s 资源' },
+  { value: 'k8s_wait', label: 'Kubernetes Wait', description: '等待 K8s 资源状态' },
+  { value: 'k8s_exec', label: 'Kubernetes Exec', description: '在 Pod 中执行命令' },
+  { value: 'k8s_logs', label: 'Kubernetes Logs', description: '获取 Pod 日志' },
+  // 其他步骤类型
   { value: 'approval', label: '手动审批', description: '需要人工审批才能继续执行' },
   { value: 'condition', label: '条件分支', description: '根据条件决定是否执行后续步骤' },
   { value: 'notify', label: '通知', description: '发送通知消息' },
@@ -236,6 +249,11 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   const [ansiblePlaybooks, setAnsiblePlaybooks] = useState<any[]>([])
   const [ansibleInventories, setAnsibleInventories] = useState<any[]>([])
   const [ansibleCredentials, setAnsibleCredentials] = useState<any[]>([])
+  
+  // 添加Docker和Kubernetes资源状态
+  const [dockerRegistries, setDockerRegistries] = useState<any[]>([])
+  const [k8sClusters, setK8sClusters] = useState<any[]>([])
+  const [k8sNamespaces, setK8sNamespaces] = useState<any[]>([])
   
   // 高级工作流功能状态
   const [parallelGroups, setParallelGroups] = useState<ParallelGroup[]>([])
@@ -324,6 +342,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
 
       // 获取Ansible资源
       fetchAnsibleResources()
+
+      // 获取Docker和Kubernetes资源
+      fetchDockerK8sResources()
     } else if (!visible) {
       // 关闭编辑器时清理状态
       setSteps([])
@@ -336,6 +357,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       setAnsiblePlaybooks([])
       setAnsibleInventories([])
       setAnsibleCredentials([])
+      setDockerRegistries([])
+      setK8sClusters([])
+      setK8sNamespaces([])
       // 清理高级工作流状态
       setParallelGroups([])
       setParallelGroupManagerVisible(false)
@@ -371,6 +395,36 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       setAnsibleCredentials(credentials)
     } catch (error) {
       console.error('Failed to fetch ansible resources:', error)
+    }
+  }
+
+  // 获取Docker和Kubernetes资源
+  const fetchDockerK8sResources = async () => {
+    try {
+      // 临时使用模拟数据，实际API需要后端提供
+      const mockRegistries = [
+        { id: 1, name: 'Docker Hub', url: 'https://registry-1.docker.io', username: '', description: '官方Docker Hub' },
+        { id: 2, name: '阿里云容器镜像', url: 'registry.cn-hangzhou.aliyuncs.com', username: '', description: '阿里云ACR' }
+      ]
+      const mockClusters = [
+        { id: 1, name: '开发集群', endpoint: 'https://dev-k8s.example.com', description: '开发环境K8s集群' },
+        { id: 2, name: '生产集群', endpoint: 'https://prod-k8s.example.com', description: '生产环境K8s集群' }
+      ]
+      const mockNamespaces = [
+        { id: 1, name: 'default', cluster_id: 1, description: '默认命名空间' },
+        { id: 2, name: 'development', cluster_id: 1, description: '开发命名空间' },
+        { id: 3, name: 'production', cluster_id: 2, description: '生产命名空间' }
+      ]
+      
+      setDockerRegistries(mockRegistries)
+      setK8sClusters(mockClusters)
+      setK8sNamespaces(mockNamespaces)
+    } catch (error) {
+      console.error('Failed to fetch docker/k8s resources:', error)
+      // 设置空数组作为兜底
+      setDockerRegistries([])
+      setK8sClusters([])
+      setK8sNamespaces([])
     }
   }
 
@@ -1522,6 +1576,9 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         ansiblePlaybooks={ansiblePlaybooks}
         ansibleInventories={ansibleInventories}
         ansibleCredentials={ansibleCredentials}
+        dockerRegistries={dockerRegistries}
+        k8sClusters={k8sClusters}
+        k8sNamespaces={k8sNamespaces}
         stepTypes={STEP_TYPES}
         onClose={() => setStepFormVisible(false)}
         onSubmit={handleStepSubmit}
@@ -1555,6 +1612,14 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
             })
             message.success(`已插入参数: ${paramKey}`)
           }
+        }}
+        onCreateDockerRegistry={() => {
+          message.info('正在跳转到Docker注册表管理页面...')
+          window.open('/settings?module=docker-registries', '_blank')
+        }}
+        onCreateK8sCluster={() => {
+          message.info('正在跳转到Kubernetes集群管理页面...')
+          window.open('/settings?module=k8s-clusters', '_blank')
         }}
       />
 

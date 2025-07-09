@@ -742,6 +742,437 @@
           }
         ]
       }
+    },
+    "docker_run": {
+      "name": "Docker Run",
+      "description": "运行 Docker 容器",
+      "icon": "docker",
+      "category": "containerization",
+      "parameters": [
+        {
+          "key": "docker_image",
+          "type": "text",
+          "label": "镜像名称",
+          "description": "要运行的 Docker 镜像",
+          "placeholder": "nginx:latest",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "container_name",
+          "type": "text",
+          "label": "容器名称",
+          "description": "容器的名称",
+          "placeholder": "my-container",
+          "required": false,
+          "priority": 2
+        },
+        {
+          "key": "ports",
+          "type": "text",
+          "label": "端口映射",
+          "description": "端口映射配置",
+          "placeholder": "8080:80",
+          "required": false,
+          "priority": 3
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的Docker运行步骤",
+        "examples": [
+          {
+            "input": {"docker_image": "nginx:latest", "ports": "8080:80"},
+            "output": "sh 'docker run -d -p 8080:80 nginx:latest'"
+          }
+        ]
+      }
+    },
+    "docker_push": {
+      "name": "Docker Push",
+      "description": "推送 Docker 镜像到注册表",
+      "icon": "docker",
+      "category": "containerization",
+      "parameters": [
+        {
+          "key": "docker_image",
+          "type": "text",
+          "label": "镜像名称",
+          "description": "要推送的镜像名称",
+          "placeholder": "registry.com/myapp:latest",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "docker_registry",
+          "type": "select",
+          "label": "Docker 注册表",
+          "description": "选择 Docker 注册表",
+          "required": false,
+          "priority": 2
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的Docker推送步骤",
+        "examples": [
+          {
+            "input": {"docker_image": "registry.com/myapp:latest"},
+            "output": "sh 'docker push registry.com/myapp:latest'"
+          }
+        ]
+      }
+    },
+    "docker_pull": {
+      "name": "Docker Pull",
+      "description": "从注册表拉取 Docker 镜像",
+      "icon": "docker",
+      "category": "containerization",
+      "parameters": [
+        {
+          "key": "docker_image",
+          "type": "text",
+          "label": "镜像名称",
+          "description": "要拉取的镜像名称",
+          "placeholder": "registry.com/myapp:latest",
+          "required": true,
+          "priority": 1
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的Docker拉取步骤",
+        "examples": [
+          {
+            "input": {"docker_image": "registry.com/myapp:latest"},
+            "output": "sh 'docker pull registry.com/myapp:latest'"
+          }
+        ]
+      }
+    },
+    "k8s_deploy": {
+      "name": "Kubernetes Deploy",
+      "description": "部署应用到 Kubernetes 集群",
+      "icon": "kubernetes",
+      "category": "orchestration",
+      "parameters": [
+        {
+          "key": "k8s_cluster",
+          "type": "select",
+          "label": "Kubernetes 集群",
+          "description": "选择 Kubernetes 集群",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "k8s_namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes 命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": true,
+          "priority": 2
+        },
+        {
+          "key": "k8s_resource_name",
+          "type": "text",
+          "label": "资源名称",
+          "description": "Kubernetes 资源名称",
+          "placeholder": "my-app-deployment",
+          "required": true,
+          "priority": 3
+        },
+        {
+          "key": "manifest_path",
+          "type": "text",
+          "label": "Manifest 文件路径",
+          "description": "Kubernetes YAML 文件的路径",
+          "placeholder": "k8s/deployment.yaml",
+          "required": false,
+          "priority": 4
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的kubectl apply步骤",
+        "examples": [
+          {
+            "input": {"manifest_path": "k8s/deployment.yaml", "k8s_namespace": "default"},
+            "output": "sh 'kubectl apply -f k8s/deployment.yaml -n default'"
+          }
+        ]
+      }
+    },
+    "k8s_scale": {
+      "name": "Kubernetes Scale",
+      "description": "扩缩容 Kubernetes 部署",
+      "icon": "kubernetes",
+      "category": "orchestration",
+      "parameters": [
+        {
+          "key": "k8s_cluster",
+          "type": "select",
+          "label": "Kubernetes 集群",
+          "description": "选择 Kubernetes 集群",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "k8s_namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes 命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": true,
+          "priority": 2
+        },
+        {
+          "key": "k8s_resource_name",
+          "type": "text",
+          "label": "Deployment 名称",
+          "description": "要扩缩容的 Deployment 名称",
+          "placeholder": "my-app-deployment",
+          "required": true,
+          "priority": 3
+        },
+        {
+          "key": "replicas",
+          "type": "number",
+          "label": "副本数量",
+          "description": "目标副本数量",
+          "placeholder": "3",
+          "required": true,
+          "priority": 4
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的kubectl scale步骤",
+        "examples": [
+          {
+            "input": {"k8s_resource_name": "my-app-deployment", "replicas": 3, "k8s_namespace": "default"},
+            "output": "sh 'kubectl scale deployment my-app-deployment --replicas=3 -n default'"
+          }
+        ]
+      }
+    },
+    "k8s_delete": {
+      "name": "Kubernetes Delete",
+      "description": "删除 Kubernetes 资源",
+      "icon": "kubernetes",
+      "category": "orchestration",
+      "parameters": [
+        {
+          "key": "k8s_cluster",
+          "type": "select",
+          "label": "Kubernetes 集群",
+          "description": "选择 Kubernetes 集群",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "k8s_namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes 命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": true,
+          "priority": 2
+        },
+        {
+          "key": "k8s_resource_name",
+          "type": "text",
+          "label": "资源名称",
+          "description": "要删除的资源名称",
+          "placeholder": "my-app-deployment",
+          "required": true,
+          "priority": 3
+        },
+        {
+          "key": "resource_type",
+          "type": "select",
+          "label": "资源类型",
+          "description": "Kubernetes 资源类型",
+          "options": [
+            {"value": "deployment", "label": "Deployment"},
+            {"value": "service", "label": "Service"},
+            {"value": "configmap", "label": "ConfigMap"},
+            {"value": "secret", "label": "Secret"}
+          ],
+          "required": true,
+          "priority": 4
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的kubectl delete步骤",
+        "examples": [
+          {
+            "input": {"resource_type": "deployment", "k8s_resource_name": "my-app-deployment", "k8s_namespace": "default"},
+            "output": "sh 'kubectl delete deployment my-app-deployment -n default'"
+          }
+        ]
+      }
+    },
+    "k8s_wait": {
+      "name": "Kubernetes Wait",
+      "description": "等待 Kubernetes 资源状态",
+      "icon": "kubernetes",
+      "category": "orchestration",
+      "parameters": [
+        {
+          "key": "k8s_cluster",
+          "type": "select",
+          "label": "Kubernetes 集群",
+          "description": "选择 Kubernetes 集群",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "k8s_namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes 命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": true,
+          "priority": 2
+        },
+        {
+          "key": "k8s_resource_name",
+          "type": "text",
+          "label": "资源名称",
+          "description": "要等待的资源名称",
+          "placeholder": "my-app-deployment",
+          "required": true,
+          "priority": 3
+        },
+        {
+          "key": "condition",
+          "type": "select",
+          "label": "等待条件",
+          "description": "等待的条件类型",
+          "options": [
+            {"value": "Available", "label": "Available"},
+            {"value": "Ready", "label": "Ready"},
+            {"value": "Complete", "label": "Complete"}
+          ],
+          "required": true,
+          "priority": 4
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的kubectl wait步骤",
+        "examples": [
+          {
+            "input": {"k8s_resource_name": "my-app-deployment", "condition": "Available", "k8s_namespace": "default"},
+            "output": "sh 'kubectl wait deployment my-app-deployment --for=condition=Available -n default'"
+          }
+        ]
+      }
+    },
+    "k8s_exec": {
+      "name": "Kubernetes Exec",
+      "description": "在 Pod 中执行命令",
+      "icon": "kubernetes",
+      "category": "orchestration",
+      "parameters": [
+        {
+          "key": "k8s_cluster",
+          "type": "select",
+          "label": "Kubernetes 集群",
+          "description": "选择 Kubernetes 集群",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "k8s_namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes 命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": true,
+          "priority": 2
+        },
+        {
+          "key": "k8s_resource_name",
+          "type": "text",
+          "label": "Pod 名称",
+          "description": "要执行命令的 Pod 名称",
+          "placeholder": "my-app-pod-12345",
+          "required": true,
+          "priority": 3
+        },
+        {
+          "key": "command",
+          "type": "text",
+          "label": "执行命令",
+          "description": "要在容器中执行的命令",
+          "placeholder": "/bin/bash -c 'echo hello'",
+          "required": true,
+          "priority": 4
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的kubectl exec步骤",
+        "examples": [
+          {
+            "input": {"k8s_resource_name": "my-app-pod-12345", "command": "echo hello", "k8s_namespace": "default"},
+            "output": "sh 'kubectl exec my-app-pod-12345 -n default -- echo hello'"
+          }
+        ]
+      }
+    },
+    "k8s_logs": {
+      "name": "Kubernetes Logs",
+      "description": "获取 Pod 日志",
+      "icon": "kubernetes",
+      "category": "orchestration",
+      "parameters": [
+        {
+          "key": "k8s_cluster",
+          "type": "select",
+          "label": "Kubernetes 集群",
+          "description": "选择 Kubernetes 集群",
+          "required": true,
+          "priority": 1
+        },
+        {
+          "key": "k8s_namespace",
+          "type": "text",
+          "label": "命名空间",
+          "description": "Kubernetes 命名空间",
+          "placeholder": "default",
+          "defaultValue": "default",
+          "required": true,
+          "priority": 2
+        },
+        {
+          "key": "k8s_resource_name",
+          "type": "text",
+          "label": "Pod 名称",
+          "description": "要获取日志的 Pod 名称",
+          "placeholder": "my-app-pod-12345",
+          "required": true,
+          "priority": 3
+        },
+        {
+          "key": "tail_lines",
+          "type": "number",
+          "label": "日志行数",
+          "description": "获取最近的日志行数",
+          "placeholder": "100",
+          "required": false,
+          "priority": 4
+        }
+      ],
+      "jenkinsConversion": {
+        "description": "转换为Jenkins Pipeline的kubectl logs步骤",
+        "examples": [
+          {
+            "input": {"k8s_resource_name": "my-app-pod-12345", "tail_lines": 100, "k8s_namespace": "default"},
+            "output": "sh 'kubectl logs my-app-pod-12345 --tail=100 -n default'"
+          }
+        ]
+      }
     }
   },
   "parameterTypes": {
@@ -810,6 +1241,16 @@
       "name": "自定义",
       "icon": "terminal",
       "color": "#595959"
+    },
+    "containerization": {
+      "name": "容器化",
+      "icon": "docker",
+      "color": "#2496ed"
+    },
+    "orchestration": {
+      "name": "编排",
+      "icon": "kubernetes",
+      "color": "#326ce5"
     }
   }
 }

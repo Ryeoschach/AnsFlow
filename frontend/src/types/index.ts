@@ -166,8 +166,10 @@ export interface PipelineStep {
   id: number
   name: string
   description?: string
-  status?: 'pending' | 'running' | 'success' | 'failed' | 'skipped'
-  step_type: string
+  status?: 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'cancelled'
+  step_type: 'fetch_code' | 'build' | 'test' | 'security_scan' | 'deploy' | 'ansible' | 'notify' | 'custom' | 'script' |
+             'docker_build' | 'docker_run' | 'docker_push' | 'docker_pull' |
+             'k8s_deploy' | 'k8s_scale' | 'k8s_delete' | 'k8s_wait' | 'k8s_exec' | 'k8s_logs'
   command?: string
   environment_vars?: Record<string, any>
   timeout_seconds?: number
@@ -197,6 +199,18 @@ export interface PipelineStep {
   ansible_credential?: number | null
   ansible_credential_name?: string
   ansible_parameters?: Record<string, any>
+  
+  // Docker 相关
+  docker_image?: string
+  docker_tag?: string
+  docker_registry?: number | null
+  docker_config?: DockerStepConfig
+  
+  // Kubernetes 相关
+  k8s_cluster?: number | null
+  k8s_namespace?: string
+  k8s_resource_name?: string
+  k8s_config?: KubernetesStepConfig
   
   // 执行结果
   output_log?: string
@@ -664,3 +678,73 @@ export interface ValidationResult {
   issues: ValidationIssue[]
   suggestions: string[]
 }
+
+// Docker/Kubernetes 相关类型
+export interface DockerRegistry {
+  id: number
+  name: string
+  url: string
+  username?: string
+  email?: string
+  is_default: boolean
+  is_active: boolean
+  auth_config?: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
+export interface KubernetesCluster {
+  id: number
+  name: string
+  description: string
+  api_server: string
+  auth_config: Record<string, any>
+  status: 'connected' | 'disconnected' | 'error'
+  is_default: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface KubernetesNamespace {
+  id: number
+  name: string
+  cluster: number
+  cluster_name?: string
+  status: 'active' | 'terminating'
+  labels?: Record<string, string>
+  created_at: string
+  updated_at: string
+}
+
+export interface DockerStepConfig {
+  dockerfile_path?: string
+  context_path?: string
+  build_args?: Record<string, string>
+  labels?: Record<string, string>
+  target_stage?: string
+  platform?: string
+  cache_from?: string[]
+  cache_to?: string[]
+  no_cache?: boolean
+  pull?: boolean
+  squash?: boolean
+}
+
+export interface KubernetesStepConfig {
+  manifest_path?: string
+  manifest_content?: string
+  deployment_name?: string
+  container_name?: string
+  command?: string[]
+  args?: string[]
+  replicas?: number
+  timeout?: number
+  wait_for_rollout?: boolean
+  rollback_on_failure?: boolean
+  dry_run?: boolean
+  force?: boolean
+}
+
+
+
+// 工作流验证相关类型

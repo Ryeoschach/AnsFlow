@@ -8,8 +8,22 @@ import {
   AnsibleInventory, AnsiblePlaybook, AnsibleCredential,
   ValidationResult, ExecutePlaybookRequest, ExecutePlaybookResponse,
   ExecutionLogsResponse, AnsibleStats, AnsibleExecutionList, AnsibleExecution,
+  AnsibleHost, AnsibleHostGroup, AnsibleHostGroupMembership,
+  AnsibleInventoryVersion, AnsiblePlaybookVersion,
+  FileUploadRequest, FileUploadResponse, HostConnectivityResult, HostFactsResult, BatchHostOperation,
   ConditionEvaluationResult, ApprovalConfig, ApprovalRequest, ParallelGroup
 } from '../types'
+
+// Docker types
+import {
+  DockerRegistry, DockerImage, DockerImageVersion, DockerContainer, 
+  DockerContainerStats, DockerCompose, DockerRegistryList, DockerImageList,
+  DockerContainerList, DockerComposeList, DockerApiResponse, DockerActionResponse,
+  DockerImageBuildRequest, DockerImagePushRequest, DockerContainerActionRequest,
+  DockerContainerLogsRequest, DockerContainerLogsResponse, DockerComposeActionRequest,
+  DockerImageVersionCreateRequest, DockerRegistryTestResponse, DockerResourceStats,
+  DockerRegistryFormData, DockerImageFormData, DockerContainerFormData, DockerComposeFormData
+} from '../types/docker'
 
 class ApiService {
   private api: AxiosInstance
@@ -942,6 +956,357 @@ class ApiService {
     const response = await this.api.post(`/pipelines/${pipelineId}/parallel-groups/validate/`, {
       groups
     })
+    return response.data
+  }
+
+  // Hosts Management
+  async getAnsibleHosts(params?: any): Promise<AnsibleHost[]> {
+    const response = await this.api.get('/ansible/hosts/', { params })
+    return response.data.results || response.data
+  }
+
+  async getAnsibleHost(id: number): Promise<AnsibleHost> {
+    const response = await this.api.get(`/ansible/hosts/${id}/`)
+    return response.data
+  }
+
+  async createAnsibleHost(data: Partial<AnsibleHost>): Promise<AnsibleHost> {
+    const response = await this.api.post('/ansible/hosts/', data)
+    return response.data
+  }
+
+  async updateAnsibleHost(id: number, data: Partial<AnsibleHost>): Promise<AnsibleHost> {
+    const response = await this.api.put(`/ansible/hosts/${id}/`, data)
+    return response.data
+  }
+
+  async deleteAnsibleHost(id: number): Promise<void> {
+    await this.api.delete(`/ansible/hosts/${id}/`)
+  }
+
+  async checkHostConnectivity(id: number): Promise<HostConnectivityResult> {
+    const response = await this.api.post(`/ansible/hosts/${id}/check_connectivity/`)
+    return response.data
+  }
+
+  async gatherHostFacts(id: number): Promise<HostFactsResult> {
+    const response = await this.api.post(`/ansible/hosts/${id}/gather_facts/`)
+    return response.data
+  }
+
+  async batchHostOperation(data: BatchHostOperation): Promise<any> {
+    const response = await this.api.post('/ansible/hosts/batch_operation/', data)
+    return response.data
+  }
+
+  // Host Groups Management
+  async getAnsibleHostGroups(params?: any): Promise<AnsibleHostGroup[]> {
+    const response = await this.api.get('/ansible/host-groups/', { params })
+    return response.data.results || response.data
+  }
+
+  async getAnsibleHostGroup(id: number): Promise<AnsibleHostGroup> {
+    const response = await this.api.get(`/ansible/host-groups/${id}/`)
+    return response.data
+  }
+
+  async createAnsibleHostGroup(data: Partial<AnsibleHostGroup>): Promise<AnsibleHostGroup> {
+    const response = await this.api.post('/ansible/host-groups/', data)
+    return response.data
+  }
+
+  async updateAnsibleHostGroup(id: number, data: Partial<AnsibleHostGroup>): Promise<AnsibleHostGroup> {
+    const response = await this.api.put(`/ansible/host-groups/${id}/`, data)
+    return response.data
+  }
+
+  async deleteAnsibleHostGroup(id: number): Promise<void> {
+    await this.api.delete(`/ansible/host-groups/${id}/`)
+  }
+
+  async addHostToGroup(groupId: number, hostId: number): Promise<void> {
+    await this.api.post(`/ansible/host-groups/${groupId}/add_host/`, { host_id: hostId })
+  }
+
+  async removeHostFromGroup(groupId: number, hostId: number): Promise<void> {
+    await this.api.post(`/ansible/host-groups/${groupId}/remove_host/`, { host_id: hostId })
+  }
+
+  // File Upload
+  async uploadInventoryFile(data: FormData): Promise<FileUploadResponse> {
+    const response = await this.api.post('/ansible/inventories/upload/', data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  }
+
+  async uploadPlaybookFile(data: FormData): Promise<FileUploadResponse> {
+    const response = await this.api.post('/ansible/playbooks/upload/', data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    })
+    return response.data
+  }
+
+  // Version Management
+  async getInventoryVersions(inventoryId: number): Promise<AnsibleInventoryVersion[]> {
+    const response = await this.api.get(`/ansible/inventories/${inventoryId}/versions/`)
+    return response.data.results || response.data
+  }
+
+  async createInventoryVersion(inventoryId: number, data: { version: string; changelog?: string }): Promise<AnsibleInventoryVersion> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/create_version/`, data)
+    return response.data
+  }
+
+  async restoreInventoryVersion(inventoryId: number, versionId: number): Promise<AnsibleInventory> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/restore_version/`, { version_id: versionId })
+    return response.data
+  }
+
+  async getPlaybookVersions(playbookId: number): Promise<AnsiblePlaybookVersion[]> {
+    const response = await this.api.get(`/ansible/playbooks/${playbookId}/versions/`)
+    return response.data.results || response.data
+  }
+
+  async createPlaybookVersion(playbookId: number, data: { version: string; changelog?: string; is_release?: boolean }): Promise<AnsiblePlaybookVersion> {
+    const response = await this.api.post(`/ansible/playbooks/${playbookId}/create_version/`, data)
+    return response.data
+  }
+
+  async restorePlaybookVersion(playbookId: number, versionId: number): Promise<AnsiblePlaybook> {
+    const response = await this.api.post(`/ansible/playbooks/${playbookId}/restore_version/`, { version_id: versionId })
+    return response.data
+  }
+
+  // Docker methods
+  
+  // Docker Registries
+  async getDockerRegistries(): Promise<DockerApiResponse<DockerRegistry>> {
+    const response = await this.api.get('/docker/registries/')
+    return response.data
+  }
+
+  async getDockerRegistry(id: number): Promise<DockerRegistry> {
+    const response = await this.api.get(`/docker/registries/${id}/`)
+    return response.data
+  }
+
+  async createDockerRegistry(data: DockerRegistryFormData): Promise<DockerRegistry> {
+    const response = await this.api.post('/docker/registries/', data)
+    return response.data
+  }
+
+  async updateDockerRegistry(id: number, data: Partial<DockerRegistryFormData>): Promise<DockerRegistry> {
+    const response = await this.api.put(`/docker/registries/${id}/`, data)
+    return response.data
+  }
+
+  async deleteDockerRegistry(id: number): Promise<void> {
+    await this.api.delete(`/docker/registries/${id}/`)
+  }
+
+  async testDockerRegistry(id: number): Promise<DockerRegistryTestResponse> {
+    const response = await this.api.post(`/docker/registries/${id}/test/`)
+    return response.data
+  }
+
+  // Docker Images
+  async getDockerImages(): Promise<DockerApiResponse<DockerImageList>> {
+    const response = await this.api.get('/docker/images/')
+    return response.data
+  }
+
+  async getDockerImage(id: number): Promise<DockerImage> {
+    const response = await this.api.get(`/docker/images/${id}/`)
+    return response.data
+  }
+
+  async createDockerImage(data: DockerImageFormData): Promise<DockerImage> {
+    const response = await this.api.post('/docker/images/', data)
+    return response.data
+  }
+
+  async updateDockerImage(id: number, data: Partial<DockerImageFormData>): Promise<DockerImage> {
+    const response = await this.api.put(`/docker/images/${id}/`, data)
+    return response.data
+  }
+
+  async deleteDockerImage(id: number): Promise<void> {
+    await this.api.delete(`/docker/images/${id}/`)
+  }
+
+  async buildDockerImage(id: number, data: DockerImageBuildRequest): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/images/${id}/build/`, data)
+    return response.data
+  }
+
+  async pushDockerImage(id: number, data: DockerImagePushRequest): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/images/${id}/push/`, data)
+    return response.data
+  }
+
+  async pullDockerImage(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/images/${id}/pull/`)
+    return response.data
+  }
+
+  async scanDockerImage(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/images/${id}/scan/`)
+    return response.data
+  }
+
+  // Docker Image Versions
+  async getDockerImageVersions(imageId: number): Promise<DockerImageVersion[]> {
+    const response = await this.api.get(`/docker/images/${imageId}/versions/`)
+    return response.data.results || response.data
+  }
+
+  async createDockerImageVersion(imageId: number, data: DockerImageVersionCreateRequest): Promise<DockerImageVersion> {
+    const response = await this.api.post(`/docker/images/${imageId}/versions/`, data)
+    return response.data
+  }
+
+  async deleteDockerImageVersion(imageId: number, versionId: number): Promise<void> {
+    await this.api.delete(`/docker/images/${imageId}/versions/${versionId}/`)
+  }
+
+  // Docker Containers
+  async getDockerContainers(): Promise<DockerApiResponse<DockerContainerList>> {
+    const response = await this.api.get('/docker/containers/')
+    return response.data
+  }
+
+  async getDockerContainer(id: number): Promise<DockerContainer> {
+    const response = await this.api.get(`/docker/containers/${id}/`)
+    return response.data
+  }
+
+  async createDockerContainer(data: DockerContainerFormData): Promise<DockerContainer> {
+    const response = await this.api.post('/docker/containers/', data)
+    return response.data
+  }
+
+  async updateDockerContainer(id: number, data: Partial<DockerContainerFormData>): Promise<DockerContainer> {
+    const response = await this.api.put(`/docker/containers/${id}/`, data)
+    return response.data
+  }
+
+  async deleteDockerContainer(id: number): Promise<void> {
+    await this.api.delete(`/docker/containers/${id}/`)
+  }
+
+  async startDockerContainer(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/containers/${id}/start/`)
+    return response.data
+  }
+
+  async stopDockerContainer(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/containers/${id}/stop/`)
+    return response.data
+  }
+
+  async restartDockerContainer(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/containers/${id}/restart/`)
+    return response.data
+  }
+
+  async pauseDockerContainer(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/containers/${id}/pause/`)
+    return response.data
+  }
+
+  async unpauseDockerContainer(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/containers/${id}/unpause/`)
+    return response.data
+  }
+
+  async getDockerContainerLogs(id: number, options: DockerContainerLogsRequest = {}): Promise<DockerContainerLogsResponse> {
+    const response = await this.api.post(`/docker/containers/${id}/logs/`, options)
+    return response.data
+  }
+
+  async getDockerContainerStats(id: number): Promise<DockerContainerStats> {
+    const response = await this.api.get(`/docker/containers/${id}/stats/`)
+    return response.data
+  }
+
+  async execDockerContainer(id: number, data: { command: string; workdir?: string }): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/containers/${id}/exec/`, data)
+    return response.data
+  }
+
+  // Docker Compose
+  async getDockerComposes(): Promise<DockerApiResponse<DockerComposeList>> {
+    const response = await this.api.get('/docker/compose/')
+    return response.data
+  }
+
+  async getDockerCompose(id: number): Promise<DockerCompose> {
+    const response = await this.api.get(`/docker/compose/${id}/`)
+    return response.data
+  }
+
+  async createDockerCompose(data: DockerComposeFormData): Promise<DockerCompose> {
+    const response = await this.api.post('/docker/compose/', data)
+    return response.data
+  }
+
+  async updateDockerCompose(id: number, data: Partial<DockerComposeFormData>): Promise<DockerCompose> {
+    const response = await this.api.put(`/docker/compose/${id}/`, data)
+    return response.data
+  }
+
+  async deleteDockerCompose(id: number): Promise<void> {
+    await this.api.delete(`/docker/compose/${id}/`)
+  }
+
+  async startDockerCompose(id: number, options: { services?: string[]; build?: boolean } = {}): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/compose/${id}/up/`, options)
+    return response.data
+  }
+
+  async stopDockerCompose(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/compose/${id}/down/`)
+    return response.data
+  }
+
+  async restartDockerCompose(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/compose/${id}/restart/`)
+    return response.data
+  }
+
+  async buildDockerCompose(id: number, options: { services?: string[]; no_cache?: boolean } = {}): Promise<DockerActionResponse> {
+    const response = await this.api.post(`/docker/compose/${id}/build/`, options)
+    return response.data
+  }
+
+  async getDockerComposeStatus(id: number): Promise<DockerActionResponse> {
+    const response = await this.api.get(`/docker/compose/${id}/status/`)
+    return response.data
+  }
+
+  async getDockerComposeLogs(id: number, options: { services?: string[]; follow?: boolean; tail?: number } = {}): Promise<DockerContainerLogsResponse> {
+    const response = await this.api.post(`/docker/compose/${id}/logs/`, options)
+    return response.data
+  }
+
+  // Docker System Info
+  async getDockerSystemInfo(): Promise<any> {
+    const response = await this.api.get('/docker/system/info/')
+    return response.data
+  }
+
+  async getDockerSystemStats(): Promise<DockerResourceStats> {
+    const response = await this.api.get('/docker/system/stats/')
+    return response.data
+  }
+
+  async cleanupDockerSystem(options: { containers?: boolean; images?: boolean; volumes?: boolean; networks?: boolean } = {}): Promise<DockerActionResponse> {
+    const response = await this.api.post('/docker/system/cleanup/', options)
     return response.data
   }
 }

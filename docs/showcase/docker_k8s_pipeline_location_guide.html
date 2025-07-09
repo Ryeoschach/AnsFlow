@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Docker/K8s 流水线步骤添加指南</title>
+    <style>
+        body {
+            font-family: 'Microsoft YaHei', sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+        }
+        .header {
+            background: linear-gradient(135deg, #2196F3 0%, #1976D2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 2.5em;
+            font-weight: 300;
+        }
+        .header p {
+            margin: 10px 0 0 0;
+            opacity: 0.9;
+            font-size: 1.1em;
+        }
+        .content {
+            padding: 40px;
+        }
+        .step-flow {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin: 30px 0;
+        }
+        .step {
+            background: #f8f9fa;
+            border-left: 5px solid #2196F3;
+            padding: 20px;
+            border-radius: 10px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+        .step:hover {
+            transform: translateX(10px);
+            box-shadow: 0 10px 20px rgba(0,0,0,0.1);
+        }
+        .step-number {
+            position: absolute;
+            left: -15px;
+            top: 20px;
+            width: 30px;
+            height: 30px;
+            background: #2196F3;
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+        }
+        .step h3 {
+            margin: 0 0 10px 20px;
+            color: #333;
+            font-size: 1.3em;
+        }
+        .step p {
+            margin: 0 0 0 20px;
+            color: #666;
+        }
+        .step-types {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 30px 0;
+        }
+        .step-type-card {
+            background: white;
+            border: 2px solid #e0e0e0;
+            border-radius: 15px;
+            padding: 25px;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+        .step-type-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, #ff6b6b, #4ecdc4);
+        }
+        .step-type-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 15px 30px rgba(0,0,0,0.1);
+            border-color: #2196F3;
+        }
+        .step-type-card h4 {
+            margin: 10px 0;
+            color: #333;
+            font-size: 1.2em;
+        }
+        .step-type-card .type-code {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 5px 10px;
+            border-radius: 5px;
+            font-family: 'Monaco', 'Courier New', monospace;
+            font-size: 0.9em;
+            display: inline-block;
+            margin-bottom: 10px;
+        }
+        .step-type-card .description {
+            color: #666;
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+        .docker-section {
+            background: linear-gradient(135deg, #0db7ed 0%, #2188ff 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin: 30px 0;
+        }
+        .k8s-section {
+            background: linear-gradient(135deg, #326ce5 0%, #1a73e8 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 15px;
+            margin: 30px 0;
+        }
+        .section-title {
+            font-size: 1.8em;
+            margin: 0 0 20px 0;
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .icon {
+            width: 40px;
+            height: 40px;
+            background: rgba(255,255,255,0.2);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.5em;
+        }
+        .ui-demo {
+            background: #f5f5f5;
+            border-radius: 15px;
+            padding: 30px;
+            margin: 30px 0;
+            border: 2px dashed #ddd;
+        }
+        .ui-demo h3 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 1.5em;
+        }
+        .mock-editor {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        }
+        .mock-toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        .mock-button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s ease;
+        }
+        .mock-button.primary {
+            background: #1976d2;
+            color: white;
+        }
+        .mock-button.primary:hover {
+            background: #1565c0;
+            transform: translateY(-2px);
+        }
+        .mock-button.secondary {
+            background: #f5f5f5;
+            color: #333;
+            border: 1px solid #ddd;
+        }
+        .mock-dropdown {
+            position: relative;
+            display: inline-block;
+        }
+        .mock-select {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            background: white;
+            cursor: pointer;
+            min-width: 200px;
+        }
+        .mock-options {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+            z-index: 10;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .mock-option {
+            padding: 12px 16px;
+            cursor: pointer;
+            border-bottom: 1px solid #f0f0f0;
+            transition: background 0.2s ease;
+        }
+        .mock-option:hover {
+            background: #f0f8ff;
+        }
+        .mock-option.docker {
+            background: linear-gradient(90deg, #e3f2fd, #f3e5f5);
+            border-left: 4px solid #0db7ed;
+        }
+        .mock-option.k8s {
+            background: linear-gradient(90deg, #e8f5e8, #f0f4ff);
+            border-left: 4px solid #326ce5;
+        }
+        .option-label {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 4px;
+        }
+        .option-desc {
+            font-size: 12px;
+            color: #666;
+            line-height: 1.4;
+        }
+        .highlight {
+            background: #fff3cd;
+            border: 1px solid #ffeaa7;
+            padding: 20px;
+            border-radius: 10px;
+            margin: 20px 0;
+        }
+        .highlight h4 {
+            margin: 0 0 10px 0;
+            color: #856404;
+        }
+        .highlight p {
+            margin: 0;
+            color: #856404;
+        }
+        @media (max-width: 768px) {
+            .content {
+                padding: 20px;
+            }
+            .step-types {
+                grid-template-columns: 1fr;
+            }
+            .mock-toolbar {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 Docker/K8s 流水线步骤添加指南</h1>
+            <p>详细展示在 AnsFlow 流水线编辑器中添加 Docker 和 Kubernetes 步骤的具体操作位置</p>
+        </div>
+
+        <div class="content">
+            <div class="highlight">
+                <h4>📍 核心问题解答</h4>
+                <p><strong>流水线关于添加 Docker 或者 K8s 的位置具体在哪里？</strong></p>
+                <p>答案：在 <strong>流水线编辑器</strong> 页面中，点击 <strong>"添加步骤"</strong> 按钮，在弹出的表单中的 <strong>"步骤类型"</strong> 下拉选择框中选择对应的 Docker/K8s 步骤类型。</p>
+            </div>
+
+            <h2>🛠️ 详细操作流程</h2>
+            <div class="step-flow">
+                <div class="step">
+                    <div class="step-number">1</div>
+                    <h3>进入流水线编辑器</h3>
+                    <p>在流水线管理页面中，点击要编辑的流水线项目，或创建新的流水线，进入流水线编辑器界面。</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">2</div>
+                    <h3>点击"添加步骤"按钮</h3>
+                    <p>在流水线编辑器的工具栏中找到蓝色的"添加步骤"按钮（带有 + 图标），点击该按钮。</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">3</div>
+                    <h3>选择步骤类型</h3>
+                    <p>在弹出的"新建步骤"表单中，点击"步骤类型"下拉框，从列表中选择需要的 Docker 或 Kubernetes 步骤类型。</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">4</div>
+                    <h3>配置步骤参数</h3>
+                    <p>系统会根据选择的步骤类型自动显示对应的配置表单，填写相关参数。</p>
+                </div>
+                
+                <div class="step">
+                    <div class="step-number">5</div>
+                    <h3>完成添加</h3>
+                    <p>点击"添加步骤"按钮完成步骤的添加，新步骤将出现在流水线步骤列表中。</p>
+                </div>
+            </div>
+
+            <div class="ui-demo">
+                <h3>🖥️ 用户界面演示</h3>
+                <div class="mock-editor">
+                    <div class="mock-toolbar">
+                        <button class="mock-button secondary">保存</button>
+                        <button class="mock-button secondary">预览 Pipeline</button>
+                        <button class="mock-button primary" onclick="toggleDropdown()">+ 添加步骤</button>
+                        <button class="mock-button secondary">并行组管理</button>
+                        <button class="mock-button secondary">更多...</button>
+                    </div>
+                    
+                    <div class="mock-dropdown">
+                        <div class="mock-select" onclick="toggleDropdown()">
+                            选择步骤类型 ▼
+                        </div>
+                        <div class="mock-options" id="mockOptions" style="display: none;">
+                            <div class="mock-option">
+                                <div class="option-label">代码拉取</div>
+                                <div class="option-desc">从版本控制系统拉取代码</div>
+                            </div>
+                            <div class="mock-option">
+                                <div class="option-label">构建</div>
+                                <div class="option-desc">编译和打包代码</div>
+                            </div>
+                            <div class="mock-option">
+                                <div class="option-label">测试</div>
+                                <div class="option-desc">运行自动化测试</div>
+                            </div>
+                            <div class="mock-option docker">
+                                <div class="option-label">🐳 Docker Build</div>
+                                <div class="option-desc">构建 Docker 镜像</div>
+                            </div>
+                            <div class="mock-option docker">
+                                <div class="option-label">🐳 Docker Run</div>
+                                <div class="option-desc">运行 Docker 容器</div>
+                            </div>
+                            <div class="mock-option docker">
+                                <div class="option-label">🐳 Docker Push</div>
+                                <div class="option-desc">推送镜像到注册表</div>
+                            </div>
+                            <div class="mock-option docker">
+                                <div class="option-label">🐳 Docker Pull</div>
+                                <div class="option-desc">从注册表拉取镜像</div>
+                            </div>
+                            <div class="mock-option k8s">
+                                <div class="option-label">☸️ Kubernetes Deploy</div>
+                                <div class="option-desc">部署应用到 K8s 集群</div>
+                            </div>
+                            <div class="mock-option k8s">
+                                <div class="option-label">☸️ Kubernetes Scale</div>
+                                <div class="option-desc">扩缩容 K8s 部署</div>
+                            </div>
+                            <div class="mock-option k8s">
+                                <div class="option-label">☸️ Kubernetes Delete</div>
+                                <div class="option-desc">删除 K8s 资源</div>
+                            </div>
+                            <div class="mock-option k8s">
+                                <div class="option-label">☸️ Kubernetes Wait</div>
+                                <div class="option-desc">等待 K8s 资源状态</div>
+                            </div>
+                            <div class="mock-option k8s">
+                                <div class="option-label">☸️ Kubernetes Exec</div>
+                                <div class="option-desc">在 Pod 中执行命令</div>
+                            </div>
+                            <div class="mock-option k8s">
+                                <div class="option-label">☸️ Kubernetes Logs</div>
+                                <div class="option-desc">获取 Pod 日志</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="docker-section">
+                <div class="section-title">
+                    <div class="icon">🐳</div>
+                    Docker 步骤类型
+                </div>
+                <div class="step-types">
+                    <div class="step-type-card">
+                        <div class="type-code">docker_build</div>
+                        <h4>Docker Build</h4>
+                        <div class="description">构建 Docker 镜像，支持 Dockerfile 路径、构建上下文、构建参数等配置。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">docker_run</div>
+                        <h4>Docker Run</h4>
+                        <div class="description">运行 Docker 容器，支持端口映射、卷挂载、环境变量等配置。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">docker_push</div>
+                        <h4>Docker Push</h4>
+                        <div class="description">推送镜像到 Docker 注册表，支持多注册表和认证配置。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">docker_pull</div>
+                        <h4>Docker Pull</h4>
+                        <div class="description">从 Docker 注册表拉取镜像，支持私有注册表认证。</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="k8s-section">
+                <div class="section-title">
+                    <div class="icon">☸️</div>
+                    Kubernetes 步骤类型
+                </div>
+                <div class="step-types">
+                    <div class="step-type-card">
+                        <div class="type-code">k8s_deploy</div>
+                        <h4>Kubernetes Deploy</h4>
+                        <div class="description">部署应用到 Kubernetes 集群，支持 YAML 清单文件和内联配置。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">k8s_scale</div>
+                        <h4>Kubernetes Scale</h4>
+                        <div class="description">扩缩容 Kubernetes Deployment，动态调整副本数量。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">k8s_delete</div>
+                        <h4>Kubernetes Delete</h4>
+                        <div class="description">删除 Kubernetes 资源，支持多种资源类型和删除策略。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">k8s_wait</div>
+                        <h4>Kubernetes Wait</h4>
+                        <div class="description">等待 Kubernetes 资源达到指定状态，支持多种等待条件。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">k8s_exec</div>
+                        <h4>Kubernetes Exec</h4>
+                        <div class="description">在 Pod 中执行命令，支持容器选择和交互式执行。</div>
+                    </div>
+                    <div class="step-type-card">
+                        <div class="type-code">k8s_logs</div>
+                        <h4>Kubernetes Logs</h4>
+                        <div class="description">获取 Pod 日志，支持实时跟踪和历史日志查询。</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="highlight">
+                <h4>💡 使用提示</h4>
+                <p>1. 选择 Docker 相关步骤类型时，系统会自动显示 Docker 配置表单<br>
+                2. 选择 Kubernetes 相关步骤类型时，系统会自动显示 K8s 配置表单<br>
+                3. 点击"查看参数说明"可获取详细的参数文档和示例<br>
+                4. 可通过管理页面预先配置 Docker 注册表和 K8s 集群信息</p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        function toggleDropdown() {
+            const options = document.getElementById('mockOptions');
+            const isVisible = options.style.display === 'block';
+            options.style.display = isVisible ? 'none' : 'block';
+        }
+
+        // 点击其他地方关闭下拉框
+        document.addEventListener('click', function(event) {
+            const dropdown = document.querySelector('.mock-dropdown');
+            if (!dropdown.contains(event.target)) {
+                document.getElementById('mockOptions').style.display = 'none';
+            }
+        });
+
+        // 添加点击选项的交互
+        document.querySelectorAll('.mock-option').forEach(option => {
+            option.addEventListener('click', function() {
+                const label = this.querySelector('.option-label').textContent;
+                document.querySelector('.mock-select').textContent = label;
+                document.getElementById('mockOptions').style.display = 'none';
+                
+                // 显示选择提示
+                if (label.includes('Docker') || label.includes('Kubernetes')) {
+                    setTimeout(() => {
+                        alert(`已选择: ${label}\n\n接下来会显示对应的配置表单，您可以配置相关参数。`);
+                    }, 300);
+                }
+            });
+        });
+    </script>
+</body>
+</html>

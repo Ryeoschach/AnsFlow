@@ -1,18 +1,28 @@
 from rest_framework import serializers
-from .models import AnsibleInventory, AnsiblePlaybook, AnsibleCredential, AnsibleExecution
+from .models import (
+    AnsibleInventory, AnsiblePlaybook, AnsibleCredential, AnsibleExecution,
+    AnsibleHost, AnsibleHostGroup, AnsibleInventoryVersion, AnsiblePlaybookVersion
+)
 
 
 class AnsibleInventorySerializer(serializers.ModelSerializer):
     """Ansible主机清单序列化器"""
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    source_type_display = serializers.CharField(source='get_source_type_display', read_only=True)
     
     class Meta:
         model = AnsibleInventory
         fields = [
-            'id', 'name', 'description', 'content', 'format_type',
-            'created_by', 'created_by_username', 'created_at', 'updated_at'
+            'id', 'name', 'description', 'content', 'format_type', 'source_type',
+            'source_type_display', 'file_path', 'git_url', 'git_branch',
+            'dynamic_script', 'version', 'checksum', 'is_validated',
+            'validation_message', 'created_by', 'created_by_username', 
+            'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_by', 'created_at', 'updated_at']
+        read_only_fields = [
+            'checksum', 'is_validated', 'validation_message',
+            'created_by', 'created_at', 'updated_at'
+        ]
 
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
@@ -23,15 +33,32 @@ class AnsiblePlaybookSerializer(serializers.ModelSerializer):
     """Ansible Playbook序列化器"""
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
     category_display = serializers.CharField(source='get_category_display', read_only=True)
+    source_type_display = serializers.CharField(source='get_source_type_display', read_only=True)
+    success_rate = serializers.SerializerMethodField()
     
     class Meta:
         model = AnsiblePlaybook
         fields = [
             'id', 'name', 'description', 'content', 'version', 'is_template',
-            'category', 'category_display', 'parameters', 'created_by', 
-            'created_by_username', 'created_at', 'updated_at'
+            'category', 'category_display', 'source_type', 'source_type_display',
+            'file_path', 'git_url', 'git_branch', 'git_path', 'checksum',
+            'is_validated', 'validation_message', 'syntax_check_passed',
+            'parameters', 'required_vars', 'default_vars', 'ansible_version',
+            'required_collections', 'required_roles', 'execution_count',
+            'success_count', 'last_executed', 'success_rate',
+            'created_by', 'created_by_username', 'created_at', 'updated_at'
         ]
-        read_only_fields = ['created_by', 'created_at', 'updated_at']
+        read_only_fields = [
+            'checksum', 'is_validated', 'validation_message', 'syntax_check_passed',
+            'execution_count', 'success_count', 'last_executed',
+            'created_by', 'created_at', 'updated_at'
+        ]
+
+    def get_success_rate(self, obj):
+        """计算成功率"""
+        if obj.execution_count > 0:
+            return round((obj.success_count / obj.execution_count) * 100, 2)
+        return 0
 
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
@@ -174,3 +201,85 @@ class AnsibleStatsSerializer(serializers.Serializer):
     total_playbooks = serializers.IntegerField()
     total_inventories = serializers.IntegerField()
     total_credentials = serializers.IntegerField()
+
+
+class AnsibleHostSerializer(serializers.ModelSerializer):
+    """Ansible主机序列化器"""
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    status_display = serializers.CharField(source='get_status_display', read_only=True)
+    group_names = serializers.SerializerMethodField()
+    
+    class Meta:
+        model = AnsibleHost
+        fields = [
+            'id', 'hostname', 'ip_address', 'port', 'username',
+            'connection_type', 'become_method', 'status', 'status_display',
+            'last_check', 'check_message', 'os_family', 'os_distribution',
+            'os_version', 'ansible_facts', 'tags', 'group_names',
+            'created_by', 'created_by_username', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'status', 'last_check', 'check_message', 'os_family',
+            'os_distribution', 'os_version', 'ansible_facts',
+            'created_by', 'created_at', 'updated_at'
+        ]
+
+    def get_group_names(self, obj):
+        return [group.name for group in obj.groups.all()]
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class AnsibleHostGroupSerializer(serializers.ModelSerializer):
+    """Ansible主机组序列化器"""
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    host_count = serializers.SerializerMethodField()
+    parent_name = serializers.CharField(source='parent.name', read_only=True)
+    
+    class Meta:
+        model = AnsibleHostGroup
+        fields = [
+            'id', 'name', 'description', 'parent', 'parent_name',
+            'variables', 'host_count', 'created_by', 'created_by_username',
+            'created_at', 'updated_at'
+        ]
+        read_only_fields = ['created_by', 'created_at', 'updated_at']
+
+    def get_host_count(self, obj):
+        return obj.ansiblehost_set.count()
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
+
+
+class AnsibleInventoryVersionSerializer(serializers.ModelSerializer):
+    """Ansible Inventory版本序列化器"""
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    inventory_name = serializers.CharField(source='inventory.name', read_only=True)
+    
+    class Meta:
+        model = AnsibleInventoryVersion
+        fields = [
+            'id', 'inventory', 'inventory_name', 'version', 'content',
+            'checksum', 'changelog', 'created_by', 'created_by_username',
+            'created_at'
+        ]
+        read_only_fields = ['created_by', 'created_at']
+
+
+class AnsiblePlaybookVersionSerializer(serializers.ModelSerializer):
+    """Ansible Playbook版本序列化器"""
+    created_by_username = serializers.CharField(source='created_by.username', read_only=True)
+    playbook_name = serializers.CharField(source='playbook.name', read_only=True)
+    
+    class Meta:
+        model = AnsiblePlaybookVersion
+        fields = [
+            'id', 'playbook', 'playbook_name', 'version', 'content',
+            'checksum', 'changelog', 'is_release', 'created_by',
+            'created_by_username', 'created_at'
+        ]
+        read_only_fields = ['created_by', 'created_at']

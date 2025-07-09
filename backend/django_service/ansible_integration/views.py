@@ -6,6 +6,13 @@ from rest_framework.views import APIView
 from django.db.models import Q, Count, Avg
 from django.utils import timezone
 from datetime import timedelta
+import hashlib
+import os
+import tempfile
+import subprocess
+from django.core.files.storage import default_storage
+from django.core.files.base import ContentFile
+from rest_framework.parsers import MultiPartParser, FormParser
 
 from .models import AnsibleInventory, AnsiblePlaybook, AnsibleCredential, AnsibleExecution
 from .serializers import (
@@ -57,6 +64,162 @@ class AnsibleInventoryViewSet(viewsets.ModelViewSet):
             return Response({
                 'valid': False,
                 'message': f'主机清单格式错误: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def upload_inventory(self, request):
+        """上传Inventory文件"""
+        if 'file' not in request.FILES:
+            return Response({
+                'error': '请选择要上传的文件'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        uploaded_file = request.FILES['file']
+        name = request.data.get('name', uploaded_file.name)
+        description = request.data.get('description', '')
+        format_type = request.data.get('format_type', 'ini')
+        
+        try:
+            # 读取文件内容
+            content = uploaded_file.read().decode('utf-8')
+            
+            # 计算校验和
+            checksum = hashlib.sha256(content.encode()).hexdigest()
+            
+            # 创建Inventory记录
+            inventory = AnsibleInventory.objects.create(
+                name=name,
+                description=description,
+                content=content,
+                format_type=format_type,
+                source_type='file',
+                file_path=uploaded_file.name,
+                checksum=checksum,
+                created_by=request.user
+            )
+            
+            # 异步验证
+            from .tasks import validate_ansible_inventory
+            validate_ansible_inventory.delay(inventory.id)
+            
+            serializer = self.get_serializer(inventory)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response({
+                'error': f'文件上传失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def create_version(self, request, pk=None):
+        """创建Inventory版本"""
+        inventory = self.get_object()
+        version = request.data.get('version')
+        changelog = request.data.get('changelog', '')
+        
+        if not version:
+            return Response({
+                'error': '版本号是必需的'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .models import AnsibleInventoryVersion
+            
+            # 检查版本是否已存在
+            if AnsibleInventoryVersion.objects.filter(
+                inventory=inventory, 
+                version=version
+            ).exists():
+                return Response({
+                    'error': f'版本 {version} 已存在'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 计算内容校验和
+            checksum = hashlib.sha256(inventory.content.encode()).hexdigest()
+            
+            # 创建版本记录
+            version_obj = AnsibleInventoryVersion.objects.create(
+                inventory=inventory,
+                version=version,
+                content=inventory.content,
+                checksum=checksum,
+                changelog=changelog,
+                created_by=request.user
+            )
+            
+            # 更新主记录版本
+            inventory.version = version
+            inventory.checksum = checksum
+            inventory.save()
+            
+            return Response({
+                'id': version_obj.id,
+                'version': version_obj.version,
+                'checksum': version_obj.checksum,
+                'created_at': version_obj.created_at,
+                'message': '版本创建成功'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'版本创建失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def versions(self, request, pk=None):
+        """获取Inventory版本历史"""
+        inventory = self.get_object()
+        versions = inventory.versions.all()
+        
+        version_data = []
+        for version in versions:
+            version_data.append({
+                'id': version.id,
+                'version': version.version,
+                'checksum': version.checksum,
+                'changelog': version.changelog,
+                'created_by': version.created_by.username,
+                'created_at': version.created_at
+            })
+        
+        return Response(version_data)
+
+    @action(detail=True, methods=['post'])
+    def restore_version(self, request, pk=None):
+        """恢复到指定版本"""
+        inventory = self.get_object()
+        version_id = request.data.get('version_id')
+        
+        if not version_id:
+            return Response({
+                'error': '版本ID是必需的'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .models import AnsibleInventoryVersion
+            
+            version_obj = AnsibleInventoryVersion.objects.get(
+                id=version_id,
+                inventory=inventory
+            )
+            
+            # 恢复内容
+            inventory.content = version_obj.content
+            inventory.version = version_obj.version
+            inventory.checksum = version_obj.checksum
+            inventory.save()
+            
+            return Response({
+                'message': f'已恢复到版本 {version_obj.version}'
+            })
+            
+        except AnsibleInventoryVersion.DoesNotExist:
+            return Response({
+                'error': '指定的版本不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'版本恢复失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -134,6 +297,224 @@ class AnsiblePlaybookViewSet(viewsets.ModelViewSet):
         serializer.save()
         
         return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    @action(detail=False, methods=['post'], parser_classes=[MultiPartParser, FormParser])
+    def upload_playbook(self, request):
+        """上传Playbook文件"""
+        if 'file' not in request.FILES:
+            return Response({
+                'error': '请选择要上传的文件'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        uploaded_file = request.FILES['file']
+        name = request.data.get('name', uploaded_file.name.replace('.yml', '').replace('.yaml', ''))
+        description = request.data.get('description', '')
+        category = request.data.get('category', 'other')
+        
+        try:
+            # 读取文件内容
+            content = uploaded_file.read().decode('utf-8')
+            
+            # 计算校验和
+            checksum = hashlib.sha256(content.encode()).hexdigest()
+            
+            # 创建Playbook记录
+            playbook = AnsiblePlaybook.objects.create(
+                name=name,
+                description=description,
+                content=content,
+                category=category,
+                source_type='file',
+                file_path=uploaded_file.name,
+                checksum=checksum,
+                created_by=request.user
+            )
+            
+            # 异步验证语法
+            from .tasks import validate_ansible_playbook
+            validate_ansible_playbook.delay(playbook.id)
+            
+            serializer = self.get_serializer(playbook)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            
+        except Exception as e:
+            return Response({
+                'error': f'文件上传失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def create_version(self, request, pk=None):
+        """创建Playbook版本"""
+        playbook = self.get_object()
+        version = request.data.get('version')
+        changelog = request.data.get('changelog', '')
+        is_release = request.data.get('is_release', False)
+        
+        if not version:
+            return Response({
+                'error': '版本号是必需的'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .models import AnsiblePlaybookVersion
+            
+            # 检查版本是否已存在
+            if AnsiblePlaybookVersion.objects.filter(
+                playbook=playbook, 
+                version=version
+            ).exists():
+                return Response({
+                    'error': f'版本 {version} 已存在'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 计算内容校验和
+            checksum = hashlib.sha256(playbook.content.encode()).hexdigest()
+            
+            # 创建版本记录
+            version_obj = AnsiblePlaybookVersion.objects.create(
+                playbook=playbook,
+                version=version,
+                content=playbook.content,
+                checksum=checksum,
+                changelog=changelog,
+                is_release=is_release,
+                created_by=request.user
+            )
+            
+            # 更新主记录版本
+            playbook.version = version
+            playbook.checksum = checksum
+            playbook.save()
+            
+            return Response({
+                'id': version_obj.id,
+                'version': version_obj.version,
+                'checksum': version_obj.checksum,
+                'is_release': version_obj.is_release,
+                'created_at': version_obj.created_at,
+                'message': '版本创建成功'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'版本创建失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def versions(self, request, pk=None):
+        """获取Playbook版本历史"""
+        playbook = self.get_object()
+        versions = playbook.versions.all()
+        
+        version_data = []
+        for version in versions:
+            version_data.append({
+                'id': version.id,
+                'version': version.version,
+                'checksum': version.checksum,
+                'changelog': version.changelog,
+                'is_release': version.is_release,
+                'created_by': version.created_by.username,
+                'created_at': version.created_at
+            })
+        
+        return Response(version_data)
+
+    @action(detail=True, methods=['post'])
+    def restore_version(self, request, pk=None):
+        """恢复到指定版本"""
+        playbook = self.get_object()
+        version_id = request.data.get('version_id')
+        
+        if not version_id:
+            return Response({
+                'error': '版本ID是必需的'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .models import AnsiblePlaybookVersion
+            
+            version_obj = AnsiblePlaybookVersion.objects.get(
+                id=version_id,
+                playbook=playbook
+            )
+            
+            # 恢复内容
+            playbook.content = version_obj.content
+            playbook.version = version_obj.version
+            playbook.checksum = version_obj.checksum
+            playbook.save()
+            
+            return Response({
+                'message': f'已恢复到版本 {version_obj.version}'
+            })
+            
+        except AnsiblePlaybookVersion.DoesNotExist:
+            return Response({
+                'error': '指定的版本不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'版本恢复失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def syntax_check(self, request, pk=None):
+        """Playbook语法检查"""
+        playbook = self.get_object()
+        
+        try:
+            # 创建临时文件进行语法检查
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_file:
+                temp_file.write(playbook.content)
+                temp_file_path = temp_file.name
+            
+            try:
+                # 使用ansible-playbook --syntax-check进行验证
+                result = subprocess.run([
+                    'ansible-playbook', '--syntax-check', temp_file_path
+                ], capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    # 更新验证状态
+                    playbook.syntax_check_passed = True
+                    playbook.is_validated = True
+                    playbook.validation_message = 'Playbook语法验证通过'
+                    playbook.save()
+                    
+                    return Response({
+                        'valid': True,
+                        'message': 'Playbook语法验证通过',
+                        'output': result.stdout
+                    })
+                else:
+                    # 更新验证状态
+                    playbook.syntax_check_passed = False
+                    playbook.is_validated = True
+                    playbook.validation_message = result.stderr or result.stdout
+                    playbook.save()
+                    
+                    return Response({
+                        'valid': False,
+                        'message': 'Playbook语法验证失败',
+                        'error': result.stderr or result.stdout
+                    }, status=status.HTTP_400_BAD_REQUEST)
+                    
+            finally:
+                # 清理临时文件
+                if os.path.exists(temp_file_path):
+                    os.unlink(temp_file_path)
+                    
+        except subprocess.TimeoutExpired:
+            return Response({
+                'valid': False,
+                'message': '语法检查超时'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'valid': False,
+                'message': f'语法检查失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class AnsibleCredentialViewSet(viewsets.ModelViewSet):
@@ -605,3 +986,293 @@ class RecentExecutionsView(APIView):
         
         serializer = AnsibleExecutionListSerializer(executions, many=True)
         return Response(serializer.data)
+
+
+class AnsibleHostViewSet(viewsets.ModelViewSet):
+    """Ansible主机管理视图集"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        from .models import AnsibleHost
+        queryset = AnsibleHost.objects.all()
+        
+        # 只显示用户有权限的主机
+        if not self.request.user.is_superuser:
+            queryset = queryset.filter(created_by=self.request.user)
+            
+        # 搜索过滤
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(hostname__icontains=search) | 
+                Q(ip_address__icontains=search) |
+                Q(username__icontains=search)
+            )
+            
+        # 状态过滤
+        status_filter = self.request.query_params.get('status')
+        if status_filter:
+            queryset = queryset.filter(status=status_filter)
+            
+        # 主机组过滤
+        group_id = self.request.query_params.get('group_id')
+        if group_id:
+            queryset = queryset.filter(groups__id=group_id)
+            
+        return queryset.order_by('hostname')
+
+    def get_serializer_class(self):
+        from .serializers import AnsibleHostSerializer
+        return AnsibleHostSerializer
+
+    @action(detail=True, methods=['post'])
+    def check_connectivity(self, request, pk=None):
+        """检查主机连通性"""
+        host = self.get_object()
+        
+        try:
+            # 使用ansible命令检查连通性
+            result = subprocess.run([
+                'ansible', f'{host.ip_address}',
+                '-m', 'ping',
+                '-u', host.username,
+                '-p', str(host.port),
+                '--timeout=10'
+            ], capture_output=True, text=True, timeout=15)
+            
+            if result.returncode == 0:
+                host.status = 'active'
+                host.check_message = '连接成功'
+            else:
+                host.status = 'failed'
+                host.check_message = result.stderr or result.stdout
+                
+            host.last_check = timezone.now()
+            host.save()
+            
+            return Response({
+                'success': result.returncode == 0,
+                'status': host.status,
+                'message': host.check_message,
+                'checked_at': host.last_check
+            })
+            
+        except subprocess.TimeoutExpired:
+            host.status = 'failed'
+            host.check_message = '连接超时'
+            host.last_check = timezone.now()
+            host.save()
+            
+            return Response({
+                'success': False,
+                'status': 'failed',
+                'message': '连接超时',
+                'checked_at': host.last_check
+            })
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'连接检查失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def gather_facts(self, request, pk=None):
+        """收集主机信息"""
+        host = self.get_object()
+        
+        try:
+            # 使用ansible setup模块收集信息
+            result = subprocess.run([
+                'ansible', f'{host.ip_address}',
+                '-m', 'setup',
+                '-u', host.username,
+                '-p', str(host.port),
+                '--timeout=30'
+            ], capture_output=True, text=True, timeout=35)
+            
+            if result.returncode == 0:
+                import json
+                # 解析ansible facts
+                facts_output = result.stdout
+                # 提取JSON部分（ansible输出格式）
+                try:
+                    facts_start = facts_output.find('{')
+                    facts_json = facts_output[facts_start:]
+                    facts = json.loads(facts_json)
+                    
+                    ansible_facts = facts.get('ansible_facts', {})
+                    
+                    # 更新主机信息
+                    host.os_family = ansible_facts.get('ansible_os_family', '')
+                    host.os_distribution = ansible_facts.get('ansible_distribution', '')
+                    host.os_version = ansible_facts.get('ansible_distribution_version', '')
+                    host.ansible_facts = ansible_facts
+                    host.status = 'active'
+                    host.last_check = timezone.now()
+                    host.save()
+                    
+                    return Response({
+                        'success': True,
+                        'facts': ansible_facts,
+                        'message': '主机信息收集成功'
+                    })
+                    
+                except json.JSONDecodeError:
+                    return Response({
+                        'success': False,
+                        'message': 'Facts数据解析失败'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            else:
+                return Response({
+                    'success': False,
+                    'message': result.stderr or result.stdout
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except subprocess.TimeoutExpired:
+            return Response({
+                'success': False,
+                'message': 'Facts收集超时'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'Facts收集失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def batch_check(self, request):
+        """批量检查主机连通性"""
+        host_ids = request.data.get('host_ids', [])
+        
+        if not host_ids:
+            return Response({
+                'error': '请选择要检查的主机'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        from .models import AnsibleHost
+        hosts = AnsibleHost.objects.filter(id__in=host_ids)
+        
+        results = []
+        for host in hosts:
+            try:
+                # 异步检查连通性
+                from .tasks import check_host_connectivity
+                task_result = check_host_connectivity.delay(host.id)
+                
+                results.append({
+                    'host_id': host.id,
+                    'hostname': host.hostname,
+                    'task_id': task_result.id,
+                    'message': '连通性检查已启动'
+                })
+            except Exception as e:
+                results.append({
+                    'host_id': host.id,
+                    'hostname': host.hostname,
+                    'error': str(e)
+                })
+        
+        return Response({
+            'message': f'已启动 {len(results)} 个主机的连通性检查',
+            'results': results
+        })
+
+
+class AnsibleHostGroupViewSet(viewsets.ModelViewSet):
+    """Ansible主机组管理视图集"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        from .models import AnsibleHostGroup
+        queryset = AnsibleHostGroup.objects.all()
+        
+        # 只显示用户有权限的主机组
+        if not self.request.user.is_superuser:
+            queryset = queryset.filter(created_by=self.request.user)
+            
+        # 搜索过滤
+        search = self.request.query_params.get('search')
+        if search:
+            queryset = queryset.filter(
+                Q(name__icontains=search) | Q(description__icontains=search)
+            )
+            
+        return queryset.order_by('name')
+
+    def get_serializer_class(self):
+        from .serializers import AnsibleHostGroupSerializer
+        return AnsibleHostGroupSerializer
+
+    @action(detail=True, methods=['get'])
+    def hosts(self, request, pk=None):
+        """获取主机组中的主机列表"""
+        group = self.get_object()
+        hosts = group.ansiblehost_set.all()
+        
+        from .serializers import AnsibleHostSerializer
+        serializer = AnsibleHostSerializer(hosts, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def add_hosts(self, request, pk=None):
+        """向主机组添加主机"""
+        group = self.get_object()
+        host_ids = request.data.get('host_ids', [])
+        
+        if not host_ids:
+            return Response({
+                'error': '请选择要添加的主机'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .models import AnsibleHost, AnsibleHostGroupMembership
+            
+            added_count = 0
+            for host_id in host_ids:
+                try:
+                    host = AnsibleHost.objects.get(id=host_id)
+                    membership, created = AnsibleHostGroupMembership.objects.get_or_create(
+                        host=host,
+                        group=group
+                    )
+                    if created:
+                        added_count += 1
+                except AnsibleHost.DoesNotExist:
+                    continue
+            
+            return Response({
+                'message': f'成功添加 {added_count} 个主机到组 {group.name}'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'添加主机失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def remove_hosts(self, request, pk=None):
+        """从主机组移除主机"""
+        group = self.get_object()
+        host_ids = request.data.get('host_ids', [])
+        
+        if not host_ids:
+            return Response({
+                'error': '请选择要移除的主机'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            from .models import AnsibleHostGroupMembership
+            
+            removed_count = AnsibleHostGroupMembership.objects.filter(
+                group=group,
+                host_id__in=host_ids
+            ).delete()[0]
+            
+            return Response({
+                'message': f'成功从组 {group.name} 移除 {removed_count} 个主机'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'移除主机失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)

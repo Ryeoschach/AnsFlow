@@ -14,6 +14,7 @@ import Executions from './pages/Executions'
 import ExecutionDetailFixed from '@pages/ExecutionDetailFixed'
 import Settings from '@pages/Settings'
 import Ansible from './pages/Ansible'
+import Docker from './pages/Docker'
 
 const { Content } = Layout
 
@@ -70,6 +71,7 @@ function App() {
         <Route path="/executions" element={<Executions />} />
         <Route path="/executions/:id" element={<ExecutionDetailFixed />} />
         <Route path="/ansible" element={<Ansible />} />
+        <Route path="/docker" element={<Docker />} />
         <Route path="/settings" element={<Settings />} />
         <Route path="/login" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />

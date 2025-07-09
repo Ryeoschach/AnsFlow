@@ -203,6 +203,13 @@ python scripts/quick_verify.py      # 快速功能验证
 
 ## 🎯 下一步开发计划
 
+### ✅ 最近完成 (2025年1月)
+- ✅ **项目文档归档**: 完成了所有测试脚本、说明文档、展示页面的分类归档
+  - ✅ 建立了标准化的文档目录结构 (docs/reports, docs/guides, docs/showcase)
+  - ✅ 建立了完整的测试目录结构 (tests/integration, tests/frontend, tests/scripts)
+  - ✅ 更新了文档索引和项目结构说明
+  - ✅ 清理了项目根目录，提升了项目组织规范性
+
 ### 📅 近期计划 (未来4周)
 
 #### Week 1-2: Ansible深度集成完善
@@ -248,15 +255,23 @@ python scripts/quick_verify.py      # 快速功能验证
 - [⚡ 快速启动指南](./docs/QUICK_START_GUIDE.md) - 5分钟快速体验
 - [🏗️ 项目结构说明](./docs/PROJECT_STRUCTURE.md) - 了解项目架构
 - [📊 项目状态总结](./docs/PROJECT_STATUS_SUMMARY.md) - 当前开发进展
+- [📋 文档目录说明](./docs/README.md) - 完整的文档结构和分类指南
 
 ### 🔧 开发文档
 - [📡 API文档](./docs/api/) - REST API和WebSocket API
 - [👨‍💻 开发指南](./docs/development/) - 开发规范和贡献指南
 - [🚀 部署指南](./docs/deployment/) - 生产环境部署
 
-### 🧪 测试工具
+### 📊 项目报告 (已归档)
+- [� 项目完成报告](./docs/reports/) - 各阶段完成报告和技术总结
+- [📘 使用指南集合](./docs/guides/) - 详细的功能使用指南
+- [🎯 展示页面](./docs/showcase/) - 功能演示和集成展示
+
+### 🧪 测试资源 (已归档)
+- [🔬 集成测试](./tests/integration/) - 完整的系统集成测试
+- [💻 前端测试](./tests/frontend/) - 前端页面和组件测试
+- [🛠️ 调试脚本](./tests/scripts/) - 调试和修复工具脚本
 - [📋 脚本目录说明](./scripts/README.md) - 所有脚本的使用指南
-- [📚 历史归档](./docs/archive/) - 修复报告和技术决策记录
 
 ## 🛠️ 开发指南
 
@@ -298,9 +313,15 @@ ansflow/
 ├── 🎨 frontend/                # React 前端应用
 ├── 🚀 deployment/              # 部署配置
 ├── 📚 docs/                    # 项目文档
-├── 🧪 tests/                   # 集成测试
+│   ├── reports/                # 项目报告归档
+│   ├── guides/                 # 使用指南归档
+│   └── showcase/               # 展示页面归档
+├── 🧪 tests/                   # 测试资源
+│   ├── integration/            # 集成测试脚本
+│   ├── frontend/               # 前端测试页面
+│   └── scripts/                # 调试和修复脚本
 ├── 📊 monitoring/              # 监控配置
-└── 🔧 scripts/                 # 工具脚本
+└── 🔧 scripts/                 # 核心工具脚本
 ```
 
 ## 🤝 贡献指南 （待功能完善之后开放）

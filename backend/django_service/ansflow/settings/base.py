@@ -63,6 +63,8 @@ LOCAL_APPS = [
     'realtime',
     'analytics',
     'ansible_integration',
+    'docker_integration',
+    'kubernetes_integration',
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
