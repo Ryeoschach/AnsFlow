@@ -46,6 +46,7 @@ urlpatterns = [
     path('api/v1/ansible/', include('ansible_integration.urls')),
     path('api/v1/docker/', include('docker_integration.urls')),
     path('api/v1/kubernetes/', include('kubernetes_integration.urls')),
+    path('api/v1/settings/', include('settings_management.urls')),
     
     # API Documentation
     path('api/schema/', include([

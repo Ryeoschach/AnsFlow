@@ -873,7 +873,7 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
               created_at: isAtomicStep(step) ? step.created_at : new Date().toISOString(),
               // 使用新的表单数据完全替换内容字段
               name: stepData.name,
-              step_type: stepData.step_type,
+              step_type: stepData.step_type as any,
               description: stepData.description,
               parameters: stepData.parameters,
               order: step.order, // 保持原有顺序
@@ -904,6 +904,7 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         const newStep: AtomicStep = {
           id: Date.now(), // 临时ID，后端会重新分配
           ...stepData,
+          step_type: stepData.step_type as any,
           pipeline: pipeline?.id || 0,
           is_active: true,
           created_at: new Date().toISOString(),

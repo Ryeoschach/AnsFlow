@@ -457,7 +457,7 @@ const KubernetesPage: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      render: (_, record: KubernetesCluster) => (
+      render: (_text: any, record: KubernetesCluster) => (
         <Space>
           <Tooltip title="测试连接">
             <Button
@@ -530,7 +530,7 @@ const KubernetesPage: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
-      render: (_, record: KubernetesNamespace) => (
+      render: (_text: any, record: KubernetesNamespace) => (
         <Space>
           <Tooltip title="编辑">
             <Button
