@@ -169,7 +169,7 @@ export interface PipelineStep {
   status?: 'pending' | 'running' | 'success' | 'failed' | 'skipped' | 'cancelled'
   step_type: 'fetch_code' | 'build' | 'test' | 'security_scan' | 'deploy' | 'ansible' | 'notify' | 'custom' | 'script' |
              'docker_build' | 'docker_run' | 'docker_push' | 'docker_pull' |
-             'k8s_deploy' | 'k8s_scale' | 'k8s_delete' | 'k8s_wait' | 'k8s_exec' | 'k8s_logs'
+             'k8s_deploy' | 'k8s_scale' | 'k8s_delete' | 'k8s_wait' | 'k8s_exec' | 'k8s_logs' | 'approval' | 'shell_script'
   command?: string
   environment_vars?: Record<string, any>
   timeout_seconds?: number
@@ -189,7 +189,7 @@ export interface PipelineStep {
   approval_required?: boolean
   approval_users?: string[]
   retry_policy?: RetryPolicy
-  notification_config?: NotificationConfig
+  notification_config?: NotificationOptions
   
   // Ansible配置
   ansible_playbook?: number | null
@@ -224,7 +224,9 @@ export interface PipelineStep {
 export interface AtomicStep {
   id: number
   name: string
-  step_type: string
+  step_type: 'fetch_code' | 'build' | 'test' | 'security_scan' | 'deploy' | 'ansible' | 'notify' | 'custom' | 'script' |
+             'docker_build' | 'docker_run' | 'docker_push' | 'docker_pull' |
+             'k8s_deploy' | 'k8s_scale' | 'k8s_delete' | 'k8s_wait' | 'k8s_exec' | 'k8s_logs' | 'approval' | 'shell_script'
   description?: string
   parameters: Record<string, any>
   order: number
@@ -471,7 +473,7 @@ export interface EnhancedPipelineStep extends PipelineStep {
   }
   
   // 通知配置
-  notification_config?: NotificationConfig
+  notification_config?: NotificationOptions
 }
 
 // 工作流执行上下文
@@ -546,7 +548,8 @@ export interface RetryPolicy {
 }
 
 // 通知配置
-export interface NotificationConfig {
+// 通知配置类型（作为步骤级别的配置选项）
+export interface NotificationOptions {
   on_success?: boolean
   on_failure?: boolean
   on_approval_required?: boolean
@@ -554,6 +557,19 @@ export interface NotificationConfig {
   recipients?: string[]
   webhook_url?: string
   message_template?: string
+}
+
+// 通知配置模型（系统级别的通知配置实体）
+export interface NotificationConfig {
+  id: number
+  name: string
+  type: 'email' | 'webhook' | 'slack' | 'dingtalk' | 'wechat'
+  config: Record<string, any>
+  enabled: boolean
+  created_by: number
+  created_by_username?: string
+  created_at: string
+  updated_at: string
 }
 
 // 工作流指标数据
@@ -660,7 +676,7 @@ export interface RecoveryOptions {
   recovery_strategy: 'continue' | 'restart_from' | 'skip_and_continue'
   force_retry: boolean
   custom_timeout?: number
-  notification_settings?: NotificationConfig
+  notification_settings?: NotificationOptions
 }
 
 // 工作流验证相关类型
@@ -747,4 +763,270 @@ export interface KubernetesStepConfig {
 
 
 
-// 工作流验证相关类型
+// Settings 管理相关类型
+
+// 审计日志
+export interface AuditLog {
+  id: number
+  user: number
+  user_username?: string
+  action: string
+  resource_type: string
+  resource_id?: string
+  details: Record<string, any>
+  ip_address?: string
+  user_agent?: string
+  timestamp: string
+  result?: 'success' | 'failure' | 'warning'  // 添加结果字段
+}
+
+// 系统告警
+export interface SystemAlert {
+  id: number
+  title: string
+  message: string
+  alert_type: 'info' | 'warning' | 'error' | 'critical'
+  is_active: boolean
+  created_at: string
+  updated_at: string
+  resolved_at?: string
+  resolved_by?: number
+  resolved_by_username?: string
+}
+
+// 全局配置
+export interface GlobalConfig {
+  id: number
+  key: string
+  value: string
+  description?: string
+  config_type: 'string' | 'number' | 'boolean' | 'json'
+  is_encrypted: boolean
+  category: string
+  created_at: string
+  updated_at: string
+}
+
+// 用户配置文件扩展
+export interface UserProfile {
+  id: number
+  user: number
+  user_username?: string
+  timezone: string
+  language: string
+  theme: 'light' | 'dark' | 'auto'
+  notification_preferences: Record<string, any>
+  dashboard_layout?: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
+// 备份记录
+export interface BackupRecord {
+  id: number
+  name?: string
+  backup_type: 'full' | 'incremental' | 'differential' | 'configuration'
+  file_path: string
+  filename?: string
+  file_size?: number
+  backup_time: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  progress?: number
+  error_message?: string
+  description?: string
+  created_by: number
+  created_by_username?: string
+  created_at: string
+  metadata?: Record<string, any>
+}
+
+// 备份计划
+export interface BackupSchedule {
+  id: number
+  name: string
+  description?: string
+  backup_type: string
+  frequency: 'daily' | 'weekly' | 'monthly' | 'custom'
+  cron_expression?: string
+  retain_days: number
+  retention_days?: number  // 别名，向后兼容
+  status: 'active' | 'inactive' | 'paused'
+  is_active?: boolean  // 别名字段
+  notification_config: Record<string, any>
+  last_run_at?: string
+  last_run_time?: string  // 别名
+  next_run_at?: string
+  next_run_time?: string  // 别名
+  created_by: number
+  created_at: string
+  updated_at: string
+}
+
+// 系统监控数据
+export interface SystemMonitoringData {
+  system_info: {
+    hostname: string
+    platform: string
+    cpu_count: number
+    memory_total: number
+    disk_total: number
+  }
+  performance_metrics: {
+    cpu_usage: number
+    memory_usage: number
+    disk_usage: number
+    network_io: {
+      bytes_sent: number
+      bytes_recv: number
+    }
+    disk_io: {
+      read_bytes: number
+      write_bytes: number
+    }
+  }
+  database_metrics: {
+    connection_count: number
+    active_queries: number
+    slow_queries: number
+    database_size: number
+  }
+  application_metrics: {
+    active_users: number
+    active_pipelines: number
+    queue_size: number
+    error_rate: number
+  }
+  timestamp: string
+}
+
+// Settings API 请求/响应类型
+export interface CreateUserRequest {
+  username: string
+  email: string
+  first_name: string
+  last_name: string
+  password: string
+  is_staff?: boolean
+  is_active?: boolean
+}
+
+export interface UpdateUserRequest {
+  username?: string
+  email?: string
+  first_name?: string
+  last_name?: string
+  is_staff?: boolean
+  is_active?: boolean
+}
+
+export interface CreateGlobalConfigRequest {
+  key: string
+  value: string
+  description?: string
+  config_type: 'string' | 'number' | 'boolean' | 'json'
+  is_encrypted?: boolean
+  category: string
+}
+
+export interface UpdateGlobalConfigRequest {
+  value?: string
+  description?: string
+  is_encrypted?: boolean
+}
+
+export interface UpdateNotificationConfigRequest {
+  name?: string
+  type?: 'email' | 'webhook' | 'slack' | 'dingtalk' | 'wechat'
+  config?: Record<string, any>
+  enabled?: boolean
+}
+
+export interface CreateBackupRequest {
+  name: string
+  backup_type: 'full' | 'incremental' | 'differential'
+  description?: string
+}
+
+// API 管理相关类型
+export interface APIKey {
+  id: number
+  name: string
+  key: string
+  secret?: string
+  permissions: string[]
+  rate_limit: number
+  status: 'active' | 'inactive' | 'expired'
+  created_by: number
+  created_by_username?: string
+  expires_at?: string
+  last_used_at?: string
+  usage_count: number
+  created_at: string
+  updated_at: string
+}
+
+export interface APIEndpoint {
+  id: number
+  path: string
+  method: string
+  description?: string
+  rate_limit?: number
+  auth_required: boolean
+  permissions: string[]
+  is_active: boolean
+  is_enabled?: boolean  // 别名字段
+  usage_count: number
+  created_by: number
+  created_by_username?: string
+  created_at: string
+  updated_at: string
+}
+
+// 系统设置
+export interface SystemSetting {
+  id: number
+  key: string
+  value: string
+  category: 'system' | 'feature' | 'environment' | 'integration'
+  data_type?: 'string' | 'number' | 'boolean' | 'json' | 'password'
+  description: string
+  is_encrypted: boolean
+  is_public?: boolean
+  validation_rules?: Record<string, any>
+  created_by: number
+  created_by_username?: string
+  created_at: string
+  updated_at: string
+}
+
+// 团队管理
+export interface Team {
+  id: number
+  name: string
+  description?: string
+  avatar?: string
+  is_private: boolean
+  is_active?: boolean
+  members_count?: number
+  created_by: number
+  created_by_username?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface TeamMembership {
+  id: number
+  team: number
+  team_name?: string
+  user: number
+  user_username?: string
+  user_email?: string
+  user_info?: {
+    username: string
+    email: string
+    avatar?: string
+  }
+  role: 'admin' | 'member' | 'viewer'
+  joined_at: string
+  created_at: string
+}

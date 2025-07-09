@@ -11,7 +11,12 @@ import {
   AnsibleHost, AnsibleHostGroup, AnsibleHostGroupMembership,
   AnsibleInventoryVersion, AnsiblePlaybookVersion,
   FileUploadRequest, FileUploadResponse, HostConnectivityResult, HostFactsResult, BatchHostOperation,
-  ConditionEvaluationResult, ApprovalConfig, ApprovalRequest, ParallelGroup
+  ConditionEvaluationResult, ApprovalConfig, ApprovalRequest, ParallelGroup,
+  // Settings 相关类型
+  AuditLog, SystemAlert, GlobalConfig, UserProfile, BackupRecord, SystemMonitoringData,
+  CreateUserRequest, UpdateUserRequest, CreateGlobalConfigRequest, UpdateGlobalConfigRequest,
+  CreateBackupRequest, UpdateNotificationConfigRequest, NotificationConfig, PaginatedResponse,
+  APIKey, APIEndpoint, SystemSetting, Team, TeamMembership, BackupSchedule
 } from '../types'
 
 // Docker types
@@ -792,7 +797,7 @@ class ApiService {
   // 条件表达式验证和测试
   async validateConditionExpression(expression: string, context?: any): Promise<{ valid: boolean; error?: string }> {
     const response = await this.api.post('/workflow/validate-condition/', { 
-      expression, 
+      expression,
       context 
     })
     return response.data
@@ -1307,6 +1312,516 @@ class ApiService {
 
   async cleanupDockerSystem(options: { containers?: boolean; images?: boolean; volumes?: boolean; networks?: boolean } = {}): Promise<DockerActionResponse> {
     const response = await this.api.post('/docker/system/cleanup/', options)
+    return response.data
+  }
+
+  // ============================================================================
+  // Settings Management API Methods
+  // ============================================================================
+
+  // 用户管理
+  async getUsers(): Promise<PaginatedResponse<User>> {
+    const response = await this.api.get('/settings/users/')
+    return response.data
+  }
+
+  async getUser(id: number): Promise<User> {
+    const response = await this.api.get(`/settings/users/${id}/`)
+    return response.data
+  }
+
+  async createUser(userData: CreateUserRequest): Promise<User> {
+    const response = await this.api.post('/settings/users/', userData)
+    return response.data
+  }
+
+  async updateUser(id: number, userData: UpdateUserRequest): Promise<User> {
+    const response = await this.api.put(`/settings/users/${id}/`, userData)
+    return response.data
+  }
+
+  async deleteUser(id: number): Promise<void> {
+    await this.api.delete(`/settings/users/${id}/`)
+  }
+
+  async resetUserPassword(id: number, newPassword: string): Promise<void> {
+    await this.api.post(`/settings/users/${id}/reset_password/`, { password: newPassword })
+  }
+
+  // 审计日志
+  async getAuditLogs(params?: { 
+    page?: number, 
+    page_size?: number, 
+    user?: number, 
+    action?: string, 
+    resource_type?: string,
+    start_date?: string,
+    end_date?: string 
+  }): Promise<PaginatedResponse<AuditLog>> {
+    const response = await this.api.get('/settings/audit-logs/', { params })
+    return response.data
+  }
+
+  async getAuditLog(id: number): Promise<AuditLog> {
+    const response = await this.api.get(`/settings/audit-logs/${id}/`)
+    return response.data
+  }
+
+  async exportAuditLogs(params?: { 
+    format?: 'csv' | 'excel' | 'json',
+    start_date?: string,
+    end_date?: string,
+    user?: number,
+    action?: string,
+    resource_type?: string
+  }): Promise<Blob> {
+    const response = await this.api.get('/settings/audit-logs/export/', { 
+      params,
+      responseType: 'blob'
+    })
+    return response.data
+  }
+
+  // 系统告警
+  async getSystemAlerts(params?: { 
+    page?: number, 
+    page_size?: number, 
+    alert_type?: string, 
+    is_active?: boolean 
+  }): Promise<PaginatedResponse<SystemAlert>> {
+    const response = await this.api.get('/settings/system-alerts/', { params })
+    return response.data
+  }
+
+  async getSystemAlert(id: number): Promise<SystemAlert> {
+    const response = await this.api.get(`/settings/system-alerts/${id}/`)
+    return response.data
+  }
+
+  async createSystemAlert(alertData: Partial<SystemAlert>): Promise<SystemAlert> {
+    const response = await this.api.post('/settings/system-alerts/', alertData)
+    return response.data
+  }
+
+  async updateSystemAlert(id: number, alertData: Partial<SystemAlert>): Promise<SystemAlert> {
+    const response = await this.api.put(`/settings/system-alerts/${id}/`, alertData)
+    return response.data
+  }
+
+  async deleteSystemAlert(id: number): Promise<void> {
+    await this.api.delete(`/settings/system-alerts/${id}/`)
+  }
+
+  async resolveSystemAlert(id: number): Promise<SystemAlert> {
+    const response = await this.api.post(`/settings/system-alerts/${id}/resolve/`)
+    return response.data
+  }
+
+  // 全局配置
+  async getGlobalConfigs(params?: { 
+    page?: number, 
+    page_size?: number, 
+    category?: string, 
+    key?: string 
+  }): Promise<PaginatedResponse<GlobalConfig>> {
+    const response = await this.api.get('/settings/global-configs/', { params })
+    return response.data
+  }
+
+  async getGlobalConfig(id: number): Promise<GlobalConfig> {
+    const response = await this.api.get(`/settings/global-configs/${id}/`)
+    return response.data
+  }
+
+  async getGlobalConfigByKey(key: string): Promise<GlobalConfig> {
+    const response = await this.api.get(`/settings/global-configs/by-key/${key}/`)
+    return response.data
+  }
+
+  async createGlobalConfig(configData: CreateGlobalConfigRequest): Promise<GlobalConfig> {
+    const response = await this.api.post('/settings/global-configs/', configData)
+    return response.data
+  }
+
+  async updateGlobalConfig(id: number, configData: UpdateGlobalConfigRequest): Promise<GlobalConfig> {
+    const response = await this.api.put(`/settings/global-configs/${id}/`, configData)
+    return response.data
+  }
+
+  async deleteGlobalConfig(id: number): Promise<void> {
+    await this.api.delete(`/settings/global-configs/${id}/`)
+  }
+
+  // 用户配置文件
+  async getUserProfiles(params?: { 
+    page?: number, 
+    page_size?: number, 
+    user?: number 
+  }): Promise<PaginatedResponse<UserProfile>> {
+    const response = await this.api.get('/settings/user-profiles/', { params })
+    return response.data
+  }
+
+  async getUserProfile(id: number): Promise<UserProfile> {
+    const response = await this.api.get(`/settings/user-profiles/${id}/`)
+    return response.data
+  }
+
+  async getCurrentUserProfile(): Promise<UserProfile> {
+    const response = await this.api.get('/settings/user-profiles/current/')
+    return response.data
+  }
+
+  async updateUserProfile(id: number, profileData: Partial<UserProfile>): Promise<UserProfile> {
+    const response = await this.api.put(`/settings/user-profiles/${id}/`, profileData)
+    return response.data
+  }
+
+  async updateCurrentUserProfile(profileData: Partial<UserProfile>): Promise<UserProfile> {
+    const response = await this.api.put('/settings/user-profiles/current/', profileData)
+    return response.data
+  }
+
+  // 通知配置
+  async getNotificationConfigs(params?: { 
+    page?: number, 
+    page_size?: number, 
+    config_type?: string 
+  }): Promise<PaginatedResponse<NotificationConfig>> {
+    const response = await this.api.get('/settings/notification-configs/', { params })
+    return response.data
+  }
+
+  async getNotificationConfig(id: number): Promise<NotificationConfig> {
+    const response = await this.api.get(`/settings/notification-configs/${id}/`)
+    return response.data
+  }
+
+  async updateSettingsNotificationConfig(id: number, configData: UpdateNotificationConfigRequest): Promise<NotificationConfig> {
+    const response = await this.api.put(`/settings/notification-configs/${id}/`, configData)
+    return response.data
+  }
+
+  async createNotificationConfig(configData: {
+    name: string
+    type: 'email' | 'webhook' | 'slack' | 'dingtalk' | 'wechat'
+    config: Record<string, any>
+    enabled?: boolean
+  }): Promise<NotificationConfig> {
+    const response = await this.api.post('/settings/notification-configs/', configData)
+    return response.data
+  }
+
+  async deleteNotificationConfig(id: number): Promise<void> {
+    await this.api.delete(`/settings/notification-configs/${id}/`)
+  }
+
+  // 备份记录
+  async getBackupRecords(params?: { 
+    page?: number, 
+    page_size?: number, 
+    backup_type?: string, 
+    status?: string 
+  }): Promise<PaginatedResponse<BackupRecord>> {
+    const response = await this.api.get('/settings/backup-records/', { params })
+    return response.data
+  }
+
+  async getBackupRecord(id: number): Promise<BackupRecord> {
+    const response = await this.api.get(`/settings/backup-records/${id}/`)
+    return response.data
+  }
+
+  async createBackup(backupData: CreateBackupRequest): Promise<BackupRecord> {
+    const response = await this.api.post('/settings/backup-records/', backupData)
+    return response.data
+  }
+
+  async downloadBackup(id: number): Promise<Blob> {
+    const response = await this.api.get(`/settings/backup-records/${id}/download/`, {
+      responseType: 'blob'
+    })
+    return response.data
+  }
+
+  async deleteBackupRecord(id: number): Promise<void> {
+    await this.api.delete(`/settings/backup-records/${id}/`)
+  }
+
+  // 备份计划
+  async getBackupSchedules(params?: { 
+    page?: number
+    page_size?: number
+    search?: string
+  }): Promise<PaginatedResponse<BackupSchedule>> {
+    const response = await this.api.get('/settings/backup-schedules/', { params })
+    return response.data
+  }
+
+  async getBackupSchedule(id: number): Promise<BackupSchedule> {
+    const response = await this.api.get(`/settings/backup-schedules/${id}/`)
+    return response.data
+  }
+
+  async createBackupSchedule(scheduleData: {
+    name: string
+    description?: string
+    backup_type: string
+    cron_expression: string
+    is_active?: boolean
+    retention_days?: number
+  }): Promise<BackupSchedule> {
+    const response = await this.api.post('/settings/backup-schedules/', scheduleData)
+    return response.data
+  }
+
+  async updateBackupSchedule(id: number, scheduleData: {
+    name?: string
+    description?: string
+    backup_type?: string
+    cron_expression?: string
+    is_active?: boolean
+    retention_days?: number
+  }): Promise<BackupSchedule> {
+    const response = await this.api.put(`/settings/backup-schedules/${id}/`, scheduleData)
+    return response.data
+  }
+
+  async deleteBackupSchedule(id: number): Promise<void> {
+    await this.api.delete(`/settings/backup-schedules/${id}/`)
+  }
+
+  // 团队成员管理
+  async getTeamMemberships(teamId?: number, params?: { 
+    page?: number
+    page_size?: number
+    search?: string
+  }): Promise<PaginatedResponse<TeamMembership>> {
+    const url = teamId ? `/settings/teams/${teamId}/members/` : '/settings/team-memberships/'
+    const response = await this.api.get(url, { params })
+    return response.data
+  }
+
+  async addTeamMember(teamId: number, memberData: {
+    user: number
+    role: 'admin' | 'member' | 'viewer'
+  }): Promise<TeamMembership> {
+    const response = await this.api.post(`/settings/teams/${teamId}/members/`, memberData)
+    return response.data
+  }
+
+  async updateTeamMember(teamId: number, userId: number, memberData: {
+    role?: 'admin' | 'member' | 'viewer'
+  }): Promise<TeamMembership> {
+    const response = await this.api.put(`/settings/teams/${teamId}/members/${userId}/`, memberData)
+    return response.data
+  }
+
+  async removeTeamMember(teamId: number, userId: number): Promise<void> {
+    await this.api.delete(`/settings/teams/${teamId}/members/${userId}/`)
+  }
+
+  // 团队管理
+  async getTeams(params?: { 
+    page?: number
+    page_size?: number
+    search?: string
+  }): Promise<PaginatedResponse<Team>> {
+    const response = await this.api.get('/settings/teams/', { params })
+    return response.data
+  }
+
+  async getTeam(id: number): Promise<Team> {
+    const response = await this.api.get(`/settings/teams/${id}/`)
+    return response.data
+  }
+
+  async createTeam(teamData: {
+    name: string
+    description?: string
+    is_private?: boolean
+  }): Promise<Team> {
+    const response = await this.api.post('/settings/teams/', teamData)
+    return response.data
+  }
+
+  async updateTeam(id: number, teamData: {
+    name?: string
+    description?: string
+    is_private?: boolean
+  }): Promise<Team> {
+    const response = await this.api.put(`/settings/teams/${id}/`, teamData)
+    return response.data
+  }
+
+  async deleteTeam(id: number): Promise<void> {
+    await this.api.delete(`/settings/teams/${id}/`)
+  }
+
+  // API Keys 管理
+  async getAPIKeys(params?: { 
+    page?: number
+    page_size?: number
+    search?: string
+  }): Promise<PaginatedResponse<APIKey>> {
+    const response = await this.api.get('/settings/api-keys/', { params })
+    return response.data
+  }
+
+  async getAPIKey(id: number): Promise<APIKey> {
+    const response = await this.api.get(`/settings/api-keys/${id}/`)
+    return response.data
+  }
+
+  async createAPIKey(keyData: {
+    name: string
+    permissions: string[]
+    rate_limit?: number
+    expires_at?: string
+  }): Promise<APIKey> {
+    const response = await this.api.post('/settings/api-keys/', keyData)
+    return response.data
+  }
+
+  async updateAPIKey(id: number, keyData: {
+    name?: string
+    permissions?: string[]
+    rate_limit?: number
+    expires_at?: string
+    status?: 'active' | 'inactive' | 'expired'
+  }): Promise<APIKey> {
+    const response = await this.api.put(`/settings/api-keys/${id}/`, keyData)
+    return response.data
+  }
+
+  async deleteAPIKey(id: number): Promise<void> {
+    await this.api.delete(`/settings/api-keys/${id}/`)
+  }
+
+  async regenerateAPIKey(id: number): Promise<APIKey> {
+    const response = await this.api.post(`/settings/api-keys/${id}/regenerate/`)
+    return response.data
+  }
+
+  async revokeAPIKey(id: number): Promise<void> {
+    await this.api.post(`/settings/api-keys/${id}/revoke/`)
+  }
+
+  // API Endpoints 管理
+  async getAPIEndpoints(params?: { 
+    page?: number
+    page_size?: number
+    search?: string
+  }): Promise<PaginatedResponse<APIEndpoint>> {
+    const response = await this.api.get('/settings/api-endpoints/', { params })
+    return response.data
+  }
+
+  async getAPIEndpoint(id: number): Promise<APIEndpoint> {
+    const response = await this.api.get(`/settings/api-endpoints/${id}/`)
+    return response.data
+  }
+
+  async createAPIEndpoint(endpointData: {
+    path: string
+    method: string
+    description?: string
+    rate_limit?: number
+    auth_required?: boolean
+    permissions?: string[]
+  }): Promise<APIEndpoint> {
+    const response = await this.api.post('/settings/api-endpoints/', endpointData)
+    return response.data
+  }
+
+  async updateAPIEndpoint(id: number, endpointData: {
+    path?: string
+    method?: string
+    description?: string
+    rate_limit?: number
+    auth_required?: boolean
+    permissions?: string[]
+    is_active?: boolean
+  }): Promise<APIEndpoint> {
+    const response = await this.api.put(`/settings/api-endpoints/${id}/`, endpointData)
+    return response.data
+  }
+
+  async deleteAPIEndpoint(id: number): Promise<void> {
+    await this.api.delete(`/settings/api-endpoints/${id}/`)
+  }
+
+  // 系统设置管理
+  async getSystemSettings(params?: { 
+    page?: number
+    page_size?: number
+    search?: string
+    category?: string
+  }): Promise<PaginatedResponse<SystemSetting>> {
+    const response = await this.api.get('/settings/system-settings/', { params })
+    return response.data
+  }
+
+  async getSystemSettingsByCategory(category: string): Promise<PaginatedResponse<SystemSetting>> {
+    const response = await this.api.get(`/settings/system-settings/`, { 
+      params: { category, page_size: 1000 } 
+    })
+    return response.data
+  }
+
+  async getSystemSetting(id: number): Promise<SystemSetting> {
+    const response = await this.api.get(`/settings/system-settings/${id}/`)
+    return response.data
+  }
+
+  async updateSystemSetting(id: number, settingData: {
+    value?: string
+    description?: string
+    is_encrypted?: boolean
+  }): Promise<SystemSetting> {
+    const response = await this.api.put(`/settings/system-settings/${id}/`, settingData)
+    return response.data
+  }
+
+  async bulkUpdateSystemSettings(updates: Array<{
+    id: number
+    value: string
+  }>): Promise<SystemSetting[]> {
+    const response = await this.api.post('/settings/system-settings/bulk-update/', { updates })
+    return response.data
+  }
+
+  // 系统监控
+  async getSystemMonitoring(): Promise<SystemMonitoringData> {
+    const response = await this.api.get('/settings/system-monitoring/')
+    return response.data
+  }
+
+  async getSystemHealth(): Promise<{
+    status: 'healthy' | 'warning' | 'critical'
+    services: Array<{
+      name: string
+      status: 'running' | 'stopped' | 'error'
+      message?: string
+    }>
+    uptime: number
+    last_check: string
+  }> {
+    const response = await this.api.get('/settings/system-monitoring/health/')
+    return response.data
+  }
+
+  async getSystemMonitoringHistory(params?: {
+    start_date?: string
+    end_date?: string
+    metric?: string
+  }): Promise<Array<{
+    timestamp: string
+    cpu_usage: number
+    memory_usage: number
+    disk_usage: number
+  }>> {
+    const response = await this.api.get('/settings/system-monitoring/history/', { params })
     return response.data
   }
 }

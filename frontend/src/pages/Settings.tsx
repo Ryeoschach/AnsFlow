@@ -33,6 +33,14 @@ import {
 import GitCredentialManager from '../components/git/GitCredentialManager'
 import KubernetesSettings from '../components/kubernetes/KubernetesSettings'
 import DockerRegistrySettings from '../components/docker/DockerRegistrySettings'
+import UserManagement from '../components/settings/UserManagement'
+import AuditLogs from '../components/settings/AuditLogs'
+import SystemMonitoring from '../components/settings/SystemMonitoring'
+import ApiSettingsComponent from '../components/settings/ApiSettings'
+import TeamManagement from '../components/settings/TeamManagement'
+import GlobalConfiguration from '../components/settings/GlobalConfiguration'
+import NotificationSettingsComponent from '../components/settings/NotificationSettings'
+import SystemBackup from '../components/settings/SystemBackup'
 import { usePermissions, Permission } from '../hooks/usePermissions'
 import PermissionGuard from '../components/common/PermissionGuard'
 
@@ -50,30 +58,6 @@ interface SettingModule {
   permission?: Permission | Permission[]
   category: 'security' | 'integration' | 'system' | 'user'
 }
-
-// 用户和权限管理组件
-const UserManagement: React.FC = () => (
-  <Card title="用户管理" size="small">
-    <Alert
-      message="功能开发中"
-      description="用户账户管理、角色权限配置等功能正在开发中..."
-      type="info"
-      showIcon
-    />
-  </Card>
-)
-
-// 系统监控组件
-const SystemMonitoring: React.FC = () => (
-  <Card title="系统监控" size="small">
-    <Alert
-      message="功能开发中"
-      description="系统性能监控、日志查看、健康检查等功能正在开发中..."
-      type="info"
-      showIcon
-    />
-  </Card>
-)
 
 // 通知设置组件
 const NotificationSettings: React.FC = () => (
@@ -105,18 +89,6 @@ const ApiSettings: React.FC = () => (
     <Alert
       message="功能开发中"
       description="API密钥管理、访问控制、限流配置等功能正在开发中..."
-      type="info"
-      showIcon
-    />
-  </Card>
-)
-
-// 审计日志组件
-const AuditLogs: React.FC = () => (
-  <Card title="审计日志" size="small">
-    <Alert
-      message="功能开发中"
-      description="操作日志、访问记录、合规报告等功能正在开发中..."
       type="info"
       showIcon
     />
@@ -160,28 +132,10 @@ const ExperimentalFeatures: React.FC = () => (
 )
 
 // 团队管理组件
-const TeamManagement: React.FC = () => (
-  <Card title="团队管理" size="small">
-    <Alert
-      message="功能开发中"
-      description="团队创建、成员管理、权限分配等功能正在开发中..."
-      type="info"
-      showIcon
-    />
-  </Card>
-)
+const TeamManagementComponent: React.FC = () => <TeamManagement />
 
 // 全局配置组件
-const GlobalConfiguration: React.FC = () => (
-  <Card title="全局配置" size="small">
-    <Alert
-      message="功能开发中"
-      description="系统级配置、环境变量、功能开关等设置正在开发中..."
-      type="info"
-      showIcon
-    />
-  </Card>
-)
+const GlobalConfigurationComponent: React.FC = () => <GlobalConfiguration />
 
 // 工具集成组件
 const ToolIntegration: React.FC = () => (
@@ -235,7 +189,7 @@ const Settings: React.FC = () => {
       title: 'API设置',
       description: 'API密钥和访问控制',
       icon: <ApiOutlined />,
-      component: ApiSettings,
+      component: ApiSettingsComponent,
       category: 'security',
       permission: Permission.API_CONFIG_VIEW
     },
@@ -291,7 +245,7 @@ const Settings: React.FC = () => {
       title: '通知设置',
       description: '邮件、Webhook等通知配置',
       icon: <NotificationOutlined />,
-      component: NotificationSettings,
+      component: NotificationSettingsComponent,
       category: 'integration',
       permission: Permission.INTEGRATION_VIEW
     },
@@ -302,7 +256,7 @@ const Settings: React.FC = () => {
       title: '全局配置',
       description: '系统级配置和环境设置',
       icon: <GlobalOutlined />,
-      component: GlobalConfiguration,
+      component: GlobalConfigurationComponent,
       category: 'system',
       permission: Permission.SYSTEM_CONFIG_VIEW
     },
@@ -320,7 +274,7 @@ const Settings: React.FC = () => {
       title: '数据备份',
       description: '数据备份和恢复管理',
       icon: <SafetyOutlined />,
-      component: DataBackup,
+      component: SystemBackup,
       category: 'system',
       permission: Permission.BACKUP_VIEW
     },
@@ -350,7 +304,7 @@ const Settings: React.FC = () => {
       title: '团队管理',
       description: '团队和协作管理',
       icon: <TeamOutlined />,
-      component: TeamManagement,
+      component: TeamManagementComponent,
       category: 'user',
       permission: Permission.TEAM_VIEW
     }

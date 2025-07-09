@@ -6,11 +6,12 @@ import json
 import yaml
 from django.shortcuts import get_object_or_404
 from rest_framework import viewsets, status
-from rest_framework.decorators import action
+from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
 from celery import current_app
+import psutil
 
 from .models import (
     DockerRegistry, DockerImage, DockerImageVersion,
@@ -438,3 +439,218 @@ class DockerComposeViewSet(viewsets.ModelViewSet):
         return Response({
             'template': yaml.dump(template, default_flow_style=False)
         })
+
+
+# 系统级别的Docker API函数
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def docker_system_info(request):
+    """获取Docker系统信息"""
+    try:
+        client = docker.from_env()
+        
+        # 获取Docker系统信息
+        docker_info = client.info()
+        docker_version = client.version()
+        
+        return Response({
+            'docker_version': docker_version.get('Version', 'Unknown'),
+            'api_version': docker_version.get('ApiVersion', 'Unknown'),
+            'server_version': docker_info.get('ServerVersion', 'Unknown'),
+            'kernel_version': docker_info.get('KernelVersion', 'Unknown'),
+            'operating_system': docker_info.get('OperatingSystem', 'Unknown'),
+            'architecture': docker_info.get('Architecture', 'Unknown'),
+            'total_memory': docker_info.get('MemTotal', 0),
+            'containers': docker_info.get('Containers', 0),
+            'running_containers': docker_info.get('ContainersRunning', 0),
+            'paused_containers': docker_info.get('ContainersPaused', 0),
+            'stopped_containers': docker_info.get('ContainersStopped', 0),
+            'images': docker_info.get('Images', 0),
+            'storage_driver': docker_info.get('Driver', 'Unknown'),
+            'logging_driver': docker_info.get('LoggingDriver', 'Unknown'),
+            'plugins': {
+                'volume': docker_info.get('Plugins', {}).get('Volume', []),
+                'network': docker_info.get('Plugins', {}).get('Network', []),
+                'authorization': docker_info.get('Plugins', {}).get('Authorization', [])
+            },
+            'registry_config': docker_info.get('RegistryConfig', {}),
+            'warnings': docker_info.get('Warnings', [])
+        })
+        
+    except docker.errors.DockerException as e:
+        return Response({
+            'error': f'Docker连接失败: {str(e)}'
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        return Response({
+            'error': f'获取Docker系统信息失败: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def docker_system_stats(request):
+    """获取Docker系统资源统计"""
+    try:
+        # 从数据库获取统计信息
+        total_images = DockerImage.objects.count()
+        total_containers = DockerContainer.objects.count()
+        running_containers = DockerContainer.objects.filter(status='running').count()
+        total_registries = DockerRegistry.objects.count()
+        total_compose_projects = DockerCompose.objects.count()
+        
+        # 尝试从Docker获取磁盘使用情况
+        disk_usage = {
+            'images': 0,
+            'containers': 0,
+            'volumes': 0,
+            'build_cache': 0
+        }
+        
+        try:
+            client = docker.from_env()
+            df_info = client.df()
+            
+            # 计算镜像磁盘使用
+            if 'Images' in df_info and isinstance(df_info['Images'], list):
+                for image in df_info['Images']:
+                    if isinstance(image, dict):
+                        disk_usage['images'] += image.get('Size', 0)
+            
+            # 计算容器磁盘使用
+            if 'Containers' in df_info and isinstance(df_info['Containers'], list):
+                for container in df_info['Containers']:
+                    if isinstance(container, dict):
+                        disk_usage['containers'] += container.get('SizeRw', 0)
+            
+            # 计算数据卷磁盘使用
+            if 'Volumes' in df_info and isinstance(df_info['Volumes'], list):
+                for volume in df_info['Volumes']:
+                    if isinstance(volume, dict):
+                        disk_usage['volumes'] += volume.get('Size', 0)
+            
+            # 计算构建缓存磁盘使用
+            if 'BuildCache' in df_info and isinstance(df_info['BuildCache'], dict):
+                disk_usage['build_cache'] = df_info['BuildCache'].get('Size', 0)
+            
+        except docker.errors.DockerException:
+            # 如果Docker不可用，使用默认值
+            pass
+        
+        return Response({
+            'total_images': total_images,
+            'total_containers': total_containers,
+            'running_containers': running_containers,
+            'total_registries': total_registries,
+            'total_compose_projects': total_compose_projects,
+            'disk_usage': disk_usage
+        })
+        
+    except Exception as e:
+        return Response({
+            'error': f'获取Docker系统统计失败: {str(e)}'
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def docker_system_cleanup(request):
+    """Docker系统清理"""
+    try:
+        client = docker.from_env()
+        
+        options = request.data if request.data else {}
+        cleanup_containers = options.get('containers', False)
+        cleanup_images = options.get('images', False)
+        cleanup_volumes = options.get('volumes', False)
+        cleanup_networks = options.get('networks', False)
+        
+        results = {
+            'success': True,
+            'cleaned_up': [],
+            'errors': [],
+            'space_reclaimed': 0
+        }
+        
+        # 清理容器
+        if cleanup_containers:
+            try:
+                # 删除已停止的容器
+                containers = client.containers.list(all=True, filters={'status': 'exited'})
+                for container in containers:
+                    try:
+                        container.remove()
+                        results['cleaned_up'].append(f'Container: {container.short_id}')
+                    except Exception as e:
+                        results['errors'].append(f'Container {container.short_id}: {str(e)}')
+            except Exception as e:
+                results['errors'].append(f'清理容器失败: {str(e)}')
+        
+        # 清理镜像
+        if cleanup_images:
+            try:
+                # 删除悬空镜像
+                dangling_images = client.images.list(filters={'dangling': True})
+                for image in dangling_images:
+                    try:
+                        client.images.remove(image.id, force=True)
+                        results['cleaned_up'].append(f'Image: {image.short_id}')
+                    except Exception as e:
+                        results['errors'].append(f'Image {image.short_id}: {str(e)}')
+            except Exception as e:
+                results['errors'].append(f'清理镜像失败: {str(e)}')
+        
+        # 清理数据卷
+        if cleanup_volumes:
+            try:
+                # 删除未使用的数据卷
+                volumes = client.volumes.list(filters={'dangling': True})
+                for volume in volumes:
+                    try:
+                        volume.remove()
+                        results['cleaned_up'].append(f'Volume: {volume.name}')
+                    except Exception as e:
+                        results['errors'].append(f'Volume {volume.name}: {str(e)}')
+            except Exception as e:
+                results['errors'].append(f'清理数据卷失败: {str(e)}')
+        
+        # 清理网络
+        if cleanup_networks:
+            try:
+                # 删除未使用的网络
+                networks = client.networks.list()
+                for network in networks:
+                    if network.name not in ['bridge', 'host', 'none'] and not network.containers:
+                        try:
+                            network.remove()
+                            results['cleaned_up'].append(f'Network: {network.name}')
+                        except Exception as e:
+                            results['errors'].append(f'Network {network.name}: {str(e)}')
+            except Exception as e:
+                results['errors'].append(f'清理网络失败: {str(e)}')
+        
+        # 如果有错误但也有成功清理的项目，设置为部分成功
+        if results['errors'] and results['cleaned_up']:
+            results['success'] = 'partial'
+        elif results['errors']:
+            results['success'] = False
+        
+        return Response(results)
+        
+    except docker.errors.DockerException as e:
+        return Response({
+            'success': False,
+            'error': f'Docker连接失败: {str(e)}',
+            'cleaned_up': [],
+            'errors': [str(e)],
+            'space_reclaimed': 0
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': f'Docker系统清理失败: {str(e)}',
+            'cleaned_up': [],
+            'errors': [str(e)],
+            'space_reclaimed': 0
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
