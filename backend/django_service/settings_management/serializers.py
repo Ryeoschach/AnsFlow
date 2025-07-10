@@ -229,12 +229,69 @@ class APIKeySerializer(serializers.ModelSerializer):
 
 class APIEndpointSerializer(serializers.ModelSerializer):
     """API端点序列化器"""
+    usage_stats = serializers.SerializerMethodField()
+    is_deprecated = serializers.BooleanField(source='deprecated', read_only=True)
+    is_active = serializers.BooleanField(source='is_enabled')  # 前端使用 is_active
+    request_body_schema = serializers.JSONField(source='request_schema', required=False, allow_null=True)  # 前端使用 request_body_schema
     
     class Meta:
         model = APIEndpoint
-        fields = ['id', 'name', 'path', 'method', 'description', 'is_enabled',
-                 'rate_limit', 'auth_required', 'permissions_required', 
-                 'created_at', 'updated_at']
+        fields = ['id', 'name', 'path', 'method', 'description', 'service_type',
+                 'is_enabled', 'is_active', 'auth_required', 'rate_limit', 'permissions_required',
+                 'request_schema', 'request_body_schema', 'response_schema', 'parameters', 'examples',
+                 'call_count', 'last_called_at', 'avg_response_time',
+                 'tags', 'version', 'deprecated', 'is_deprecated',
+                 'usage_stats', 'created_at', 'updated_at']
+        read_only_fields = ['call_count', 'last_called_at', 'avg_response_time']
+    
+    def create(self, validated_data):
+        """创建API端点，处理字段映射"""
+        # 处理 is_active -> is_enabled 映射
+        if 'is_enabled' in validated_data:
+            validated_data['is_enabled'] = validated_data['is_enabled']
+        
+        # 处理 request_body_schema -> request_schema 映射
+        if 'request_schema' in validated_data:
+            validated_data['request_schema'] = validated_data['request_schema']
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        """更新API端点，处理字段映射"""
+        # 处理 is_active -> is_enabled 映射
+        if 'is_enabled' in validated_data:
+            instance.is_enabled = validated_data['is_enabled']
+        
+        # 处理 request_body_schema -> request_schema 映射
+        if 'request_schema' in validated_data:
+            instance.request_schema = validated_data['request_schema']
+        
+        return super().update(instance, validated_data)
+    
+    def get_usage_stats(self, obj):
+        """获取使用统计信息"""
+        return {
+            'call_count': obj.call_count,
+            'avg_response_time': round(obj.avg_response_time, 2) if obj.avg_response_time else 0,
+            'last_called_at': obj.last_called_at,
+            'calls_per_day': 0,  # 这里可以后续计算真实的每日调用量
+        }
+
+class APIEndpointListSerializer(serializers.ModelSerializer):
+    """API端点列表序列化器（简化版）"""
+    is_active = serializers.BooleanField(source='is_enabled')  # 前端使用 is_active
+    
+    class Meta:
+        model = APIEndpoint
+        fields = ['id', 'name', 'path', 'method', 'service_type', 'is_enabled', 'is_active',
+                 'auth_required', 'deprecated', 'call_count', 'avg_response_time',
+                 'created_at']
+
+class APIEndpointTestSerializer(serializers.Serializer):
+    """API端点测试序列化器"""
+    params = serializers.JSONField(required=False, help_text="查询参数")
+    body = serializers.JSONField(required=False, help_text="请求体")
+    headers = serializers.JSONField(required=False, help_text="自定义请求头")
 
 
 class SystemSettingSerializer(serializers.ModelSerializer):

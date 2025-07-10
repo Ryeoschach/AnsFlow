@@ -16,7 +16,7 @@ import {
   AuditLog, SystemAlert, GlobalConfig, UserProfile, BackupRecord, SystemMonitoringData,
   CreateUserRequest, UpdateUserRequest, CreateGlobalConfigRequest, UpdateGlobalConfigRequest,
   CreateBackupRequest, UpdateNotificationConfigRequest, NotificationConfig, PaginatedResponse,
-  APIKey, APIEndpoint, SystemSetting, Team, TeamMembership, BackupSchedule
+  APIKey, APIEndpoint, APIStatistics, SystemSetting, Team, TeamMembership, BackupSchedule
 } from '../types'
 
 // Docker types
@@ -1722,28 +1722,37 @@ class ApiService {
     return response.data
   }
 
-  async createAPIEndpoint(endpointData: {
-    path: string
-    method: string
-    description?: string
-    rate_limit?: number
-    auth_required?: boolean
-    permissions?: string[]
-  }): Promise<APIEndpoint> {
-    const response = await this.api.post('/settings/api-endpoints/', endpointData)
+  async createAPIEndpoint(endpointData: Partial<APIEndpoint>): Promise<APIEndpoint> {
+    // 直接发送数据，序列化器会处理字段映射
+    const cleanData = {
+      ...endpointData
+    };
+    
+    // 清理不需要发送到后端的字段
+    delete cleanData.id;
+    delete cleanData.created_at;
+    delete cleanData.updated_at;
+    delete cleanData.usage_stats;
+    delete cleanData.is_deprecated;
+    
+    const response = await this.api.post('/settings/api-endpoints/', cleanData)
     return response.data
   }
 
-  async updateAPIEndpoint(id: number, endpointData: {
-    path?: string
-    method?: string
-    description?: string
-    rate_limit?: number
-    auth_required?: boolean
-    permissions?: string[]
-    is_active?: boolean
-  }): Promise<APIEndpoint> {
-    const response = await this.api.put(`/settings/api-endpoints/${id}/`, endpointData)
+  async updateAPIEndpoint(id: number, endpointData: Partial<APIEndpoint>): Promise<APIEndpoint> {
+    // 直接发送数据，序列化器会处理字段映射
+    const cleanData = {
+      ...endpointData
+    };
+    
+    // 清理不需要发送到后端的字段
+    delete cleanData.id;
+    delete cleanData.created_at;
+    delete cleanData.updated_at;
+    delete cleanData.usage_stats;
+    delete cleanData.is_deprecated;
+    
+    const response = await this.api.put(`/settings/api-endpoints/${id}/`, cleanData)
     return response.data
   }
 
@@ -1751,7 +1760,39 @@ class ApiService {
     await this.api.delete(`/settings/api-endpoints/${id}/`)
   }
 
-  // 系统设置管理
+  async discoverAPIEndpoints(): Promise<{
+    message: string
+    discovered_count: number
+    created_count: number
+    updated_count: number
+    endpoints: APIEndpoint[]
+  }> {
+    const response = await this.api.post('/settings/api-endpoints/auto_discover/')
+    return response.data
+  }
+
+  async testAPIEndpoint(id: number, testData?: {
+    params?: Record<string, any>
+    body?: Record<string, any>
+  }): Promise<{
+    success: boolean
+    status_code?: number
+    response_time_ms?: number
+    response_data?: any
+    headers?: Record<string, string>
+    error?: string
+    tested_at: string
+  }> {
+    const response = await this.api.post(`/settings/api-endpoints/${id}/test_endpoint/`, testData || {})
+    return response.data
+  }
+
+  async getAPIEndpointStatistics(): Promise<APIStatistics> {
+    const response = await this.api.get('/settings/api-endpoints/statistics/')
+    return response.data
+  }
+
+  // 系统设置管理方法
   async getSystemSettings(params?: { 
     page?: number
     page_size?: number
@@ -1791,37 +1832,19 @@ class ApiService {
     return response.data
   }
 
-  // 系统监控
+  // 系统监控方法
   async getSystemMonitoring(): Promise<SystemMonitoringData> {
     const response = await this.api.get('/settings/system-monitoring/')
     return response.data
   }
 
   async getSystemHealth(): Promise<{
-    status: 'healthy' | 'warning' | 'critical'
-    services: Array<{
-      name: string
-      status: 'running' | 'stopped' | 'error'
-      message?: string
-    }>
-    uptime: number
-    last_check: string
+    status: string
+    services: Record<string, any>
+    database: { status: string; connection_count?: number }
+    redis: { status: string; memory_usage?: number }
   }> {
     const response = await this.api.get('/settings/system-monitoring/health/')
-    return response.data
-  }
-
-  async getSystemMonitoringHistory(params?: {
-    start_date?: string
-    end_date?: string
-    metric?: string
-  }): Promise<Array<{
-    timestamp: string
-    cpu_usage: number
-    memory_usage: number
-    disk_usage: number
-  }>> {
-    const response = await this.api.get('/settings/system-monitoring/history/', { params })
     return response.data
   }
 }

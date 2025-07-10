@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react'
+import { useAuthStore } from '../stores/auth'
 
 // 权限枚举
 export enum Permission {
@@ -35,6 +36,12 @@ export enum Permission {
   // API设置权限
   API_CONFIG_VIEW = 'api_config:view',
   API_CONFIG_EDIT = 'api_config:edit',
+  API_ENDPOINT_VIEW = 'api_endpoint:view',
+  API_ENDPOINT_CREATE = 'api_endpoint:create',
+  API_ENDPOINT_EDIT = 'api_endpoint:edit',
+  API_ENDPOINT_DELETE = 'api_endpoint:delete',
+  API_ENDPOINT_TEST = 'api_endpoint:test',
+  API_ENDPOINT_DISCOVER = 'api_endpoint:discover',
   
   // 监控权限
   MONITORING_VIEW = 'monitoring:view',
@@ -58,7 +65,8 @@ export enum UserRole {
   ADMIN = 'admin',
   MANAGER = 'manager',
   DEVELOPER = 'developer',
-  VIEWER = 'viewer'
+  VIEWER = 'viewer',
+  USER = 'user'
 }
 
 // 角色权限映射
@@ -84,6 +92,12 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     Permission.AUDIT_LOG_VIEW,
     Permission.API_CONFIG_VIEW,
     Permission.API_CONFIG_EDIT,
+    Permission.API_ENDPOINT_VIEW,
+    Permission.API_ENDPOINT_CREATE,
+    Permission.API_ENDPOINT_EDIT,
+    Permission.API_ENDPOINT_DELETE,
+    Permission.API_ENDPOINT_TEST,
+    Permission.API_ENDPOINT_DISCOVER,
     Permission.MONITORING_VIEW,
     Permission.BACKUP_VIEW,
     Permission.BACKUP_CREATE,
@@ -101,6 +115,8 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
     Permission.GIT_CREDENTIAL_TEST,
     Permission.SYSTEM_CONFIG_VIEW,
     Permission.AUDIT_LOG_VIEW,
+    Permission.API_ENDPOINT_VIEW,
+    Permission.API_ENDPOINT_TEST,
     Permission.MONITORING_VIEW,
     Permission.INTEGRATION_VIEW
   ],
@@ -114,6 +130,11 @@ const ROLE_PERMISSIONS: Record<UserRole, Permission[]> = {
   ],
   
   [UserRole.VIEWER]: [
+    Permission.GIT_CREDENTIAL_VIEW,
+    Permission.MONITORING_VIEW
+  ],
+  
+  [UserRole.USER]: [
     Permission.GIT_CREDENTIAL_VIEW,
     Permission.MONITORING_VIEW
   ]
@@ -132,27 +153,32 @@ interface UserInfo {
 
 // 权限管理Hook
 export const usePermissions = () => {
-  const [userInfo, setUserInfo] = useState<UserInfo | null>(null)
+  const { user, isAuthenticated } = useAuthStore()
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    // 模拟获取用户信息和权限
-    // 实际实现中应该从API获取
-    const mockUserInfo: UserInfo = {
-      id: 1,
-      username: 'admin',
-      email: 'admin@example.com',
-      role: UserRole.SUPER_ADMIN,
-      permissions: ROLE_PERMISSIONS[UserRole.SUPER_ADMIN],
-      is_staff: true,
-      is_superuser: true
-    }
-    
-    setTimeout(() => {
-      setUserInfo(mockUserInfo)
+    // 如果用户已认证，则权限已经加载完成
+    if (isAuthenticated && user) {
       setLoading(false)
-    }, 100)
-  }, [])
+    } else if (!isAuthenticated) {
+      setLoading(false)
+    }
+  }, [isAuthenticated, user])
+
+  // 构建用户信息，包括权限
+  const userInfo: UserInfo | null = user ? {
+    id: user.id,
+    username: user.username,
+    email: user.email,
+    role: user.is_staff ? (user.is_superuser ? UserRole.SUPER_ADMIN : UserRole.ADMIN) : UserRole.USER,
+    permissions: user.is_superuser 
+      ? ROLE_PERMISSIONS[UserRole.SUPER_ADMIN]
+      : user.is_staff 
+        ? ROLE_PERMISSIONS[UserRole.ADMIN]
+        : ROLE_PERMISSIONS[UserRole.USER],
+    is_staff: user.is_staff,
+    is_superuser: user.is_superuser || false
+  } : null
 
   // 检查是否有指定权限
   const hasPermission = (permission: Permission | Permission[]): boolean => {
@@ -206,7 +232,13 @@ export const usePermissions = () => {
     hasRole,
     getRolePermissions,
     isAdmin,
-    isSuperAdmin
+    isSuperAdmin,
+    // API端点相关权限便捷方法 - 使用函数形式避免初始化时权限检查失败
+    canViewAPIEndpoints: () => hasPermission(Permission.API_ENDPOINT_VIEW),
+    canEditAPIEndpoints: () => hasPermission(Permission.API_ENDPOINT_EDIT),
+    canDeleteAPIEndpoints: () => hasPermission(Permission.API_ENDPOINT_DELETE),
+    canTestAPIEndpoints: () => hasPermission(Permission.API_ENDPOINT_TEST),
+    canDiscoverAPIEndpoints: () => hasPermission(Permission.API_ENDPOINT_DISCOVER),
   }
 }
 

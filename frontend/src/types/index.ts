@@ -23,6 +23,7 @@ export interface User {
   last_name: string
   is_active: boolean
   is_staff: boolean
+  is_superuser?: boolean
   date_joined: string
   last_login?: string
 }
@@ -840,119 +841,244 @@ export interface BackupRecord {
   metadata?: Record<string, any>
 }
 
+// 系统设置
+export interface SystemSetting {
+  id: number
+  key: string
+  value: any
+  description?: string
+  category: string  // 去掉可选标记，确保category不为undefined
+  data_type?: 'string' | 'number' | 'boolean' | 'json' | 'password'
+  is_editable: boolean
+  is_public?: boolean
+  is_encrypted?: boolean
+  validation_rules?: Record<string, any>
+  created_at: string
+  updated_at: string
+}
+
+// 团队管理
+export interface Team {
+  id: number
+  name: string
+  description?: string
+  avatar?: string
+  is_active: boolean
+  created_by: number
+  created_by_username?: string
+  created_at: string
+  updated_at: string
+  member_count?: number
+  project_count?: number
+}
+
+export interface TeamMembership {
+  id: number
+  team: number
+  user: number
+  role: 'owner' | 'admin' | 'member'
+  permissions: string[]
+  joined_at: string
+  user_username?: string
+  user_email?: string
+  team_name?: string
+  user_info?: {
+    username: string
+    email: string
+  }
+}
+
 // 备份计划
 export interface BackupSchedule {
   id: number
   name: string
   description?: string
-  backup_type: string
-  frequency: 'daily' | 'weekly' | 'monthly' | 'custom'
-  cron_expression?: string
-  retain_days: number
-  retention_days?: number  // 别名，向后兼容
-  status: 'active' | 'inactive' | 'paused'
-  is_active?: boolean  // 别名字段
-  notification_config: Record<string, any>
-  last_run_at?: string
-  last_run_time?: string  // 别名
-  next_run_at?: string
-  next_run_time?: string  // 别名
+  backup_type: 'full' | 'incremental' | 'differential'
+  schedule_type: 'manual' | 'daily' | 'weekly' | 'monthly'
+  schedule_time?: string
+  retention_days: number
+  is_active: boolean
+  status?: 'active' | 'inactive'
+  last_backup_at?: string
+  next_backup_at?: string
+  next_run_time?: string
   created_by: number
+  created_by_username?: string
   created_at: string
   updated_at: string
 }
 
-// 系统监控数据
-export interface SystemMonitoringData {
-  system_info: {
-    hostname: string
-    platform: string
-    cpu_count: number
-    memory_total: number
-    disk_total: number
-  }
-  performance_metrics: {
-    cpu_usage: number
-    memory_usage: number
-    disk_usage: number
-    network_io: {
-      bytes_sent: number
-      bytes_recv: number
-    }
-    disk_io: {
-      read_bytes: number
-      write_bytes: number
-    }
-  }
-  database_metrics: {
-    connection_count: number
-    active_queries: number
-    slow_queries: number
-    database_size: number
-  }
-  application_metrics: {
-    active_users: number
-    active_pipelines: number
-    queue_size: number
-    error_rate: number
-  }
-  timestamp: string
-}
+// HTTP方法类型
+export type HTTPMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'OPTIONS' | 'HEAD'
 
-// Settings API 请求/响应类型
-export interface CreateUserRequest {
-  username: string
-  email: string
-  first_name: string
-  last_name: string
-  password: string
-  is_staff?: boolean
-  is_active?: boolean
-}
+// 服务类型
+export type ServiceType = 'django' | 'fastapi' | 'other'
 
-export interface UpdateUserRequest {
-  username?: string
-  email?: string
-  first_name?: string
-  last_name?: string
-  is_staff?: boolean
-  is_active?: boolean
-}
+// 字段类型定义
+export type FieldType = 'string' | 'number' | 'integer' | 'boolean' | 'object' | 'array' | 'file'
 
-export interface CreateGlobalConfigRequest {
-  key: string
-  value: string
+// 请求体类型
+export type RequestBodyType = 'json' | 'form-data' | 'x-www-form-urlencoded' | 'raw' | 'binary'
+
+// 字段Schema定义
+export interface FieldSchema {
+  type: FieldType
   description?: string
-  config_type: 'string' | 'number' | 'boolean' | 'json'
-  is_encrypted?: boolean
-  category: string
+  required?: boolean
+  example?: any
+  enum?: any[]
+  format?: string  // 如 'email', 'date', 'url' 等
+  pattern?: string  // 正则表达式
+  minLength?: number
+  maxLength?: number
+  minimum?: number
+  maximum?: number
+  items?: FieldSchema  // 用于array类型
+  properties?: Record<string, FieldSchema>  // 用于object类型
+  default?: any
 }
 
-export interface UpdateGlobalConfigRequest {
-  value?: string
+// 请求体Schema定义
+export interface RequestBodySchema {
+  type: RequestBodyType
   description?: string
-  is_encrypted?: boolean
+  required?: boolean
+  content_type?: string
+  schema?: FieldSchema
+  example?: any
+  examples?: Record<string, {
+    summary?: string
+    description?: string
+    value: any
+  }>
 }
 
-export interface UpdateNotificationConfigRequest {
-  name?: string
-  type?: 'email' | 'webhook' | 'slack' | 'dingtalk' | 'wechat'
-  config?: Record<string, any>
-  enabled?: boolean
+// 响应Schema定义
+export interface ResponseSchema {
+  status_code: number
+  description?: string
+  content_type?: string
+  schema?: FieldSchema
+  example?: any
+  headers?: Record<string, FieldSchema>
 }
 
-export interface CreateBackupRequest {
+// API参数定义
+export interface APIParameter {
   name: string
-  backup_type: 'full' | 'incremental' | 'differential'
+  in: 'query' | 'header' | 'path' | 'cookie'
+  type: FieldType
+  required?: boolean
   description?: string
+  example?: any
+  enum?: any[]
+  default?: any
 }
 
-// API 管理相关类型
+// API端点发现结果
+export interface APIDiscoveryResult {
+  discovered_count: number
+  updated_count: number
+  failed_count?: number
+  discovered_endpoints?: APIEndpoint[]
+}
+
+// API统计信息
+export interface APIStatistics {
+  total_endpoints: number
+  active_endpoints: number
+  deprecated_endpoints: number
+  service_type_breakdown: Record<ServiceType, number>
+  method_breakdown: Record<HTTPMethod, number>
+  avg_response_time: number
+  total_calls: number
+  calls_today: number
+  top_endpoints: Array<{
+    id: number
+    name: string
+    path: string
+    call_count: number
+    avg_response_time: number
+  }>
+}
+
+// API端点定义
+export interface APIEndpoint {
+  id: number
+  name: string
+  path: string
+  method: HTTPMethod
+  description?: string
+  service_type: ServiceType
+  
+  // 功能配置
+  is_enabled: boolean
+  auth_required: boolean
+  rate_limit: number
+  permissions_required: string[]
+  
+  // 状态字段
+  is_active: boolean
+  is_deprecated: boolean
+  documentation_url?: string
+  
+  // 新增：请求体和响应文档信息
+  request_body_schema?: RequestBodySchema
+  response_schemas?: ResponseSchema[]
+  parameters?: APIParameter[]
+  
+  // 兼容性字段（保持向后兼容）
+  request_schema?: Record<string, any>
+  response_schema?: Record<string, any>
+  examples?: {
+    request?: Record<string, any>
+    response?: Record<string, any>
+  }
+  
+  // 统计信息
+  call_count: number
+  last_called_at?: string
+  avg_response_time: number
+  
+  // 元数据
+  tags: string[]
+  version: string
+  deprecated: boolean
+  
+  created_at: string
+  updated_at: string
+  
+  // 计算字段
+  usage_stats?: {
+    call_count: number
+    avg_response_time: number
+    last_called_at?: string
+    calls_per_day: number
+  }
+}
+
+// API端点测试相关
+export interface APIEndpointTest {
+  params?: Record<string, any>
+  body?: Record<string, any>
+  headers?: Record<string, string>
+}
+
+export interface APITestResult {
+  success: boolean
+  status_code: number
+  response_time_ms: number
+  response_data: any
+  headers: Record<string, string>
+  tested_at: string
+  error?: string
+}
+
+// API密钥管理
 export interface APIKey {
   id: number
   name: string
   key: string
-  secret?: string
   permissions: string[]
   rate_limit: number
   status: 'active' | 'inactive' | 'expired'
@@ -965,68 +1091,105 @@ export interface APIKey {
   updated_at: string
 }
 
-export interface APIEndpoint {
-  id: number
-  path: string
-  method: string
-  description?: string
-  rate_limit?: number
-  auth_required: boolean
-  permissions: string[]
-  is_active: boolean
-  is_enabled?: boolean  // 别名字段
-  usage_count: number
-  created_by: number
-  created_by_username?: string
-  created_at: string
-  updated_at: string
+// 系统监控相关
+export interface SystemMonitoringData {
+  cpu_usage: number
+  memory_usage: number
+  disk_usage: number
+  network_io: {
+    bytes_sent: number
+    bytes_recv: number
+  }
+  load_average: number[]
+  uptime: number
+  timestamp: string
+  
+  // 性能指标
+  performance_metrics?: {
+    cpu_usage: number
+    memory_usage: number
+    disk_usage: number
+    network_io: {
+      bytes_sent: number
+      bytes_recv: number
+    }
+  }
+  
+  // 应用指标
+  application_metrics?: {
+    active_users: number
+    active_pipelines: number
+  }
+  
+  // 数据库指标
+  database_metrics?: {
+    connection_count: number
+    active_queries: number
+  }
+  
+  // 系统信息
+  system_info?: {
+    hostname: string
+    platform: string
+    cpu_count: number
+    memory_total: number
+  }
 }
 
-// 系统设置
-export interface SystemSetting {
-  id: number
+// 用户管理请求类型
+export interface CreateUserRequest {
+  username: string
+  email: string
+  password: string
+  first_name?: string
+  last_name?: string
+  is_active?: boolean
+  is_staff?: boolean
+  groups?: number[]
+  user_permissions?: number[]
+}
+
+export interface UpdateUserRequest {
+  username?: string
+  email?: string
+  first_name?: string
+  last_name?: string
+  is_active?: boolean
+  is_staff?: boolean
+  groups?: number[]
+  user_permissions?: number[]
+}
+
+// 全局配置请求类型
+export interface CreateGlobalConfigRequest {
   key: string
-  value: string
-  category: 'system' | 'feature' | 'environment' | 'integration'
-  data_type?: 'string' | 'number' | 'boolean' | 'json' | 'password'
-  description: string
-  is_encrypted: boolean
+  value: any
+  description?: string
+  category?: string
+  data_type?: string
   is_public?: boolean
-  validation_rules?: Record<string, any>
-  created_by: number
-  created_by_username?: string
-  created_at: string
-  updated_at: string
+  is_encrypted?: boolean
 }
 
-// 团队管理
-export interface Team {
-  id: number
+export interface UpdateGlobalConfigRequest {
+  value?: any
+  description?: string
+  category?: string
+  is_public?: boolean
+  is_encrypted?: boolean
+}
+
+// 备份请求类型
+export interface CreateBackupRequest {
   name: string
   description?: string
-  avatar?: string
-  is_private: boolean
-  is_active?: boolean
-  members_count?: number
-  created_by: number
-  created_by_username?: string
-  created_at: string
-  updated_at: string
+  backup_type: 'full' | 'incremental' | 'differential'
+  schedule_type: 'manual' | 'daily' | 'weekly' | 'monthly'
+  schedule_time?: string
+  retention_days: number
 }
 
-export interface TeamMembership {
-  id: number
-  team: number
-  team_name?: string
-  user: number
-  user_username?: string
-  user_email?: string
-  user_info?: {
-    username: string
-    email: string
-    avatar?: string
-  }
-  role: 'admin' | 'member' | 'viewer'
-  joined_at: string
-  created_at: string
+export interface UpdateNotificationConfigRequest {
+  enabled?: boolean
+  settings?: Record<string, any>
 }

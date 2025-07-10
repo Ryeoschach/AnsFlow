@@ -604,6 +604,245 @@ class APIEndpointViewSet(viewsets.ModelViewSet):
         # 这里可以实现自动扫描和同步系统API端点的逻辑
         return Response({'message': 'API端点同步完成'})
 
+    @action(detail=False, methods=['post'])
+    def auto_discover(self, request):
+        """自动发现API端点"""
+        try:
+            from django.urls import get_resolver
+            from django.urls.resolvers import URLPattern, URLResolver
+            from rest_framework import viewsets
+            import importlib
+            import inspect
+            
+            discovered_endpoints = []
+            
+            # 获取Django URL配置
+            resolver = get_resolver()
+            
+            def extract_endpoints(url_patterns, prefix=''):
+                for pattern in url_patterns:
+                    if isinstance(pattern, URLResolver):
+                        # 递归处理嵌套的URL
+                        extract_endpoints(pattern.url_patterns, prefix + str(pattern.pattern))
+                    elif isinstance(pattern, URLPattern):
+                        # 处理具体的URL模式
+                        path = prefix + str(pattern.pattern)
+                        if path.startswith('api/v1/'):
+                            # 清理路径
+                            clean_path = '/' + path.replace('^', '').replace('$', '').replace('\\', '')
+                            
+                            # 尝试获取视图类
+                            view_class = getattr(pattern.callback, 'cls', None)
+                            if view_class and hasattr(view_class, 'queryset'):
+                                # 检测HTTP方法
+                                methods = []
+                                if hasattr(view_class, 'list'):
+                                    methods.append('GET')
+                                if hasattr(view_class, 'create'):
+                                    methods.append('POST')
+                                if hasattr(view_class, 'update'):
+                                    methods.append('PUT')
+                                if hasattr(view_class, 'partial_update'):
+                                    methods.append('PATCH')
+                                if hasattr(view_class, 'destroy'):
+                                    methods.append('DELETE')
+                                
+                                # 获取模型和描述信息
+                                model_name = getattr(view_class.queryset.model, '__name__', 'Unknown')
+                                description = getattr(view_class, '__doc__', '').strip() or f"{model_name} API"
+                                
+                                for method in methods:
+                                    endpoint_data = {
+                                        'path': clean_path,
+                                        'method': method,
+                                        'name': f"{model_name} {method}",
+                                        'description': description,
+                                        'service_type': 'django',
+                                        'is_enabled': True,
+                                        'auth_required': True,
+                                        'rate_limit': 100
+                                    }
+                                    discovered_endpoints.append(endpoint_data)
+            
+            # 扫描Django URLs
+            extract_endpoints(resolver.url_patterns)
+            
+            # 批量创建或更新端点
+            created_count = 0
+            updated_count = 0
+            
+            for endpoint_data in discovered_endpoints:
+                endpoint, created = APIEndpoint.objects.get_or_create(
+                    path=endpoint_data['path'],
+                    method=endpoint_data['method'],
+                    defaults=endpoint_data
+                )
+                
+                if created:
+                    created_count += 1
+                else:
+                    # 更新现有端点信息
+                    for key, value in endpoint_data.items():
+                        if key not in ['path', 'method']:
+                            setattr(endpoint, key, value)
+                    endpoint.save()
+                    updated_count += 1
+            
+            return Response({
+                'message': 'API端点发现完成',
+                'discovered_count': len(discovered_endpoints),
+                'created_count': created_count,
+                'updated_count': updated_count,
+                'endpoints': discovered_endpoints[:10]  # 返回前10个作为示例
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'API端点发现失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def test_endpoint(self, request, pk=None):
+        """测试API端点"""
+        endpoint = self.get_object()
+        test_data = request.data
+        
+        try:
+            import requests
+            from django.conf import settings
+            import time
+            
+            # 构建完整URL
+            base_url = request.build_absolute_uri('/').rstrip('/')
+            full_url = f"{base_url}{endpoint.path}"
+            
+            # 准备请求参数
+            headers = {
+                'Content-Type': 'application/json',
+                'User-Agent': 'AnsFlow-API-Tester/1.0'
+            }
+            
+            # 添加认证头
+            if endpoint.auth_required and 'Authorization' in request.headers:
+                headers['Authorization'] = request.headers['Authorization']
+            
+            # 添加自定义请求头
+            custom_headers = test_data.get('headers', {})
+            if custom_headers:
+                headers.update(custom_headers)
+            
+            # 准备请求参数和请求体
+            params = test_data.get('params', {})
+            body = test_data.get('body')
+            
+            # 设置超时时间
+            timeout = 30
+            
+            # 发送请求
+            method = endpoint.method.lower()
+            
+            start_time = time.time()
+            
+            request_kwargs = {
+                'headers': headers,
+                'timeout': timeout,
+                'verify': True  # SSL验证
+            }
+            
+            if method == 'get':
+                response = requests.get(full_url, params=params, **request_kwargs)
+            elif method == 'post':
+                response = requests.post(full_url, json=body, params=params, **request_kwargs)
+            elif method == 'put':
+                response = requests.put(full_url, json=body, params=params, **request_kwargs)
+            elif method == 'patch':
+                response = requests.patch(full_url, json=body, params=params, **request_kwargs)
+            elif method == 'delete':
+                response = requests.delete(full_url, params=params, **request_kwargs)
+            else:
+                return Response({
+                    'success': False,
+                    'error': f'不支持的HTTP方法: {method}',
+                    'tested_at': timezone.now().isoformat()
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            end_time = time.time()
+            response_time = (end_time - start_time) * 1000  # 毫秒
+            
+            # 解析响应
+            try:
+                response_data = response.json()
+            except:
+                response_data = response.text
+            
+            # 判断请求是否成功
+            is_success = 200 <= response.status_code < 400
+            
+            return Response({
+                'success': is_success,
+                'status_code': response.status_code,
+                'response_time_ms': round(response_time, 2),
+                'response_data': response_data,
+                'headers': dict(response.headers),
+                'request_url': full_url,
+                'request_method': method.upper(),
+                'tested_at': timezone.now().isoformat()
+            })
+            
+        except requests.exceptions.Timeout:
+            return Response({
+                'success': False,
+                'error': f'请求超时 (>{timeout}秒)',
+                'request_url': full_url,
+                'tested_at': timezone.now().isoformat()
+            }, status=status.HTTP_408_REQUEST_TIMEOUT)
+        except requests.exceptions.ConnectionError:
+            return Response({
+                'success': False,
+                'error': '连接错误：无法连接到目标服务器',
+                'request_url': full_url,
+                'tested_at': timezone.now().isoformat()
+            }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+        except requests.exceptions.SSLError:
+            return Response({
+                'success': False,
+                'error': 'SSL证书验证失败',
+                'request_url': full_url,
+                'tested_at': timezone.now().isoformat()
+            }, status=status.HTTP_525_SSL_HANDSHAKE_FAILED)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': f'测试失败: {str(e)}',
+                'request_url': full_url,
+                'tested_at': timezone.now().isoformat()
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """获取API端点统计信息"""
+        total_endpoints = self.get_queryset().count()
+        enabled_endpoints = self.get_queryset().filter(is_enabled=True).count()
+        
+        # 按方法统计
+        method_stats = {}
+        for method, _ in APIEndpoint.METHOD_CHOICES:
+            method_stats[method] = self.get_queryset().filter(method=method).count()
+        
+        # 按服务类型统计
+        service_stats = {}
+        service_types = self.get_queryset().values_list('service_type', flat=True).distinct()
+        for service_type in service_types:
+            service_stats[service_type] = self.get_queryset().filter(service_type=service_type).count()
+        
+        return Response({
+            'total_endpoints': total_endpoints,
+            'enabled_endpoints': enabled_endpoints,
+            'disabled_endpoints': total_endpoints - enabled_endpoints,
+            'method_stats': method_stats,
+            'service_stats': service_stats
+        })
+
 
 class SystemSettingViewSet(viewsets.ModelViewSet):
     """系统设置管理ViewSet"""

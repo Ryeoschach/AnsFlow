@@ -236,16 +236,44 @@ class APIEndpoint(models.Model):
         ('PUT', 'PUT'),
         ('DELETE', 'DELETE'),
         ('PATCH', 'PATCH'),
+        ('OPTIONS', 'OPTIONS'),
+        ('HEAD', 'HEAD'),
     ]
     
-    name = models.CharField(max_length=100, help_text="端点名称")
-    path = models.CharField(max_length=200, help_text="API路径")
+    SERVICE_TYPE_CHOICES = [
+        ('django', 'Django Service'),
+        ('fastapi', 'FastAPI Service'),
+        ('external', 'External API'),
+    ]
+    
+    name = models.CharField(max_length=200, help_text="端点名称")
+    path = models.CharField(max_length=500, help_text="API路径")
     method = models.CharField(max_length=10, choices=METHOD_CHOICES, help_text="HTTP方法")
-    description = models.TextField(blank=True, help_text="描述")
+    description = models.TextField(blank=True, help_text="端点描述")
+    service_type = models.CharField(max_length=20, choices=SERVICE_TYPE_CHOICES, default='django', help_text="服务类型")
+    
+    # 功能配置
     is_enabled = models.BooleanField(default=True, help_text="是否启用")
-    rate_limit = models.IntegerField(default=100, help_text="速率限制(每分钟)")
     auth_required = models.BooleanField(default=True, help_text="是否需要认证")
+    rate_limit = models.IntegerField(default=100, help_text="速率限制(每分钟)")
     permissions_required = models.JSONField(default=list, help_text="所需权限")
+    
+    # 文档信息
+    request_schema = models.JSONField(default=dict, help_text="请求体Schema")
+    response_schema = models.JSONField(default=dict, help_text="响应体Schema")
+    parameters = models.JSONField(default=list, help_text="参数说明")
+    examples = models.JSONField(default=dict, help_text="使用示例")
+    
+    # 统计信息
+    call_count = models.IntegerField(default=0, help_text="调用次数")
+    last_called_at = models.DateTimeField(null=True, blank=True, help_text="最后调用时间")
+    avg_response_time = models.FloatField(default=0, help_text="平均响应时间(ms)")
+    
+    # 元数据
+    tags = models.JSONField(default=list, help_text="标签")
+    version = models.CharField(max_length=20, default='v1', help_text="API版本")
+    deprecated = models.BooleanField(default=False, help_text="是否废弃")
+    
     created_at = models.DateTimeField(auto_now_add=True, help_text="创建时间")
     updated_at = models.DateTimeField(auto_now=True, help_text="更新时间")
     
@@ -254,9 +282,29 @@ class APIEndpoint(models.Model):
         unique_together = ['path', 'method']
         verbose_name = "API端点"
         verbose_name_plural = "API端点"
+        indexes = [
+            models.Index(fields=['service_type', 'is_enabled']),
+            models.Index(fields=['method', 'path']),
+        ]
     
     def __str__(self):
         return f"{self.method} {self.path}"
+
+    def increment_call_count(self, response_time=None):
+        """增加调用计数并更新统计信息"""
+        self.call_count += 1
+        self.last_called_at = timezone.now()
+        
+        if response_time is not None:
+            # 计算移动平均响应时间
+            if self.avg_response_time == 0:
+                self.avg_response_time = response_time
+            else:
+                # 使用指数移动平均
+                alpha = 0.1
+                self.avg_response_time = (1 - alpha) * self.avg_response_time + alpha * response_time
+        
+        self.save(update_fields=['call_count', 'last_called_at', 'avg_response_time'])
 
 
 class SystemSetting(models.Model):

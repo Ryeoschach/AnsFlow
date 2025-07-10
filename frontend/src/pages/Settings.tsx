@@ -36,7 +36,7 @@ import DockerRegistrySettings from '../components/docker/DockerRegistrySettings'
 import UserManagement from '../components/settings/UserManagement'
 import AuditLogs from '../components/settings/AuditLogs'
 import SystemMonitoring from '../components/settings/SystemMonitoring'
-import ApiSettingsComponent from '../components/settings/ApiSettings'
+import { ApiManagement } from '../components/settings/ApiManagement'
 import TeamManagement from '../components/settings/TeamManagement'
 import GlobalConfiguration from '../components/settings/GlobalConfiguration'
 import NotificationSettingsComponent from '../components/settings/NotificationSettings'
@@ -185,13 +185,13 @@ const Settings: React.FC = () => {
       permission: Permission.SECURITY_CONFIG_VIEW
     },
     {
-      key: 'api-settings',
-      title: 'API设置',
-      description: 'API密钥和访问控制',
+      key: 'api-management',
+      title: 'API接口管理',
+      description: 'API端点配置和管理',
       icon: <ApiOutlined />,
-      component: ApiSettingsComponent,
+      component: ApiManagement,
       category: 'security',
-      permission: Permission.API_CONFIG_VIEW
+      permission: Permission.API_ENDPOINT_VIEW
     },
     {
       key: 'audit-logs',

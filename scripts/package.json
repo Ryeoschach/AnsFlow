@@ -1,0 +1,26 @@
+{
+  "name": "ansflow-api-import-scripts",
+  "version": "1.0.0",
+  "description": "AnsFlow API 端点导入脚本",
+  "main": "import-apis.js",
+  "scripts": {
+    "import": "node import-apis.js",
+    "import:dev": "ANSFLOW_AUTH_TOKEN=your-token-here node import-apis.js",
+    "validate": "node validate-apis.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.0",
+    "fs-extra": "^11.1.0",
+    "glob": "^10.3.0",
+    "commander": "^11.1.0"
+  },
+  "keywords": [
+    "ansflow",
+    "api",
+    "import",
+    "automation"
+  ],
+  "author": "AnsFlow Team",
+  "license": "MIT",
+  "packageManager": "pnpm@10.12.1+sha512.f0dda8580f0ee9481c5c79a1d927b9164f2c478e90992ad268bbb2465a736984391d6333d2c327913578b2804af33474ca554ba29c04a8b13060a717675ae3ac"
+}
