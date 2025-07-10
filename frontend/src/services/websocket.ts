@@ -58,8 +58,9 @@ class WebSocketService {
 
   constructor() {
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    this.url = `${protocol}//${host}/ws/monitor/`
+    const host = window.location.hostname
+    // 连接到 FastAPI 服务的 WebSocket 端点（端口 8001）
+    this.url = `${protocol}//${host}:8001/ws/monitor`
   }
 
   connect(): void {
@@ -280,8 +281,9 @@ class PipelineExecutionWebSocket {
   constructor(executionId: number) {
     this.executionId = executionId
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
-    const host = window.location.host
-    this.url = `${protocol}//${host}/ws/executions/${executionId}/`
+    const host = window.location.hostname
+    // 连接到 FastAPI 服务的 execution WebSocket 端点（端口 8001）
+    this.url = `${protocol}//${host}:8001/ws/execution/${executionId}`
   }
 
   connect(): Promise<void> {

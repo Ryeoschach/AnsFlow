@@ -2,7 +2,6 @@
 Celery tasks for CI/CD operations
 Implement background processing for pipeline execution, tool management, and notifications
 """
-from celery import shared_task
 from django.utils import timezone
 from django.db import transaction
 from typing import Dict, Any, List, Optional
@@ -17,11 +16,34 @@ from .models import (
 from pipelines.models import Pipeline
 from .services import UnifiedCICDEngine
 from .adapters import get_adapter
+from celery import shared_task
 
 logger = logging.getLogger(__name__)
 
 
-@shared_task(bind=True, retry_kwargs={'max_retries': 3, 'countdown': 60})
+# RabbitMQ任务优先级装饰器和工具
+from functools import wraps
+
+def high_priority_task(bind=True, **options):
+    """高优先级任务装饰器 - 用于Pipeline执行等关键任务"""
+    options.setdefault('queue', 'high_priority')
+    options.setdefault('retry_kwargs', {'max_retries': 3, 'countdown': 60})
+    return shared_task(bind=bind, **options)
+
+def medium_priority_task(bind=False, **options):
+    """中等优先级任务装饰器 - 用于监控和报告任务"""
+    options.setdefault('queue', 'medium_priority')
+    options.setdefault('retry_kwargs', {'max_retries': 2, 'countdown': 120})
+    return shared_task(bind=bind, **options)
+
+def low_priority_task(bind=False, **options):
+    """低优先级任务装饰器 - 用于清理和备份任务"""
+    options.setdefault('queue', 'low_priority')
+    options.setdefault('retry_kwargs', {'max_retries': 1, 'countdown': 300})
+    return shared_task(bind=bind, **options)
+
+
+@high_priority_task(bind=True)
 def execute_pipeline_async(self, execution_id: int):
     """
     异步执行流水线任务
@@ -74,12 +96,13 @@ def execute_pipeline_async(self, execution_id: int):
         raise e
 
 
-@shared_task(bind=True)
+@medium_priority_task(bind=True)
 def health_check_tools(self):
     """
     定期健康检查所有CI/CD工具
     """
-    tools = CICDTool.objects.filter(is_active=True)
+    # 修复：使用正确的字段名和状态值
+    tools = CICDTool.objects.filter(status__in=['active', 'authenticated'])
     results = []
     
     for tool in tools:
@@ -100,8 +123,22 @@ def health_check_tools(self):
             
             # 更新工具状态
             tool.last_health_check = timezone.now()
-            tool.health_status = 'healthy' if is_healthy else 'unhealthy'
-            tool.save(update_fields=['last_health_check', 'health_status'])
+            
+            # 在 metadata 中存储健康状态
+            if not tool.metadata:
+                tool.metadata = {}
+            tool.metadata['health_status'] = 'healthy' if is_healthy else 'unhealthy'
+            tool.metadata['last_health_check_result'] = is_healthy
+            
+            # 根据健康检查结果更新 status
+            if is_healthy:
+                if tool.status not in ['active', 'authenticated']:
+                    tool.status = 'authenticated'
+            else:
+                if tool.status not in ['offline', 'error']:
+                    tool.status = 'needs_auth'
+            
+            tool.save(update_fields=['last_health_check', 'metadata', 'status'])
             
             results.append({
                 'tool_id': tool.id,
@@ -113,9 +150,17 @@ def health_check_tools(self):
             logger.info(f"Health check for tool {tool.name}: {'healthy' if is_healthy else 'unhealthy'}")
             
         except Exception as e:
-            tool.health_status = 'error'
             tool.last_health_check = timezone.now()
-            tool.save(update_fields=['health_status', 'last_health_check'])
+            
+            # 在 metadata 中存储错误状态
+            if not tool.metadata:
+                tool.metadata = {}
+            tool.metadata['health_status'] = 'error'
+            tool.metadata['last_error'] = str(e)
+            
+            # 设置错误状态
+            tool.status = 'error'
+            tool.save(update_fields=['last_health_check', 'metadata', 'status'])
             
             results.append({
                 'tool_id': tool.id,
@@ -134,7 +179,7 @@ def health_check_tools(self):
     }
 
 
-@shared_task
+@low_priority_task
 def cleanup_old_executions():
     """
     清理旧的流水线执行记录
@@ -470,7 +515,7 @@ def monitor_long_running_executions():
     }
 
 
-@shared_task
+@low_priority_task
 def backup_pipeline_configurations():
     """
     备份流水线配置

@@ -281,5 +281,222 @@ async def websocket_system_updates(
         logger.info("System WebSocket disconnected", user_id=user_id)
 
 
+@websocket_router.websocket("/monitor")
+async def websocket_global_monitor(
+    websocket: WebSocket,
+    token: str = None
+):
+    """
+    WebSocket endpoint for global system monitoring
+    替代 Django Channels 的全局监控 WebSocket
+    """
+    user = None
+    user_id = None
+    
+    # Try to authenticate user if token is provided
+    if token:
+        try:
+            user = await get_current_user_ws(token)
+            user_id = user.id if user else None
+        except Exception as e:
+            logger.warning("WebSocket authentication failed", error=str(e))
+    
+    room = "global_monitor"
+    await manager.connect(websocket, room, user_id)
+    
+    try:
+        # Send initial connection message
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "connection",
+                "message": "Connected to global monitoring",
+                "timestamp": datetime.utcnow().isoformat(),
+                "authenticated": user is not None,
+                "service": "FastAPI WebSocket Service"
+            }),
+            websocket
+        )
+        
+        # Send initial system status
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "system_status",
+                "data": {
+                    "status": "healthy",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "active_connections": len(manager.active_connections.get(room, set())),
+                    "service": "ansflow-fastapi"
+                }
+            }),
+            websocket
+        )
+        
+        while True:
+            # Wait for messages from client
+            data = await websocket.receive_text()
+            
+            try:
+                message = json.loads(data)
+                logger.info("Received WebSocket message", message=message, user_id=user_id)
+                
+                # Handle different message types
+                if message.get("type") == "ping":
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "pong",
+                            "timestamp": datetime.utcnow().isoformat()
+                        }),
+                        websocket
+                    )
+                elif message.get("type") == "subscribe":
+                    # Handle subscription to specific events
+                    events = message.get("events", [])
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "subscribed",
+                            "events": events,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }),
+                        websocket
+                    )
+                
+            except json.JSONDecodeError:
+                await manager.send_personal_message(
+                    json.dumps({
+                        "type": "error",
+                        "message": "Invalid JSON format",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }),
+                    websocket
+                )
+                
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, room, user_id)
+        logger.info("WebSocket disconnected", room=room, user_id=user_id)
+    except Exception as e:
+        logger.error("WebSocket error", error=str(e), room=room, user_id=user_id)
+        manager.disconnect(websocket, room, user_id)
+
+
+@websocket_router.websocket("/execution/{execution_id}")
+async def websocket_execution_updates(
+    websocket: WebSocket,
+    execution_id: str,
+    token: str = None
+):
+    """
+    WebSocket endpoint for real-time execution updates
+    替代 Django Channels 的 execution WebSocket
+    """
+    user = None
+    user_id = None
+    
+    # Try to authenticate user if token is provided
+    if token:
+        try:
+            user = await get_current_user_ws(token)
+            user_id = user.id if user else None
+        except Exception as e:
+            logger.warning("WebSocket authentication failed", error=str(e))
+    
+    room = f"execution_{execution_id}"
+    await manager.connect(websocket, room, user_id)
+    
+    try:
+        # Send initial connection message
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "connection",
+                "message": f"Connected to execution {execution_id}",
+                "timestamp": datetime.utcnow().isoformat(),
+                "authenticated": user is not None,
+                "service": "FastAPI WebSocket Service",
+                "execution_id": execution_id
+            }),
+            websocket
+        )
+        
+        # Send initial execution status
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "execution_status",
+                "data": {
+                    "execution_id": execution_id,
+                    "status": "monitoring",
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "service": "ansflow-fastapi"
+                }
+            }),
+            websocket
+        )
+        
+        while True:
+            # Wait for messages from client
+            data = await websocket.receive_text()
+            
+            try:
+                message = json.loads(data)
+                logger.info("Received execution WebSocket message", 
+                          execution_id=execution_id, 
+                          message=message, 
+                          user_id=user_id)
+                
+                # Handle different message types
+                if message.get("type") == "ping":
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "pong",
+                            "timestamp": datetime.utcnow().isoformat()
+                        }),
+                        websocket
+                    )
+                elif message.get("type") == "subscribe":
+                    # Handle subscription to specific events
+                    events = message.get("events", [])
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "subscribed",
+                            "events": events,
+                            "execution_id": execution_id,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }),
+                        websocket
+                    )
+                elif message.get("type") == "request_logs":
+                    # Handle log request
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "execution_logs",
+                            "execution_id": execution_id,
+                            "logs": [
+                                {
+                                    "timestamp": datetime.utcnow().isoformat(),
+                                    "level": "info",
+                                    "message": f"Execution {execution_id} is running..."
+                                }
+                            ],
+                            "timestamp": datetime.utcnow().isoformat()
+                        }),
+                        websocket
+                    )
+                
+            except json.JSONDecodeError:
+                await manager.send_personal_message(
+                    json.dumps({
+                        "type": "error",
+                        "message": "Invalid JSON format",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }),
+                    websocket
+                )
+                
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, room, user_id)
+        logger.info("Execution WebSocket disconnected", execution_id=execution_id, user_id=user_id)
+    except Exception as e:
+        logger.error("Execution WebSocket error", error=str(e), execution_id=execution_id, user_id=user_id)
+        manager.disconnect(websocket, room, user_id)
+
+
 # Export the connection manager for use by other services
 __all__ = ["websocket_router", "manager"]

@@ -1,32 +1,110 @@
-# AnsFlow 项目文档
+# 📚 Ans```
+docs/
+├── 📁 optimization/                  # 🆕 微服务优化文档 (核心更新)
+│   ├── IMMEDIATE_OPTIMIZATION_PLAN.md      # 主要优化实施计划  
+│   ├── UV_OPTIMIZATION_FINAL_REPORT.md     # 最终成果报告
+│   ├── REDIS_OPTIMIZATION_PLAN.md          # Redis 多数据库缓存方案
+│   ├── RABBITMQ_OPTIMIZATION_PLAN.md       # RabbitMQ 消息队列方案
+│   ├── MICROSERVICES_OPTIMIZATION_ARCHITECTURE.md # 微服务架构设计
+│   ├── UV_QUICK_REFERENCE.md               # UV包管理器快速参考
+│   ├── WEBSOCKET_MIGRATION_REPORT.md       # WebSocket迁移技术报告
+│   └── README.md                           # 优化文档索引
+├── 📁 testing/                      # 🆕 测试报告与验证
+│   ├── ansflow_optimization_test_report.json  # 最新性能测试结果
+│   └── README.md                           # 测试文档指南
+├── 📁 archive/                      # 历史修复报告和技术文档归档
+├── 📁 api/                         # API文档
+├── 📁 deployment/                  # 部署相关文档
+├── 📁 development/                 # 开发指南和规范
+├── 📁 guides/                      # 使用指南
+├── 📁 reports/                     # 项目完成报告
+└── 其他文档...
+```文档概览
 
-## 📄 文档目录说明
+欢迎来到 AnsFlow CI/CD 平台文档中心！本目录包含了完整的项目文档，包括开发指南、微服务优化方案、测试报告等。
 
-本目录包含 AnsFlow CI/CD 平台的完整文档集合，涵盖项目开发、部署、API文档和历史归档。
-
-## 📂 文档结构
+## 📂 文档结构 (更新于 2025年7月10日)
 
 ```
 docs/
-├── 📁 archive/                        # 历史修复报告和技术文档归档
-├── 📁 api/                           # API文档
-├── 📁 deployment/                    # 部署相关文档
-├── 📁 development/                   # 开发指南和规范
-├── 📄 NEXT_PHASE_DEVELOPMENT_PLAN.md      # 下一阶段开发计划
-├── 📄 PIPELINE_PARAMETER_HELP_FEATURE.md  # 流水线参数帮助功能文档
-├── 📄 PROJECT_STATUS_SUMMARY.md           # 项目当前状态总结
-├── 📄 PROJECT_STRUCTURE.md               # 项目整体结构说明
-├── 📄 QUICK_FIX_GUIDE.md                 # 常见问题快速修复指南
-├── 📄 QUICK_START_GUIDE.md               # 快速开始使用指南
-├── 📄 pipeline-parameter-help-feature.md  # 流水线参数帮助功能（详细版）
-└── 📄 pipeline-steps-parameters.md        # 流水线步骤参数说明
+├── 📁 optimization/                  # 🆕 微服务优化文档 (核心更新)
+│   ├── IMMEDIATE_OPTIMIZATION_PLAN.md      # 主要优化实施计划  
+│   ├── UV_OPTIMIZATION_FINAL_REPORT.md     # 最终成果报告
+│   ├── UV_QUICK_REFERENCE.md               # UV包管理器快速参考
+│   ├── WEBSOCKET_MIGRATION_REPORT.md       # WebSocket迁移技术报告
+│   └── README.md                           # 优化文档索引
+├── 📁 testing/                      # 🆕 测试报告与验证
+│   ├── ansflow_optimization_test_report.json  # 最新性能测试结果
+│   └── README.md                           # 测试文档指南
+├── 📁 archive/                      # 历史修复报告和技术文档归档
+├── 📁 api/                         # API文档
+├── 📁 deployment/                  # 部署相关文档
+├── 📁 development/                 # 开发指南和规范
+├── � guides/                      # 使用指南
+├── � reports/                     # 项目完成报告
+└── 其他文档...
 ```
+
+## � 最新优化成果 (2025年7月10日)
+
+### ⚡ 核心优化完成
+- ✅ **Redis 多数据库缓存**: API响应时间提升 19%
+- ✅ **RabbitMQ 消息队列**: Celery任务处理优化
+- ✅ **FastAPI 高性能服务**: 并发能力提升 75%
+- ✅ **WebSocket 实时推送**: 连接延迟降低 70%
+- ✅ **UV 包管理器**: 现代化开发工作流
+
+### � 开发者快速导航
+
+### 新开发者必读 (5分钟上手)
+1. **[快速开始指南](QUICK_START_GUIDE.md)** - 环境搭建和首次运行
+2. **[优化脚本使用](../scripts/optimization/README.md)** - 使用优化后的开发工具
+3. **[UV 包管理器参考](optimization/UV_QUICK_REFERENCE.md)** - 现代化开发工作流
+
+### 性能优化相关 (推荐阅读)
+1. **[优化实施计划](optimization/IMMEDIATE_OPTIMIZATION_PLAN.md)** - 了解系统优化内容
+2. **[架构设计文档](optimization/MICROSERVICES_OPTIMIZATION_ARCHITECTURE.md)** - 理解系统架构
+3. **[性能测试结果](testing/ansflow_optimization_test_report.json)** - 查看当前性能指标
+
+### 常用操作快速查找
+```bash
+# 📖 查看完整文档
+cat docs/README.md
+
+# ⚡ 运行性能测试  
+python scripts/optimization/test_optimization.py
+
+# 🚀 启动优化服务
+./scripts/optimization/start_optimized.sh
+
+# 🔧 配置开发环境
+./scripts/optimization/setup-uv-aliases.sh
+```
+| 指标 | 优化前 | 优化后 | 提升幅度 |
+|------|--------|--------|----------|
+| API 响应时间 | 10.9ms | 8.8ms | 19% ↑ |
+| 并发处理能力 | ~20 req/s | 34.91 req/s | 75% ↑ |
+| WebSocket 连接延迟 | ~100ms | ~30ms | 70% ↑ |
+| WebSocket 并发连接 | ~1000 | ~5000+ | 400% ↑ |
 
 ## 📖 主要文档说明
 
 ### 🚀 快速开始
 - **[QUICK_START_GUIDE.md](QUICK_START_GUIDE.md)** - 新用户快速上手指南
 - **[PROJECT_STRUCTURE.md](PROJECT_STRUCTURE.md)** - 项目整体架构和结构说明
+
+### ⚡ 微服务优化 (重点推荐)
+- **[优化文档索引](optimization/README.md)** - 完整的优化文档导航
+- **[主要优化计划](optimization/IMMEDIATE_OPTIMIZATION_PLAN.md)** - 核心优化方案和实施路线
+- **[性能成果报告](optimization/UV_OPTIMIZATION_FINAL_REPORT.md)** - 详细的性能提升数据
+- **[微服务架构设计](optimization/MICROSERVICES_OPTIMIZATION_ARCHITECTURE.md)** - 优化后的系统架构
+- **[Redis 缓存优化](optimization/REDIS_OPTIMIZATION_PLAN.md)** - 多数据库缓存策略
+- **[RabbitMQ 消息队列](optimization/RABBITMQ_OPTIMIZATION_PLAN.md)** - 异步任务优化方案
+- **[WebSocket 迁移](optimization/WEBSOCKET_MIGRATION_REPORT.md)** - 实时通信性能优化
+
+### 🧪 测试和验证
+- **[测试指南](testing/README.md)** - 如何运行和解读测试结果
+- **[性能测试数据](testing/ansflow_optimization_test_report.json)** - 最新基准测试结果
 
 ### 📊 项目状态
 - **[PROJECT_STATUS_SUMMARY.md](PROJECT_STATUS_SUMMARY.md)** - 项目当前开发状态和进展

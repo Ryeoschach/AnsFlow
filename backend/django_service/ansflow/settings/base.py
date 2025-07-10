@@ -204,39 +204,156 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
-# Celery Configuration
-CELERY_BROKER_URL = env('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/0')
+# Celery Configuration - 迁移到RabbitMQ
+CELERY_BROKER_URL = env(
+    'CELERY_BROKER_URL', 
+    default='amqp://ansflow:ansflow_rabbitmq_123@localhost:5672/ansflow_vhost'
+)
+CELERY_RESULT_BACKEND = env('CELERY_RESULT_BACKEND', default='redis://localhost:6379/6')
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 
-# Redis Cache Configuration
+# RabbitMQ 路由和队列配置
+CELERY_TASK_ROUTES = {
+    # 高优先级任务队列
+    'cicd_integrations.tasks.execute_pipeline': {'queue': 'high_priority'},
+    'cicd_integrations.tasks.execute_workflow': {'queue': 'high_priority'},
+    
+    # 中等优先级任务队列
+    'cicd_integrations.tasks.generate_execution_reports': {'queue': 'medium_priority'},
+    'cicd_integrations.tasks.health_check_tools': {'queue': 'medium_priority'},
+    'cicd_integrations.tasks.monitor_long_running_executions': {'queue': 'medium_priority'},
+    
+    # 低优先级任务队列
+    'cicd_integrations.tasks.cleanup_old_executions': {'queue': 'low_priority'},
+    'cicd_integrations.tasks.backup_pipeline_configurations': {'queue': 'low_priority'},
+    'audit.tasks.cleanup_old_logs': {'queue': 'low_priority'},
+}
+
+# 队列配置
+CELERY_TASK_DEFAULT_QUEUE = 'medium_priority'
+CELERY_TASK_QUEUES = {
+    'high_priority': {
+        'exchange': 'high_priority',
+        'exchange_type': 'direct',
+        'routing_key': 'high_priority',
+    },
+    'medium_priority': {
+        'exchange': 'medium_priority',
+        'exchange_type': 'direct',
+        'routing_key': 'medium_priority',
+    },
+    'low_priority': {
+        'exchange': 'low_priority',
+        'exchange_type': 'direct',
+        'routing_key': 'low_priority',
+    },
+}
+
+# Celery 性能优化配置
+CELERY_WORKER_PREFETCH_MULTIPLIER = 1  # 防止任务积压
+CELERY_TASK_ACKS_LATE = True  # 任务完成后确认
+CELERY_WORKER_DISABLE_RATE_LIMITS = False
+CELERY_TASK_COMPRESSION = 'gzip'  # 压缩任务数据
+CELERY_RESULT_COMPRESSION = 'gzip'
+
+# 任务执行配置
+CELERY_TASK_SOFT_TIME_LIMIT = 300  # 5分钟软限制
+CELERY_TASK_TIME_LIMIT = 600  # 10分钟硬限制
+CELERY_TASK_MAX_RETRIES = 3
+CELERY_TASK_DEFAULT_RETRY_DELAY = 60  # 重试间隔60秒
+
+# Beat调度器配置
+CELERY_BEAT_SCHEDULER = 'django_celery_beat.schedulers:DatabaseScheduler'
+
+# Redis Cache Configuration - 多数据库优化配置
 CACHES = {
     'default': {
         'BACKEND': 'django_redis.cache.RedisCache',
         'LOCATION': env('REDIS_URL', default='redis://127.0.0.1:6379/1'),
         'OPTIONS': {
             'CLIENT_CLASS': 'django_redis.client.DefaultClient',
-        }
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 100,
+                'retry_on_timeout': True,
+            },
+            'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+            'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+        },
+        'KEY_PREFIX': 'ansflow:default',
+        'VERSION': 1,
+        'TIMEOUT': 300,  # 5 minutes default timeout
+    },
+    'session': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': env('REDIS_SESSION_URL', default='redis://127.0.0.1:6379/3'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 50,
+                'retry_on_timeout': True,
+            },
+        },
+        'KEY_PREFIX': 'ansflow:session',
+        'VERSION': 1,
+        'TIMEOUT': 86400,  # 24 hours for sessions
+    },
+    'api': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': env('REDIS_API_URL', default='redis://127.0.0.1:6379/4'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 80,
+                'retry_on_timeout': True,
+            },
+            'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+            'COMPRESSOR': 'django_redis.compressors.zlib.ZlibCompressor',
+        },
+        'KEY_PREFIX': 'ansflow:api',
+        'VERSION': 1,
+        'TIMEOUT': 600,  # 10 minutes for API responses
+    },
+    'pipeline': {
+        'BACKEND': 'django_redis.cache.RedisCache',
+        'LOCATION': env('REDIS_PIPELINE_URL', default='redis://127.0.0.1:6379/5'),
+        'OPTIONS': {
+            'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            'CONNECTION_POOL_KWARGS': {
+                'max_connections': 60,
+                'retry_on_timeout': True,
+            },
+            'SERIALIZER': 'django_redis.serializers.json.JSONSerializer',
+        },
+        'KEY_PREFIX': 'ansflow:pipeline',
+        'VERSION': 1,
+        'TIMEOUT': 1800,  # 30 minutes for pipeline data
     }
 }
 
-# Session configuration - 使用数据库Session提高稳定性
+# Session configuration - 临时使用数据库Session确保稳定性
 SESSION_ENGINE = 'django.contrib.sessions.backends.db'
 SESSION_COOKIE_AGE = 86400  # 24小时
 SESSION_SAVE_EVERY_REQUEST = False
 SESSION_EXPIRE_AT_BROWSER_CLOSE = False
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SECURE = not DEBUG  # 生产环境使用HTTPS
 
-# Channels configuration
+# 注意：Redis会话配置暂时注释，等确认django-redis包正常后再启用
+# SESSION_ENGINE = 'django.contrib.sessions.backends.cache'
+# SESSION_CACHE_ALIAS = 'session'
+
+# Channels configuration - WebSocket using dedicated Redis database
 CHANNEL_LAYERS = {
     'default': {
         'BACKEND': 'channels_redis.core.RedisChannelLayer',
         'CONFIG': {
-            'hosts': [env('REDIS_URL', default='redis://127.0.0.1:6379/2')],
+            'hosts': [env('REDIS_CHANNELS_URL', default='redis://127.0.0.1:6379/2')],
+            'capacity': 1500,  # 默认通道容量
+            'expiry': 60,  # 消息过期时间（秒）
         },
     },
 }

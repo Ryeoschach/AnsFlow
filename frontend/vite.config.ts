@@ -26,7 +26,7 @@ export default defineConfig({
         secure: false,
       },
       '/ws': {
-        target: 'ws://localhost:8000',
+        target: 'ws://localhost:8001',  // ✅ 迁移到 FastAPI 服务
         ws: true,
         changeOrigin: true,
       }

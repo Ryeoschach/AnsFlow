@@ -1,0 +1,57 @@
+{
+  "redis_tests": {
+    "default": {
+      "status": "✅ Connected",
+      "latency_ms": 0.26
+    },
+    "session": {
+      "status": "✅ Connected",
+      "latency_ms": 0.24
+    },
+    "api": {
+      "status": "✅ Connected",
+      "latency_ms": 0.21
+    },
+    "pipeline": {
+      "status": "✅ Connected",
+      "latency_ms": 0.21
+    },
+    "channels": {
+      "status": "✅ Connected",
+      "latency_ms": 0.19
+    }
+  },
+  "rabbitmq_tests": {
+    "error": "ConnectionClosedByBroker: (530) 'NOT_ALLOWED - vhost ansflow_vhost not found'"
+  },
+  "fastapi_tests": {
+    "health_check": {
+      "status": "✅ OK",
+      "response_time_ms": 77.14,
+      "data": {
+        "status": "healthy",
+        "timestamp": "2025-07-10T07:27:04.965375",
+        "service": "ansflow-fastapi",
+        "version": "1.0.0",
+        "environment": "development",
+        "checks": {
+          "database": true,
+          "redis": true,
+          "django_service": true
+        }
+      }
+    },
+    "concurrent": {
+      "total_requests": 20,
+      "successful": 20,
+      "total_time_ms": 601.54,
+      "avg_time_ms": 30.08,
+      "requests_per_second": 33.25
+    }
+  },
+  "django_cache_tests": {},
+  "overall_status": "✅ EXCELLENT",
+  "integration_tests": {
+    "status": "✅ Basic integration OK"
+  }
+}

@@ -67,7 +67,7 @@ class Command(BaseCommand):
                 return
         else:
             # 查找第一个可用的 GitLab CI 工具
-            tool = CICDTool.objects.filter(tool_type='gitlab_ci', is_active=True).first()
+            tool = CICDTool.objects.filter(tool_type='gitlab_ci', status__in=['active', 'authenticated']).first()
             if not tool:
                 self.stdout.write(self.style.ERROR('No active GitLab CI tool found. Please register one first.'))
                 return
