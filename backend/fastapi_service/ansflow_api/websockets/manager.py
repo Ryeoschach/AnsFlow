@@ -101,10 +101,32 @@ class ConnectionManager:
     async def send_personal_message(self, message: str, websocket: WebSocket):
         """发送个人消息"""
         try:
+            # Check if WebSocket is still connected before sending
+            if hasattr(websocket, 'client_state') and hasattr(websocket.client_state, 'name'):
+                if websocket.client_state.name != 'CONNECTED':
+                    logger.warning("Attempted to send message to disconnected WebSocket", 
+                                 state=websocket.client_state.name)
+                    self.disconnect(websocket)
+                    return False
+            
             await websocket.send_text(message)
-        except Exception as e:
-            logger.error("Error sending personal message", error=str(e))
+            return True
+        except WebSocketDisconnect:
+            logger.info("WebSocket disconnected during message send")
             self.disconnect(websocket)
+            return False
+        except RuntimeError as e:
+            if "WebSocket is disconnected" in str(e) or "close message has been sent" in str(e):
+                logger.info("WebSocket connection closed during message send", error=str(e))
+                self.disconnect(websocket)
+                return False
+            else:
+                logger.error("Runtime error sending personal message", error=str(e))
+                return False
+        except Exception as e:
+            logger.error("Error sending personal message", error=str(e), error_type=type(e).__name__)
+            self.disconnect(websocket)
+            return False
     
     async def broadcast_to_pipeline(self, message: Dict[str, Any], pipeline_id: int):
         """向特定Pipeline的所有连接广播消息"""
@@ -146,16 +168,12 @@ class ConnectionManager:
         message_str = json.dumps(message, ensure_ascii=False, default=str)
         dead_connections = set()
         
-        for connection in connections:
-            try:
-                await connection.send_text(message_str)
-            except Exception as e:
-                logger.error("Error broadcasting message", error=str(e))
+        for connection in connections.copy():  # Use copy to avoid modification during iteration
+            success = await self.send_personal_message(message_str, connection)
+            if not success:
                 dead_connections.add(connection)
         
-        # 清理失效连接
-        for dead_connection in dead_connections:
-            self.disconnect(dead_connection)
+        # 清理失效连接已经在 send_personal_message 中处理
     
     def get_connection_stats(self) -> Dict[str, Any]:
         """获取连接统计信息"""

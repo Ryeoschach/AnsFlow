@@ -22,6 +22,7 @@
 - ✅ **WebSocket 实时推送**: 迁移到FastAPI，连接延迟降低70%
 - ✅ **UV 包管理器**: 现代化Python开发工作流，依赖管理效率提升10-100倍
 - ✅ **Celery 任务修复**: 修复字段错误，确保 RabbitMQ 任务正常执行
+- ✅ **WebSocket 错误修复**: 修复连接生命周期管理，解决流水线刷新报错
 
 ### 🚀 性能提升成果
 | 指标 | 优化前 | 优化后 | 提升幅度 |
@@ -204,6 +205,7 @@ ansflow/
 │   │   ├── REDIS_OPTIMIZATION_PLAN.md          # Redis 缓存方案
 │   │   ├── RABBITMQ_OPTIMIZATION_PLAN.md       # RabbitMQ 消息队列
 │   │   ├── WEBSOCKET_MIGRATION_REPORT.md       # WebSocket 迁移
+│   │   ├── WEBSOCKET_ERROR_FIX_REPORT.md       # WebSocket 错误修复
 │   │   └── README.md                           # 优化文档索引
 │   ├── testing/            # 🆕 测试报告和结果
 │   │   ├── ansflow_optimization_test_report.json # 性能测试数据
@@ -214,6 +216,7 @@ ansflow/
 └── scripts/                # 工具脚本
     ├── optimization/       # 🆕 优化相关脚本 (重点)
     │   ├── test_optimization.py    # 性能测试脚本
+    │   ├── test_websocket_fix.py    # WebSocket 修复验证脚本
     │   ├── setup-uv-aliases.sh     # UV 别名配置
     │   ├── start_optimized.sh      # 优化启动脚本  
     │   └── README.md               # 脚本使用指南

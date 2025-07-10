@@ -59,48 +59,94 @@ class ConnectionManager:
     async def send_personal_message(self, message: str, websocket: WebSocket):
         """Send a message to a specific WebSocket connection"""
         try:
+            # Check if WebSocket is still connected before sending
+            if hasattr(websocket, 'client_state') and hasattr(websocket.client_state, 'name'):
+                if websocket.client_state.name != 'CONNECTED':
+                    logger.warning("Attempted to send message to disconnected WebSocket", 
+                                 state=websocket.client_state.name)
+                    return False
+            
             await websocket.send_text(message)
+            return True
+        except WebSocketDisconnect:
+            logger.info("WebSocket disconnected during message send")
+            self._cleanup_disconnected_websocket(websocket)
+            return False
+        except RuntimeError as e:
+            if "WebSocket is disconnected" in str(e) or "close message has been sent" in str(e):
+                logger.info("WebSocket connection closed during message send", error=str(e))
+                self._cleanup_disconnected_websocket(websocket)
+                return False
+            else:
+                logger.error("Runtime error sending personal message", error=str(e))
+                return False
         except Exception as e:
-            logger.error("Failed to send personal message", error=str(e))
+            logger.error("Failed to send personal message", error=str(e), error_type=type(e).__name__)
+            self._cleanup_disconnected_websocket(websocket)
+            return False
+    
+    def _cleanup_disconnected_websocket(self, websocket: WebSocket):
+        """Clean up a disconnected WebSocket from all connection sets"""
+        # Remove from room connections
+        for room in list(self.active_connections.keys()):
+            if websocket in self.active_connections[room]:
+                self.active_connections[room].discard(websocket)
+                if not self.active_connections[room]:
+                    del self.active_connections[room]
+        
+        # Remove from user connections
+        for user_id in list(self.user_connections.keys()):
+            if websocket in self.user_connections[user_id]:
+                self.user_connections[user_id].discard(websocket)
+                if not self.user_connections[user_id]:
+                    del self.user_connections[user_id]
     
     async def send_to_room(self, message: str, room: str):
         """Send a message to all connections in a room"""
         if room in self.active_connections:
             disconnected = set()
-            for connection in self.active_connections[room]:
-                try:
-                    await connection.send_text(message)
-                except Exception as e:
-                    logger.error("Failed to send message to room", room=room, error=str(e))
+            for connection in self.active_connections[room].copy():  # Use copy to avoid modification during iteration
+                success = await self.send_personal_message(message, connection)
+                if not success:
                     disconnected.add(connection)
             
             # Remove disconnected connections
             for connection in disconnected:
                 self.active_connections[room].discard(connection)
+                
+            # Clean up empty room
+            if not self.active_connections[room]:
+                del self.active_connections[room]
     
     async def send_to_user(self, message: str, user_id: str):
         """Send a message to all connections of a specific user"""
         if user_id in self.user_connections:
             disconnected = set()
-            for connection in self.user_connections[user_id]:
-                try:
-                    await connection.send_text(message)
-                except Exception as e:
-                    logger.error("Failed to send message to user", user_id=user_id, error=str(e))
+            for connection in self.user_connections[user_id].copy():  # Use copy to avoid modification during iteration
+                success = await self.send_personal_message(message, connection)
+                if not success:
                     disconnected.add(connection)
             
             # Remove disconnected connections
             for connection in disconnected:
                 self.user_connections[user_id].discard(connection)
+                
+            # Clean up empty user connection set
+            if not self.user_connections[user_id]:
+                del self.user_connections[user_id]
     
     async def broadcast(self, message: str):
         """Broadcast a message to all active connections"""
+        disconnected = set()
         for room_connections in self.active_connections.values():
-            for connection in room_connections:
-                try:
-                    await connection.send_text(message)
-                except Exception as e:
-                    logger.error("Failed to broadcast message", error=str(e))
+            for connection in room_connections.copy():  # Use copy to avoid modification during iteration
+                success = await self.send_personal_message(message, connection)
+                if not success:
+                    disconnected.add(connection)
+        
+        # Clean up disconnected connections from all rooms
+        for connection in disconnected:
+            self._cleanup_disconnected_websocket(connection)
 
 
 # Global connection manager instance
@@ -132,7 +178,7 @@ async def websocket_pipeline_updates(
     
     try:
         # Send initial connection message
-        await manager.send_personal_message(
+        success = await manager.send_personal_message(
             json.dumps({
                 "type": "connection",
                 "message": f"Connected to pipeline {pipeline_id}",
@@ -141,6 +187,10 @@ async def websocket_pipeline_updates(
             }),
             websocket
         )
+        
+        if not success:
+            logger.error("Failed to send initial connection message", pipeline_id=pipeline_id)
+            return
         
         while True:
             # Wait for messages from client

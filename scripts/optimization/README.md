@@ -20,6 +20,20 @@
   python scripts/optimization/test_optimization.py
   ```
 
+**[test_websocket_fix.py](./test_websocket_fix.py)**
+- **功能**: WebSocket 错误修复验证脚本
+- **测试内容**:
+  - WebSocket 连接生命周期测试
+  - 执行监控 WebSocket 测试
+  - 流水线监控 WebSocket 测试
+  - 并发连接稳定性测试
+- **使用方法**:
+  ```bash
+  cd /Users/creed/Workspace/OpenSource/ansflow
+  # 确保 FastAPI 服务正在运行 (端口 8001)
+  python scripts/optimization/test_websocket_fix.py
+  ```
+
 ### ⚡ UV 别名配置脚本
 **[setup-uv-aliases.sh](./setup-uv-aliases.sh)**
 - **功能**: 配置便捷的 UV 包管理器别名
