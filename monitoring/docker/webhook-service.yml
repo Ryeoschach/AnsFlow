@@ -1,0 +1,19 @@
+# Webhook 告警服务
+webhook_service:
+  build:
+    context: ./scripts/monitoring
+    dockerfile: Dockerfile.webhook
+  container_name: ansflow_webhook
+  restart: unless-stopped
+  ports:
+    - "5001:5001"
+  environment:
+    - PORT=5001
+    - LOG_LEVEL=INFO
+  volumes:
+    - ./logs/webhook:/app/logs
+  networks:
+    - ansflow_network
+  depends_on:
+    - prometheus
+    - alertmanager

@@ -34,33 +34,9 @@ scrape_configs:
     scrape_timeout: 5s
     honor_labels: true
 
-  # RabbitMQ 监控 (使用内置 Prometheus 插件)
+  # RabbitMQ 监控 (只要这个，因为它有内置支持)
   - job_name: 'rabbitmq'
     static_configs:
       - targets: ['rabbitmq:15692']
     scrape_interval: 30s
     metrics_path: '/metrics'
-
-  # MySQL 监控 - 暂时移除，简化配置
-  # - job_name: 'mysql-exporter'
-  #   static_configs:
-  #     - targets: ['mysql-exporter:9104']
-  #   scrape_interval: 30s
-
-  # Redis 监控 - 暂时移除，简化配置
-  # - job_name: 'redis-exporter'
-  #   static_configs:
-  #     - targets: ['redis-exporter:9121']
-  #   scrape_interval: 30s
-
-  # Node Exporter - 暂时移除，简化配置
-  # - job_name: 'node-exporter'
-  #   static_configs:
-  #     - targets: ['node-exporter:9100']
-  #   scrape_interval: 30s
-
-  # Docker 容器监控 - 暂时移除，简化配置
-  # - job_name: 'cadvisor'
-  #   static_configs:
-  #     - targets: ['cadvisor:8080']
-  #   scrape_interval: 30s

@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  # MySQL Exporter
+  mysql-exporter:
+    image: prom/mysqld-exporter:latest
+    container_name: ansflow_mysql_exporter
+    restart: unless-stopped
+    environment:
+      DATA_SOURCE_NAME: "ansflow_user:ansflow_password_123@(mysql:3306)/ansflow_db"
+    ports:
+      - "9104:9104"
+    depends_on:
+      - mysql
+    networks:
+      - ansflow_network
+
+  # Redis Exporter  
+  redis-exporter:
+    image: oliver006/redis_exporter:latest
+    container_name: ansflow_redis_exporter
+    restart: unless-stopped
+    environment:
+      REDIS_ADDR: "redis://redis:6379"
+    ports:
+      - "9121:9121"
+    depends_on:
+      - redis
+    networks:
+      - ansflow_network
+
+  # Node Exporter (系统监控)
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: ansflow_node_exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    networks:
+      - ansflow_network
+
+  # cAdvisor (Docker 容器监控)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: ansflow_cadvisor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    privileged: true
+    devices:
+      - /dev/kmsg
+    networks:
+      - ansflow_network
+
+networks:
+  ansflow_network:
+    external: true
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:

@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.responses import Response
 import structlog
 
 from .config.settings import settings
@@ -14,6 +15,7 @@ from .webhooks.routes import webhook_router
 from .websockets.routes import websocket_router
 from .monitoring.middleware import PrometheusMiddleware
 from .monitoring.health import health_router
+from .monitoring import init_monitoring
 
 
 # Configure structured logging
@@ -92,6 +94,32 @@ def create_application() -> FastAPI:
     # Add Prometheus monitoring middleware
     app.add_middleware(PrometheusMiddleware)
     
+    # Initialize Prometheus monitoring
+    monitoring = init_monitoring(app)
+    logger.info("Prometheus monitoring initialized")
+    
+    # Add a simple test endpoint to verify metrics
+    @app.get("/test-metrics")
+    async def test_metrics():
+        """Test endpoint to verify metrics collection"""
+        from prometheus_client import generate_latest
+        metrics_data = generate_latest()
+        return Response(
+            content=metrics_data,
+            media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
+    
+    # Add main metrics endpoint
+    @app.get("/metrics")
+    async def metrics():
+        """Prometheus metrics endpoint"""
+        from prometheus_client import generate_latest
+        metrics_data = generate_latest()
+        return Response(
+            content=metrics_data,
+            media_type="text/plain; version=0.0.4; charset=utf-8"
+        )
+    
     # Include routers
     app.include_router(health_router, prefix="/health", tags=["Health"])
     
@@ -132,3 +160,27 @@ def create_application() -> FastAPI:
 
 # Create application instance
 app = create_application()
+
+
+"""
+Performance optimization settings
+"""
+
+# 性能优化配置
+PERFORMANCE_CONFIG = {
+    "enable_compression": True,
+    "enable_caching": True,
+    "cache_ttl": 300,
+    "max_request_size": 16 * 1024 * 1024,  # 16MB
+    "connection_timeout": 5,
+    "keep_alive_timeout": 5,
+}
+
+# 安全配置
+SECURITY_CONFIG = {
+    "enable_cors": True,
+    "cors_origins": ["http://localhost:3000", "http://localhost:3001"],
+    "enable_security_headers": True,
+    "enable_audit_log": True,
+    "jwt_secret_key": "your-secret-key-change-in-production",
+}

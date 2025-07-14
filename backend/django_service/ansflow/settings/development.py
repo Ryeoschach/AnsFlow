@@ -13,7 +13,15 @@ GIT_CREDENTIAL_ENCRYPTION_KEY = 'bKyVd1koSsbL2NJJO0jJopTa2r16PF9VWKq7UXNvk30='
 DEBUG = True
 
 # Development hosts - Override base settings
-ALLOWED_HOSTS = ['localhost', '127.0.0.1', '0.0.0.0', 'testserver']
+ALLOWED_HOSTS = [
+    'localhost', 
+    '127.0.0.1', 
+    '0.0.0.0', 
+    'testserver',
+    'host.docker.internal',  # 允许 Docker 内部访问
+    'django_service',  # Docker 容器名
+    'ansflow_django',  # Docker 容器名
+]
 
 # Database for development (MySQL)
 DATABASES = {

@@ -1,0 +1,221 @@
+groups:
+# FastAPI 服务告警规则
+- name: ansflow-fastapi
+  rules:
+  # 服务可用性告警
+  - alert: FastAPIServiceDown
+    expr: up{job="fastapi-service"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: ansflow-fastapi
+    annotations:
+      summary: "AnsFlow FastAPI 服务不可用"
+      description: "FastAPI 服务已停止响应超过1分钟"
+      
+  # 高响应时间告警
+  - alert: FastAPIHighResponseTime
+    expr: histogram_quantile(0.95, rate(ansflow_http_request_duration_seconds_bucket[5m])) > 0.5
+    for: 5m
+    labels:
+      severity: warning
+      service: ansflow-fastapi
+    annotations:
+      summary: "FastAPI 响应时间过高"
+      description: "95%分位数响应时间超过500ms，当前值: {{ $value }}s"
+      
+  # 高错误率告警
+  - alert: FastAPIHighErrorRate
+    expr: rate(ansflow_http_requests_total{status=~"5.."}[5m]) / rate(ansflow_http_requests_total[5m]) > 0.05
+    for: 3m
+    labels:
+      severity: critical
+      service: ansflow-fastapi
+    annotations:
+      summary: "FastAPI 错误率过高"
+      description: "5xx错误率超过5%，当前值: {{ $value | humanizePercentage }}"
+      
+  # 高CPU使用率告警
+  - alert: FastAPICPUHigh
+    expr: ansflow_system_cpu_usage_percent > 80
+    for: 5m
+    labels:
+      severity: warning
+      service: ansflow-fastapi
+    annotations:
+      summary: "FastAPI 服务CPU使用率过高"
+      description: "CPU使用率超过80%，当前值: {{ $value }}%"
+      
+  # 高内存使用率告警
+  - alert: FastAPIMemoryHigh
+    expr: ansflow_system_memory_usage_percent > 85
+    for: 5m
+    labels:
+      severity: warning
+      service: ansflow-fastapi
+    annotations:
+      summary: "FastAPI 服务内存使用率过高"
+      description: "内存使用率超过85%，当前值: {{ $value }}%"
+      
+  # WebSocket 连接异常告警
+  - alert: WebSocketConnectionLow
+    expr: ansflow_websocket_connections_active < 1
+    for: 10m
+    labels:
+      severity: info
+      service: ansflow-fastapi
+    annotations:
+      summary: "WebSocket 连接数过低"
+      description: "活跃WebSocket连接数低于正常水平"
+
+# Django 服务告警规则
+- name: ansflow-django
+  rules:
+  # 服务可用性告警
+  - alert: DjangoServiceDown
+    expr: up{job="django-service"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: ansflow-django
+    annotations:
+      summary: "AnsFlow Django 服务不可用"
+      description: "Django 服务已停止响应超过1分钟"
+      
+  # 高响应时间告警
+  - alert: DjangoHighResponseTime
+    expr: histogram_quantile(0.95, rate(django_request_duration_seconds_bucket[5m])) > 0.1
+    for: 5m
+    labels:
+      severity: warning
+      service: ansflow-django
+    annotations:
+      summary: "Django 响应时间过高"
+      description: "95%分位数响应时间超过100ms，当前值: {{ $value }}s"
+      
+  # 数据库连接告警
+  - alert: DjangoDatabaseConnections
+    expr: django_database_connections_total > 15
+    for: 5m
+    labels:
+      severity: warning
+      service: ansflow-django
+    annotations:
+      summary: "Django 数据库连接数过高"
+      description: "数据库连接数超过阈值，当前值: {{ $value }}"
+      
+  # Django 错误率告警
+  - alert: DjangoHighErrorRate
+    expr: rate(django_http_requests_total{status=~"5.."}[5m]) / rate(django_http_requests_total[5m]) > 0.05
+    for: 3m
+    labels:
+      severity: critical
+      service: ansflow-django
+    annotations:
+      summary: "Django 错误率过高"
+      description: "5xx错误率超过5%，当前值: {{ $value | humanizePercentage }}"
+
+# 业务逻辑告警规则
+- name: ansflow-business
+  rules:
+  # Pipeline 失败率告警
+  - alert: PipelineHighFailureRate
+    expr: rate(ansflow_pipelines_total{status="failed"}[10m]) / rate(ansflow_pipelines_total[10m]) > 0.1
+    for: 5m
+    labels:
+      severity: warning
+      service: ansflow-business
+    annotations:
+      summary: "Pipeline 失败率过高"
+      description: "Pipeline失败率超过10%，当前值: {{ $value | humanizePercentage }}"
+      
+  # Pipeline 执行时间告警
+  - alert: PipelineLongRunning
+    expr: histogram_quantile(0.95, rate(ansflow_pipeline_duration_seconds_bucket[10m])) > 300
+    for: 5m
+    labels:
+      severity: warning
+      service: ansflow-business
+    annotations:
+      summary: "Pipeline 执行时间过长"
+      description: "95%分位数Pipeline执行时间超过5分钟，当前值: {{ $value }}s"
+      
+  # 活跃项目数异常告警
+  - alert: ActiveProjectsLow
+    expr: ansflow_active_projects_total < 1
+    for: 30m
+    labels:
+      severity: info
+      service: ansflow-business
+    annotations:
+      summary: "活跃项目数过低"
+      description: "活跃项目数长时间为0，可能存在问题"
+
+# 基础设施告警规则
+- name: ansflow-infrastructure
+  rules:
+  # Prometheus 自身告警
+  - alert: PrometheusDown
+    expr: up{job="prometheus"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: prometheus
+    annotations:
+      summary: "Prometheus 服务不可用"
+      description: "Prometheus 监控服务已停止"
+      
+  # Grafana 告警
+  - alert: GrafanaDown
+    expr: up{job="grafana"} == 0
+    for: 2m
+    labels:
+      severity: warning
+      service: grafana
+    annotations:
+      summary: "Grafana 服务不可用"
+      description: "Grafana 可视化服务已停止"
+      
+  # Redis 告警
+  - alert: RedisDown
+    expr: up{job="redis"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: redis
+    annotations:
+      summary: "Redis 服务不可用"
+      description: "Redis 缓存服务已停止"
+      
+  # MySQL 告警
+  - alert: MySQLDown
+    expr: up{job="mysql"} == 0
+    for: 1m
+    labels:
+      severity: critical
+      service: mysql
+    annotations:
+      summary: "MySQL 服务不可用"
+      description: "MySQL 数据库服务已停止"
+      
+  # 磁盘空间告警
+  - alert: DiskSpaceHigh
+    expr: ansflow_system_disk_usage_percent > 85
+    for: 5m
+    labels:
+      severity: warning
+      service: system
+    annotations:
+      summary: "磁盘空间使用率过高"
+      description: "磁盘使用率超过85%，当前值: {{ $value }}%"
+      
+  # 系统负载告警
+  - alert: SystemLoadHigh
+    expr: ansflow_system_cpu_usage_percent > 90
+    for: 5m
+    labels:
+      severity: critical
+      service: system
+    annotations:
+      summary: "系统负载过高"
+      description: "CPU使用率超过90%，当前值: {{ $value }}%"

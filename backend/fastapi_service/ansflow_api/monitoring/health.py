@@ -11,6 +11,7 @@ import redis.asyncio as redis
 
 from ..core.database import get_db
 from ..config.settings import settings
+from . import update_health_check
 
 health_router = APIRouter()
 
@@ -58,6 +59,11 @@ async def health_check(db: AsyncSession = Depends(get_db)) -> Dict[str, Any]:
         "redis": await check_redis(),
         "django_service": await check_django_service(),
     }
+    
+    # Update Prometheus health check metrics
+    update_health_check("fastapi", "database", checks["database"])
+    update_health_check("fastapi", "redis", checks["redis"])
+    update_health_check("fastapi", "django_service", checks["django_service"])
     
     overall_healthy = all(checks.values())
     

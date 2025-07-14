@@ -30,7 +30,15 @@ SECRET_KEY = env('SECRET_KEY', default='django-insecure-change-me-in-production'
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = env('DEBUG', default=True)
 
-ALLOWED_HOSTS = env('ALLOWED_HOSTS', default=['localhost', '127.0.0.1', 'testserver'])
+ALLOWED_HOSTS = env('ALLOWED_HOSTS', default=[
+    'localhost', 
+    '127.0.0.1', 
+    'testserver',
+    'host.docker.internal',  # 允许 Docker 内部访问
+    '0.0.0.0',  # 允许所有主机访问（开发环境）
+    'django_service',  # Docker 容器名
+    'ansflow_django',  # Docker 容器名
+])
 
 
 # Application definition
@@ -54,6 +62,7 @@ THIRD_PARTY_APPS = [
 ]
 
 LOCAL_APPS = [
+    'monitoring',
     'pipelines',
     'project_management', 
     'user_management',
@@ -72,6 +81,7 @@ INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
 
 MIDDLEWARE = [
     'django_prometheus.middleware.PrometheusBeforeMiddleware',
+    'monitoring.prometheus.MetricsMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.middleware.security.SecurityMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
@@ -80,6 +90,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'monitoring.integration.MetricsLoggingMiddleware',
     'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
 
@@ -186,6 +197,8 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    # 排除特定端点的认证要求
+    'UNAUTHENTICATED_USER': 'django.contrib.auth.models.AnonymousUser',
 }
 
 # DRF Spectacular settings for API documentation

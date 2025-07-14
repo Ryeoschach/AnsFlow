@@ -9,6 +9,7 @@ import structlog
 from datetime import datetime
 
 from ..auth.dependencies import get_current_user_ws
+from ..monitoring import track_websocket_connection, track_websocket_message
 
 logger = structlog.get_logger(__name__)
 
@@ -38,6 +39,9 @@ class ConnectionManager:
                 self.user_connections[user_id] = set()
             self.user_connections[user_id].add(websocket)
         
+        # Track WebSocket connection in Prometheus
+        track_websocket_connection(room, "connected", 1)
+        
         logger.info("WebSocket connected", room=room, user_id=user_id)
     
     def disconnect(self, websocket: WebSocket, room: str, user_id: str = None):
@@ -53,6 +57,9 @@ class ConnectionManager:
             self.user_connections[user_id].discard(websocket)
             if not self.user_connections[user_id]:
                 del self.user_connections[user_id]
+        
+        # Track WebSocket disconnection in Prometheus
+        track_websocket_connection(room, "connected", -1)
         
         logger.info("WebSocket disconnected", room=room, user_id=user_id)
     

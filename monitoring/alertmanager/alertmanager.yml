@@ -1,0 +1,65 @@
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'alertmanager@ansflow.com'
+  smtp_auth_username: 'alertmanager@ansflow.com'
+  smtp_auth_password: 'your-email-password'
+
+# 路由配置
+route:
+  group_by: ['alertname', 'cluster', 'service']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+  routes:
+  - match:
+      service: ansflow-fastapi
+    receiver: 'fastapi-alerts'
+  - match:
+      service: ansflow-django
+    receiver: 'django-alerts'
+  - match:
+      severity: critical
+    receiver: 'critical-alerts'
+  - match:
+      severity: warning
+    receiver: 'warning-alerts'
+
+# 接收器配置
+receivers:
+- name: 'web.hook'
+  webhook_configs:
+  - url: 'http://host.docker.internal:5001/alerts'
+    send_resolved: true
+
+# FastAPI 服务告警
+- name: 'fastapi-alerts'
+  webhook_configs:
+  - url: 'http://host.docker.internal:5001/alerts/fastapi'
+    send_resolved: true
+
+# Django 服务告警
+- name: 'django-alerts'
+  webhook_configs:
+  - url: 'http://host.docker.internal:5001/alerts/django'
+    send_resolved: true
+
+# 严重告警
+- name: 'critical-alerts'
+  webhook_configs:
+  - url: 'http://host.docker.internal:5001/alerts/critical'
+    send_resolved: true
+
+# 警告级告警
+- name: 'warning-alerts'
+  webhook_configs:
+  - url: 'http://host.docker.internal:5001/alerts/warning'
+    send_resolved: true
+
+# 抑制规则
+inhibit_rules:
+- source_match:
+    severity: 'critical'
+  target_match:
+    severity: 'warning'
+  equal: ['alertname', 'cluster', 'service']

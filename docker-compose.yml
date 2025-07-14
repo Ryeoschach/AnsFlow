@@ -162,6 +162,24 @@ services:
     networks:
       - ansflow_network
 
+  # AlertManager
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: ansflow_alertmanager
+    restart: unless-stopped
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager:/etc/alertmanager
+      - alertmanager_data:/alertmanager
+    command:
+      - '--config.file=/etc/alertmanager/alertmanager.yml'
+      - '--storage.path=/alertmanager'
+      - '--web.external-url=http://localhost:9093'
+      - '--web.route-prefix=/'
+    networks:
+      - ansflow_network
+
 volumes:
   mysql_data:
   redis_data:
@@ -169,6 +187,7 @@ volumes:
   media_files:
   prometheus_data:
   grafana_data:
+  alertmanager_data:
 
 networks:
   ansflow_network:

@@ -32,6 +32,9 @@ urlpatterns = [
     path('health/', health_check, name='health'),
     path('api/health/', health_check, name='api-health'),
     
+    # Monitoring
+    path('monitoring/', include('monitoring.urls')),
+    
     # Authentication
     path('api/v1/auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/v1/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
@@ -47,6 +50,9 @@ urlpatterns = [
     path('api/v1/docker/', include('docker_integration.urls')),
     path('api/v1/kubernetes/', include('kubernetes_integration.urls')),
     path('api/v1/settings/', include('settings_management.urls')),
+    
+    # Monitoring (不需要认证的 metrics 端点)
+    path('', include('django_prometheus.urls')),
     
     # API Documentation
     path('api/schema/', include([
