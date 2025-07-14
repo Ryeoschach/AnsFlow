@@ -1,15 +1,17 @@
 """
 WebSocket routes for real-time communication
 """
+import asyncio
+import json
 from typing import Dict, Set
+from datetime import datetime, timedelta
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
 from fastapi.security import HTTPBearer
-import json
 import structlog
-from datetime import datetime
 
 from ..auth.dependencies import get_current_user_ws
 from ..monitoring import track_websocket_connection, track_websocket_message
+from ..services.django_db import django_db_service
 
 logger = structlog.get_logger(__name__)
 
@@ -473,19 +475,104 @@ async def websocket_execution_updates(
             websocket
         )
         
-        # Send initial execution status
-        await manager.send_personal_message(
-            json.dumps({
-                "type": "execution_status",
-                "data": {
-                    "execution_id": execution_id,
-                    "status": "monitoring",
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "service": "ansflow-fastapi"
-                }
-            }),
-            websocket
-        )
+        # Send initial execution status with steps
+        execution_data = await get_execution_with_steps(int(execution_id))
+        if execution_data:
+            await manager.send_personal_message(
+                json.dumps({
+                    "type": "execution_status",
+                    "data": {
+                        "execution_id": int(execution_id),
+                        "status": execution_data.get("status", "pending"),
+                        "pipeline_name": execution_data.get("pipeline_name"),
+                        "steps": execution_data.get("steps", []),
+                        "total_steps": len(execution_data.get("steps", [])),
+                        "completed_steps": sum(1 for s in execution_data.get("steps", []) if s.get("status") in ["success", "failed"]),
+                        "current_step": next((s for s in execution_data.get("steps", []) if s.get("status") == "running"), None),
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "service": "ansflow-fastapi"
+                    }
+                }),
+                websocket
+            )
+        
+        # Start real-time monitoring loop
+        last_log_count = 0  # 跟踪已推送的日志数量
+        
+        async def monitoring_loop():
+            nonlocal last_log_count
+            
+            while True:
+                try:
+                    # 获取最新执行状态
+                    current_execution = await get_execution_with_steps(int(execution_id))
+                    if current_execution:
+                        # 推送执行状态更新
+                        await manager.send_personal_message(
+                            json.dumps({
+                                "type": "execution_update",
+                                "execution_id": int(execution_id),
+                                "status": current_execution.get("status"),
+                                "pipeline_name": current_execution.get("pipeline_name"),
+                                "steps": current_execution.get("steps", []),
+                                "total_steps": len(current_execution.get("steps", [])),
+                                "completed_steps": sum(1 for s in current_execution.get("steps", []) if s.get("status") in ["success", "failed"]),
+                                "execution_time": current_execution.get("execution_time", 0),
+                                "timestamp": datetime.utcnow().isoformat()
+                            }),
+                            websocket
+                        )
+                        
+                        # 推送每个步骤的状态更新
+                        for step in current_execution.get("steps", []):
+                            await manager.send_personal_message(
+                                json.dumps({
+                                    "type": "step_progress",
+                                    "execution_id": int(execution_id),
+                                    "step_id": step.get("id"),
+                                    "step_name": step.get("name"),
+                                    "status": step.get("status"),
+                                    "execution_time": step.get("execution_time"),
+                                    "output": step.get("output"),
+                                    "error_message": step.get("error_message"),
+                                    "timestamp": datetime.utcnow().isoformat()
+                                }),
+                                websocket
+                            )
+                        
+                        # 获取新增的日志（从last_log_count开始）
+                        new_logs = await get_execution_logs(int(execution_id), last_log_count)
+                        
+                        for log in new_logs:
+                            await manager.send_personal_message(
+                                json.dumps({
+                                    "type": "log_entry",
+                                    "execution_id": int(execution_id),
+                                    "timestamp": log.get("timestamp", datetime.utcnow().isoformat()),
+                                    "level": log.get("level", "info"),
+                                    "message": log.get("message", ""),
+                                    "step_name": log.get("step_name"),
+                                    "source": log.get("source", "system")
+                                }),
+                                websocket
+                            )
+                        
+                        # 更新已推送的日志数量
+                        last_log_count += len(new_logs)
+                        
+                        # 如果执行完成，停止监控
+                        if current_execution.get("status") in ["success", "failed", "cancelled"]:
+                            break
+                    
+                    # 每500ms检查一次，保证实时性
+                    await asyncio.sleep(0.5)
+                    
+                except Exception as e:
+                    logger.error("Error in monitoring loop", error=str(e))
+                    break
+        
+        # 启动监控任务
+        monitoring_task = asyncio.create_task(monitoring_loop())
         
         while True:
             # Wait for messages from client
@@ -519,23 +606,18 @@ async def websocket_execution_updates(
                         }),
                         websocket
                     )
-                elif message.get("type") == "request_logs":
-                    # Handle log request
-                    await manager.send_personal_message(
-                        json.dumps({
-                            "type": "execution_logs",
-                            "execution_id": execution_id,
-                            "logs": [
-                                {
-                                    "timestamp": datetime.utcnow().isoformat(),
-                                    "level": "info",
-                                    "message": f"Execution {execution_id} is running..."
-                                }
-                            ],
-                            "timestamp": datetime.utcnow().isoformat()
-                        }),
-                        websocket
-                    )
+                elif message.get("type") == "get_status":
+                    # 立即发送当前状态
+                    current_execution = await get_execution_with_steps(int(execution_id))
+                    if current_execution:
+                        await manager.send_personal_message(
+                            json.dumps({
+                                "type": "execution_status",
+                                "data": current_execution,
+                                "timestamp": datetime.utcnow().isoformat()
+                            }),
+                            websocket
+                        )
                 
             except json.JSONDecodeError:
                 await manager.send_personal_message(
@@ -548,11 +630,27 @@ async def websocket_execution_updates(
                 )
                 
     except WebSocketDisconnect:
+        # 取消监控任务
+        if 'monitoring_task' in locals():
+            monitoring_task.cancel()
         manager.disconnect(websocket, room, user_id)
         logger.info("Execution WebSocket disconnected", execution_id=execution_id, user_id=user_id)
     except Exception as e:
+        # 取消监控任务
+        if 'monitoring_task' in locals():
+            monitoring_task.cancel()
         logger.error("Execution WebSocket error", error=str(e), execution_id=execution_id, user_id=user_id)
         manager.disconnect(websocket, room, user_id)
+
+
+async def get_execution_with_steps(execution_id: int):
+    """获取执行记录及其步骤信息"""
+    return await django_db_service.get_execution_with_steps(execution_id)
+
+
+async def get_execution_logs(execution_id: int, last_count: int = 0):
+    """获取执行日志"""
+    return await django_db_service.get_execution_logs(execution_id, last_count)
 
 
 # Export the connection manager for use by other services

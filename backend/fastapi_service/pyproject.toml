@@ -86,3 +86,8 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["ansflow_api"]
+
+[dependency-groups]
+dev = [
+    "websockets>=15.0.1",
+]

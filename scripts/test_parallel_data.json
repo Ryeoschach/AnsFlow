@@ -1,0 +1,44 @@
+{
+  "pipeline_id": 2,
+  "preview_mode": true,
+  "execution_mode": "jenkins",
+  "ci_tool_type": "jenkins",
+  "steps": [
+    {
+      "name": "1111",
+      "step_type": "shell_command",
+      "order": 1,
+      "parameters": {
+        "command": "echo 'Hello World1111111111'"
+      },
+      "parallel_group": ""
+    },
+    {
+      "name": "222-1",
+      "step_type": "shell_command",
+      "order": 2,
+      "parameters": {
+        "command": "echo 'Hello World222222222-1'"
+      },
+      "parallel_group": "group_222"
+    },
+    {
+      "name": "222-2",
+      "step_type": "shell_command",
+      "order": 3,
+      "parameters": {
+        "command": "echo 'Hello World22222-2'"
+      },
+      "parallel_group": "group_222"
+    },
+    {
+      "name": "333",
+      "step_type": "shell_command",
+      "order": 4,
+      "parameters": {
+        "command": "echo 'Hello World333333333333'"
+      },
+      "parallel_group": ""
+    }
+  ]
+}

@@ -190,25 +190,34 @@ class UnifiedCICDEngine:
                 logger.error(f"Failed to save error state: {save_error}")
     
     def _perform_local_execution(self, execution: PipelineExecution):
-        """本地执行原子步骤"""
+        """本地执行流水线步骤"""
         logger.info(f"Performing local execution for {execution.id}")
         
-        # 获取流水线的原子步骤
-        atomic_steps = list(
-            AtomicStep.objects.filter(
-                pipeline=execution.pipeline
-            ).order_by('order')
+        # 获取流水线的PipelineStep而不是AtomicStep
+        pipeline_steps = list(
+            execution.pipeline.steps.all().order_by('order')
         )
         
-        if not atomic_steps:
-            logger.warning(f"No atomic steps found for pipeline {execution.pipeline.id}")
+        if not pipeline_steps:
+            logger.warning(f"No pipeline steps found for pipeline {execution.pipeline.id}")
             execution.status = 'failed'
             execution.completed_at = timezone.now()
-            execution.logs = "No atomic steps found in pipeline"
+            execution.logs = "No pipeline steps found in pipeline"
             execution.save()
             return
         
-        logger.info(f"Found {len(atomic_steps)} atomic steps to execute locally")
+        logger.info(f"本地执行: 获取到 {len(pipeline_steps)} 个PipelineStep")
+        
+        # 检查并行组
+        parallel_groups = set()
+        for step in pipeline_steps:
+            if step.parallel_group:
+                parallel_groups.add(step.parallel_group)
+                logger.info(f"步骤 '{step.name}': parallel_group = '{step.parallel_group}'")
+        
+        logger.info(f"本地执行: 检测到 {len(parallel_groups)} 个并行组")
+        
+        logger.info(f"Found {len(pipeline_steps)} pipeline steps to execute locally")
         
         # 使用同步执行器进行本地执行
         sync_executor = SyncPipelineExecutor()
@@ -340,43 +349,53 @@ class UnifiedCICDEngine:
             logger.debug(f"Created step execution record: {step_execution.id} for step {atomic_step.name}")
     
     def _build_pipeline_definition_from_atomic_steps(self, execution: PipelineExecution):
-        """从原子步骤构建流水线定义"""
-        # 获取原子步骤
-        atomic_steps = list(
-            AtomicStep.objects.filter(
-                pipeline=execution.pipeline
-            ).select_related('ansible_playbook', 'ansible_inventory', 'ansible_credential')
+        """从流水线步骤构建流水线定义"""
+        # 获取流水线步骤而不是原子步骤
+        pipeline_steps = list(
+            execution.pipeline.steps.all()
+            .select_related('ansible_playbook', 'ansible_inventory', 'ansible_credential')
             .order_by('order')
         )
         
+        logger.info(f"构建流水线定义: 获取到 {len(pipeline_steps)} 个PipelineStep")
+        
         # 转换为流水线定义格式
         steps = []
-        for atomic_step in atomic_steps:
+        for pipeline_step in pipeline_steps:
+            # 获取步骤的基本信息
             step = {
-                'name': atomic_step.name,
-                'type': atomic_step.step_type,
-                'parameters': atomic_step.parameters.copy(),  # 复制参数避免修改原数据
-                'description': atomic_step.description
+                'name': pipeline_step.name,
+                'type': pipeline_step.step_type,
+                'parameters': pipeline_step.environment_vars.copy() if pipeline_step.environment_vars else {},
+                'description': pipeline_step.description or '',
+                'parallel_group': pipeline_step.parallel_group or ''  # 添加并行组字段
             }
             
+            # 添加command字段到parameters中，这样Jenkins适配器可以访问到
+            if pipeline_step.command:
+                step['parameters']['command'] = pipeline_step.command
+                logger.info(f"步骤 '{pipeline_step.name}': 添加command = '{pipeline_step.command}'")
+            
+            logger.info(f"步骤 '{pipeline_step.name}': parallel_group = '{step['parallel_group']}'")
+            
             # 对于ansible步骤，添加特殊的参数处理
-            if atomic_step.step_type == 'ansible':
+            if pipeline_step.step_type == 'ansible':
                 ansible_params = {}
                 
                 # 添加Ansible特有的参数
-                if atomic_step.ansible_playbook:
+                if pipeline_step.ansible_playbook:
                     # 可以是playbook文件路径或内容
-                    ansible_params['playbook_path'] = atomic_step.ansible_playbook.name
-                    ansible_params['playbook'] = atomic_step.ansible_playbook.name
+                    ansible_params['playbook_path'] = pipeline_step.ansible_playbook.name
+                    ansible_params['playbook'] = pipeline_step.ansible_playbook.name
                 
-                if atomic_step.ansible_inventory:
+                if pipeline_step.ansible_inventory:
                     # inventory文件路径或内容
                     ansible_params['inventory_path'] = 'hosts'  # 默认inventory文件名
                     ansible_params['inventory'] = 'hosts'
                 
-                if atomic_step.ansible_credential:
+                if pipeline_step.ansible_credential:
                     # 可以添加认证相关的环境变量或参数
-                    ansible_params['ansible_user'] = atomic_step.ansible_credential.username
+                    ansible_params['ansible_user'] = pipeline_step.ansible_credential.username
                 
                 # 合并ansible特有参数到step参数中
                 step['parameters'].update(ansible_params)

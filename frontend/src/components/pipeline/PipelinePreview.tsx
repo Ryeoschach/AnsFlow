@@ -83,7 +83,8 @@ const PipelinePreview: React.FC<PipelinePreviewProps> = ({
           step_type: step.step_type,
           parameters: step.parameters || {},
           order: step.order,
-          description: step.description || ''
+          description: step.description || '',
+          parallel_group: step.parallel_group || ''  // 添加并行组字段
         })),
         execution_mode: pipeline.execution_mode || 'local',
         execution_tool: pipeline.execution_tool,

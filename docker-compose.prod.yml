@@ -1,0 +1,196 @@
+version: '3.8'
+
+services:
+  # MySQL Database (生产配置)
+  mysql:
+    image: mysql:8.0
+    container_name: ansflow_mysql_prod
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ansflow_db
+      MYSQL_USER: ansflow_user
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data_prod:/var/lib/mysql
+      - ./deployment/docker/mysql/prod/my.cnf:/etc/mysql/my.cnf
+    networks:
+      - ansflow_network
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '1.0'
+        reservations:
+          memory: 1G
+          cpus: '0.5'
+
+  # Redis Cache (生产配置 - 集群模式)
+  redis:
+    image: redis:7-alpine
+    container_name: ansflow_redis_prod
+    restart: always
+    command: redis-server --appendonly yes --maxmemory 1gb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data_prod:/data
+      - ./deployment/docker/redis/prod/redis.conf:/usr/local/etc/redis/redis.conf
+    networks:
+      - ansflow_network
+
+  # RabbitMQ Message Queue (生产配置)
+  rabbitmq:
+    image: rabbitmq:3-management-alpine
+    container_name: ansflow_rabbitmq_prod
+    restart: always
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD}
+      RABBITMQ_DEFAULT_VHOST: ansflow_vhost
+      RABBITMQ_VM_MEMORY_HIGH_WATERMARK: 0.8
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data_prod:/var/lib/rabbitmq
+      - ./deployment/docker/rabbitmq/prod/rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    networks:
+      - ansflow_network
+
+  # Django Management Service (生产配置)
+  django_service:
+    build:
+      context: ./backend/django_service
+      dockerfile: Dockerfile.prod
+    container_name: ansflow_django_prod
+    restart: always
+    environment:
+      - DEBUG=False
+      - SECRET_KEY=${DJANGO_SECRET_KEY}
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+      - ALLOWED_HOSTS=${ALLOWED_HOSTS}
+    ports:
+      - "8000:8000"
+    volumes:
+      - media_files_prod:/app/media
+      - static_files_prod:/app/static
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - ansflow_network
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          memory: 1G
+          cpus: '0.5'
+
+  # FastAPI High-Performance Service (生产配置)
+  fastapi_service:
+    build:
+      context: ./backend/fastapi_service
+      dockerfile: Dockerfile.prod
+    container_name: ansflow_fastapi_prod
+    restart: always
+    environment:
+      - DEBUG=False
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+    ports:
+      - "8001:8001"
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - ansflow_network
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+
+  # Frontend (生产构建)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+    container_name: ansflow_frontend_prod
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deployment/docker/nginx/prod/nginx.conf:/etc/nginx/nginx.conf
+      - ./deployment/docker/nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - django_service
+      - fastapi_service
+    networks:
+      - ansflow_network
+
+  # Celery Worker (生产配置)
+  celery_worker:
+    build:
+      context: ./backend/django_service
+      dockerfile: Dockerfile.prod
+    container_name: ansflow_celery_prod
+    restart: always
+    environment:
+      - DEBUG=False
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+    command: uv run celery -A ansflow worker -l info --concurrency=4
+    volumes:
+      - media_files_prod:/app/media
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - ansflow_network
+    deploy:
+      replicas: 2
+
+  # Celery Beat (定时任务)
+  celery_beat:
+    build:
+      context: ./backend/django_service
+      dockerfile: Dockerfile.prod
+    container_name: ansflow_celery_beat_prod
+    restart: always
+    environment:
+      - DEBUG=False
+      - DB_HOST=mysql
+      - REDIS_HOST=redis
+      - RABBITMQ_HOST=rabbitmq
+    command: uv run celery -A ansflow beat -l info
+    volumes:
+      - media_files_prod:/app/media
+    depends_on:
+      - mysql
+      - redis
+      - rabbitmq
+    networks:
+      - ansflow_network
+
+volumes:
+  mysql_data_prod:
+  redis_data_prod:
+  rabbitmq_data_prod:
+  media_files_prod:
+  static_files_prod:
+
+networks:
+  ansflow_network:
+    driver: bridge

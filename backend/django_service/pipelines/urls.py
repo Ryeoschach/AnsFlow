@@ -16,4 +16,9 @@ router.register(r'step-execution-history', views.StepExecutionHistoryViewSet)
 urlpatterns = [
     path('', include(router.urls)),
     path('health/', views.pipeline_health, name='pipeline-health'),
+    
+    # 并行执行监控API
+    path('executions/parallel-status/', views.parallel_execution_status, name='parallel-execution-status'),
+    path('tools/jenkins/parallel-stats/', views.jenkins_parallel_stats, name='jenkins-parallel-stats'),
+    path('executions/parallel-health/', views.parallel_execution_health, name='parallel-execution-health'),
 ]

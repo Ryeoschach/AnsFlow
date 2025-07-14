@@ -1,6 +1,7 @@
 """
 流水线执行引擎
 支持三种执行模式：local、remote、hybrid
+支持并行组执行
 """
 import logging
 from typing import Dict, Any, Optional, List
@@ -8,6 +9,7 @@ from django.utils import timezone
 from ..models import Pipeline, PipelineRun, PipelineToolMapping
 from cicd_integrations.models import CICDTool
 from .jenkins_sync import JenkinsPipelineSyncService
+from .parallel_execution import parallel_execution_service
 
 logger = logging.getLogger(__name__)
 
@@ -78,34 +80,61 @@ class PipelineExecutionEngine:
     
     def _execute_local(self, pipeline: Pipeline, pipeline_run: PipelineRun, trigger_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        本地Celery执行模式（原有方式）
+        本地Celery执行模式，支持并行组
         """
-        logger.info(f"Executing pipeline {pipeline.id} locally using Celery")
+        logger.info(f"Executing pipeline {pipeline.id} locally with parallel support")
         
         try:
-            # 导入Celery任务（避免循环导入）
-            from cicd_integrations.tasks import execute_pipeline_task
+            # 分析执行计划，识别并行组
+            execution_plan = parallel_execution_service.analyze_pipeline_execution_plan(pipeline)
             
-            # 异步执行流水线
-            task_result = execute_pipeline_task.delay(
-                pipeline_id=pipeline.id,
-                run_id=pipeline_run.id,
-                trigger_data=trigger_data
-            )
+            # 检查是否有并行组
+            has_parallel_groups = len(execution_plan['parallel_groups']) > 0
             
-            # 更新运行记录的任务ID
-            pipeline_run.trigger_data.update({
-                'celery_task_id': task_result.id,
-                'execution_mode': 'local'
-            })
-            pipeline_run.save()
-            
-            return {
-                'success': True,
-                'message': 'Pipeline started locally',
-                'task_id': task_result.id,
-                'execution_mode': 'local'
-            }
+            if has_parallel_groups:
+                logger.info(f"Pipeline has {len(execution_plan['parallel_groups'])} parallel groups")
+                
+                # 使用并行执行服务
+                result = parallel_execution_service.execute_pipeline_with_parallel_support(
+                    pipeline, pipeline_run, execution_plan
+                )
+                
+                # 更新运行记录
+                pipeline_run.trigger_data.update({
+                    'execution_mode': 'local_parallel',
+                    'execution_plan': execution_plan,
+                    'parallel_groups_count': len(execution_plan['parallel_groups'])
+                })
+                pipeline_run.save()
+                
+                return result
+            else:
+                # 没有并行组，使用原有的Celery任务方式
+                logger.info("No parallel groups found, using sequential execution")
+                
+                # 导入Celery任务（避免循环导入）
+                from cicd_integrations.tasks import execute_pipeline_task
+                
+                # 异步执行流水线
+                task_result = execute_pipeline_task.delay(
+                    pipeline_id=pipeline.id,
+                    run_id=pipeline_run.id,
+                    trigger_data=trigger_data
+                )
+                
+                # 更新运行记录的任务ID
+                pipeline_run.trigger_data.update({
+                    'celery_task_id': task_result.id,
+                    'execution_mode': 'local_sequential'
+                })
+                pipeline_run.save()
+                
+                return {
+                    'success': True,
+                    'message': 'Pipeline started locally (sequential)',
+                    'task_id': task_result.id,
+                    'execution_mode': 'local_sequential'
+                }
             
         except Exception as e:
             logger.error(f"Local execution failed: {e}")

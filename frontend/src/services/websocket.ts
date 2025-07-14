@@ -282,7 +282,7 @@ class PipelineExecutionWebSocket {
     this.executionId = executionId
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
     const host = window.location.hostname
-    // 连接到 FastAPI 服务的 execution WebSocket 端点（端口 8001）
+    // 修复：连接到 FastAPI 高性能服务（端口 8001）
     this.url = `${protocol}//${host}:8001/ws/execution/${executionId}`
   }
 
@@ -300,11 +300,17 @@ class PipelineExecutionWebSocket {
           console.log(`WebSocket connected for execution ${this.executionId}`)
           this.reconnectAttempts = 0
           resolve()
+          
+          // 连接后立即请求状态更新
+          this.send({
+            type: 'get_status'
+          })
         }
 
         this.ws.onmessage = (event) => {
           try {
-            const message: WebSocketMessage = JSON.parse(event.data)
+            const message = JSON.parse(event.data)
+            console.log('WebSocket message received:', message)
             this.handleMessage(message)
           } catch (error) {
             console.error('Failed to parse WebSocket message:', error)
@@ -354,13 +360,31 @@ class PipelineExecutionWebSocket {
     }
   }
 
-  private handleMessage(message: WebSocketMessage): void {
-    const handlers = this.handlers.get(message.type) || []
+  private handleMessage(message: any): void {
+    // 处理来自 Django Channels 的消息格式
+    let messageType = message.type
+    let messageData = message.data || message
+
+    // 兼容处理不同的消息格式
+    if (message.type === 'execution_status') {
+      messageType = 'execution_update'
+      messageData = message
+    } else if (message.type === 'step_progress') {
+      messageType = 'step_update'
+      messageData = message
+    } else if (message.type === 'log_entry') {
+      messageType = 'log_update'
+      messageData = message
+    }
+
+    console.log('Handling WebSocket message:', messageType, messageData)
+    
+    const handlers = this.handlers.get(messageType) || []
     handlers.forEach(handler => {
       try {
-        handler(message)
+        handler({ type: messageType, data: messageData })
       } catch (error) {
-        console.error(`Error in WebSocket message handler for type ${message.type}:`, error)
+        console.error(`Error in WebSocket message handler for type ${messageType}:`, error)
       }
     })
   }

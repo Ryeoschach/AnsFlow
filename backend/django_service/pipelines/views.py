@@ -1,11 +1,16 @@
 import logging
 
 from rest_framework import viewsets, status, permissions
-from rest_framework.decorators import action, api_view
+from rest_framework.decorators import action, api_view, permission_classes
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from drf_spectacular.utils import extend_schema, extend_schema_view
+from django.db.models import Count, Avg, Q
+from datetime import timedelta
+from django.core.cache import cache
+
 from .models import (
     Pipeline, PipelineStep, PipelineRun, PipelineToolMapping,
     ParallelGroup, ApprovalRequest, WorkflowExecution, StepExecutionHistory
@@ -26,7 +31,7 @@ from .serializers import (
     ApprovalResponseSerializer
 )
 from .services.jenkins_sync import JenkinsPipelineSyncService
-from cicd_integrations.models import CICDTool
+from cicd_integrations.models import CICDTool, PipelineExecution, StepExecution
 
 
 logger = logging.getLogger(__name__)
@@ -770,15 +775,56 @@ class PipelineViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'], url_path='parallel-groups')
     def get_parallel_groups(self, request):
         """获取并行组"""
-        pipeline_id = request.query_params.get('pipeline_id')
+        # 支持两种参数名：pipeline_id 和 pipeline
+        # 兼容DRF的query_params和Django原生的GET参数
+        if hasattr(request, 'query_params'):
+            pipeline_id = request.query_params.get('pipeline_id') or request.query_params.get('pipeline')
+        else:
+            pipeline_id = request.GET.get('pipeline_id') or request.GET.get('pipeline')
+        
+        logger.info(f"并行组API请求参数: {dict(getattr(request, 'query_params', request.GET))}")
+        logger.info(f"解析到的pipeline_id: {pipeline_id}")
         
         if pipeline_id:
             try:
                 pipeline = Pipeline.objects.get(id=pipeline_id)
-                groups = pipeline.parallel_groups.all()
-                from .serializers import ParallelGroupSerializer
-                serializer = ParallelGroupSerializer(groups, many=True)
-                return Response(serializer.data)
+                # 从步骤中分析并行组，而不是从separate的ParallelGroup模型
+                steps = pipeline.steps.all().order_by('order')
+                
+                logger.info(f"Pipeline {pipeline_id} 总步骤数: {len(steps)}")
+                for step in steps:
+                    logger.info(f"步骤 {step.id}: {step.name}, parallel_group='{step.parallel_group}'")
+                
+                # 分析并行组
+                parallel_groups = {}
+                for step in steps:
+                    if step.parallel_group:
+                        group_name = step.parallel_group
+                        if group_name not in parallel_groups:
+                            parallel_groups[group_name] = {
+                                'id': group_name,
+                                'name': group_name,
+                                'steps': []
+                            }
+                        parallel_groups[group_name]['steps'].append({
+                            'id': step.id,
+                            'name': step.name,
+                            'step_type': step.step_type,
+                            'order': step.order
+                        })
+                
+                # 转换为列表格式
+                groups_list = list(parallel_groups.values())
+                
+                logger.info(f"找到 {len(groups_list)} 个并行组")
+                for group in groups_list:
+                    logger.info(f"并行组 {group['id']}: {len(group['steps'])} 个步骤")
+                
+                return Response({
+                    'parallel_groups': groups_list,
+                    'total_groups': len(groups_list),
+                    'total_steps': len(steps)
+                })
             except Pipeline.DoesNotExist:
                 return Response(
                     {'error': 'Pipeline not found'}, 
@@ -1123,3 +1169,260 @@ class StepExecutionHistoryViewSet(viewsets.ReadOnlyModelViewSet):
             queryset = queryset.filter(step_id=step_id)
         
         return queryset.select_related('workflow_execution', 'step')
+
+
+# ========================================
+# 并行执行监控API视图
+# ========================================
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def parallel_execution_status(request):
+    """
+    获取并行执行状态和性能统计
+    """
+    try:
+        # 缓存键，避免频繁查询数据库
+        cache_key = 'parallel_execution_stats'
+        cached_data = cache.get(cache_key)
+        
+        if cached_data:
+            return Response(cached_data)
+        
+        # 计算时间范围（最近24小时）
+        now = timezone.now()
+        last_24h = now - timedelta(hours=24)
+        
+        # 1. 活跃的并行组数量
+        active_executions = PipelineExecution.objects.filter(
+            status='running',
+            started_at__gte=last_24h
+        )
+        
+        # 计算当前活跃的并行组
+        active_parallel_groups = 0
+        for execution in active_executions:
+            try:
+                # 检查是否有并行组在运行
+                parallel_steps = StepExecution.objects.filter(
+                    pipeline_execution=execution,
+                    status='running'
+                ).select_related('atomic_step')
+                
+                # 统计具有parallel_group的步骤组
+                parallel_groups = set()
+                for step_exec in parallel_steps:
+                    if hasattr(step_exec.atomic_step, 'parallel_group') and step_exec.atomic_step.parallel_group:
+                        parallel_groups.add(step_exec.atomic_step.parallel_group)
+                
+                active_parallel_groups += len(parallel_groups)
+            except Exception as e:
+                logging.warning(f"Error counting parallel groups for execution {execution.id}: {e}")
+        
+        # 2. 最近24小时的并行组执行统计
+        completed_executions = PipelineExecution.objects.filter(
+            status__in=['success', 'failed'],
+            completed_at__gte=last_24h,
+            completed_at__isnull=False
+        )
+        
+        total_executions = completed_executions.count()
+        successful_executions = completed_executions.filter(status='success').count()
+        
+        # 计算成功率
+        success_rate = (successful_executions / total_executions * 100) if total_executions > 0 else 0
+        
+        # 3. 平均执行时间（秒）
+        avg_execution_time = 0
+        if completed_executions.exists():
+            total_time = sum([
+                (exec.completed_at - exec.started_at).total_seconds() 
+                for exec in completed_executions 
+                if exec.started_at and exec.completed_at
+            ])
+            avg_execution_time = total_time / len(completed_executions) if completed_executions else 0
+        
+        # 4. 当前并发工作线程数估算
+        concurrent_workers = StepExecution.objects.filter(
+            status='running',
+            started_at__gte=last_24h
+        ).count()
+        
+        # 构建响应数据
+        response_data = {
+            'timestamp': now.isoformat(),
+            'active_parallel_groups': active_parallel_groups,
+            'avg_execution_time_seconds': round(avg_execution_time, 2),
+            'success_rate_percent': round(success_rate, 2),
+            'concurrent_workers': concurrent_workers,
+            'total_executions_24h': total_executions,
+            'successful_executions_24h': successful_executions,
+            'performance_metrics': {
+                'execution_throughput_per_hour': round(total_executions / 24, 2) if total_executions > 0 else 0,
+                'avg_concurrent_workers': round(concurrent_workers / max(active_parallel_groups, 1), 2),
+                'system_load_indicator': 'normal' if active_parallel_groups < 10 else 'high'
+            }
+        }
+        
+        # 缓存结果5分钟
+        cache.set(cache_key, response_data, 300)
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        logging.error(f"Parallel execution status API error: {e}")
+        return Response(
+            {
+                'error': 'Failed to get parallel execution status',
+                'message': str(e)
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def jenkins_parallel_stats(request):
+    """
+    获取Jenkins并行转换统计信息
+    """
+    try:
+        cache_key = 'jenkins_parallel_stats'
+        cached_data = cache.get(cache_key)
+        
+        if cached_data:
+            return Response(cached_data)
+        
+        # 计算时间范围
+        now = timezone.now()
+        last_24h = now - timedelta(hours=24)
+        
+        # Jenkins相关的执行统计
+        jenkins_executions = PipelineExecution.objects.filter(
+            started_at__gte=last_24h,
+            pipeline__execution_mode='remote',
+            pipeline__execution_tool__tool_type='jenkins'
+        )
+        
+        total_jenkins_executions = jenkins_executions.count()
+        successful_jenkins = jenkins_executions.filter(status='success').count()
+        
+        # 转换成功率
+        conversion_success_rate = (successful_jenkins / total_jenkins_executions * 100) if total_jenkins_executions > 0 else 100
+        
+        # 模拟转换时间统计（实际应该从日志或监控数据获取）
+        avg_conversion_time_ms = 250  # 默认转换时间
+        
+        # 当前活跃的Jenkins构建
+        active_jenkins_builds = jenkins_executions.filter(status='running').count()
+        
+        response_data = {
+            'timestamp': now.isoformat(),
+            'conversion_success_rate': round(conversion_success_rate, 2),
+            'avg_conversion_time_ms': avg_conversion_time_ms,
+            'active_builds': active_jenkins_builds,
+            'total_jenkins_executions_24h': total_jenkins_executions,
+            'health_status': 'healthy' if conversion_success_rate > 95 else 'degraded'
+        }
+        
+        # 缓存结果5分钟
+        cache.set(cache_key, response_data, 300)
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        logging.error(f"Jenkins parallel stats API error: {e}")
+        return Response(
+            {
+                'error': 'Failed to get Jenkins parallel stats',
+                'message': str(e)
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def parallel_execution_health(request):
+    """
+    并行执行健康检查端点
+    """
+    try:
+        # 检查系统当前状态
+        now = timezone.now()
+        last_hour = now - timedelta(hours=1)
+        
+        # 1. 检查是否有超时的执行
+        long_running_executions = PipelineExecution.objects.filter(
+            status='running',
+            started_at__lt=last_hour
+        ).count()
+        
+        # 2. 检查错误率
+        recent_executions = PipelineExecution.objects.filter(
+            completed_at__gte=last_hour,
+            completed_at__isnull=False
+        )
+        
+        total_recent = recent_executions.count()
+        failed_recent = recent_executions.filter(status='failed').count()
+        error_rate = (failed_recent / total_recent * 100) if total_recent > 0 else 0
+        
+        # 3. 检查系统负载
+        active_workers = StepExecution.objects.filter(status='running').count()
+        
+        # 健康状态评估
+        health_issues = []
+        
+        if long_running_executions > 5:
+            health_issues.append(f"{long_running_executions} executions running over 1 hour")
+        
+        if error_rate > 20:
+            health_issues.append(f"High error rate: {error_rate:.1f}%")
+        
+        if active_workers > 50:
+            health_issues.append(f"High system load: {active_workers} active workers")
+        
+        health_status = 'healthy' if not health_issues else 'unhealthy'
+        
+        response_data = {
+            'timestamp': now.isoformat(),
+            'health_status': health_status,
+            'long_running_executions': long_running_executions,
+            'error_rate_percent': round(error_rate, 2),
+            'active_workers': active_workers,
+            'issues': health_issues,
+            'recommendations': _get_health_recommendations(health_issues)
+        }
+        
+        return Response(response_data)
+        
+    except Exception as e:
+        logging.error(f"Parallel execution health check error: {e}")
+        return Response(
+            {
+                'health_status': 'error',
+                'error': str(e)
+            },
+            status=status.HTTP_500_INTERNAL_SERVER_ERROR
+        )
+
+
+def _get_health_recommendations(issues):
+    """
+    根据健康问题提供建议
+    """
+    recommendations = []
+    
+    for issue in issues:
+        if 'running over 1 hour' in issue:
+            recommendations.append("检查长时间运行的任务，考虑增加超时设置或优化步骤")
+        elif 'High error rate' in issue:
+            recommendations.append("分析失败原因，检查步骤配置和依赖环境")
+        elif 'High system load' in issue:
+            recommendations.append("考虑增加工作节点或调整并发数限制")
+    
+    if not recommendations:
+        recommendations.append("系统运行正常，继续保持监控")
+    
+    return recommendations

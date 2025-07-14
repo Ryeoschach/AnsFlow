@@ -1,0 +1,9 @@
+{
+  "pipeline_name": "AnsFlow 并行组演示流水线",
+  "success": true,
+  "total_time": 29.024096965789795,
+  "successful_stages": 4,
+  "total_stages": 4,
+  "parallel_efficiency": 100.0,
+  "timestamp": "2025-07-14T14:31:59.914226"
+}

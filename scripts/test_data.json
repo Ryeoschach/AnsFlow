@@ -1,0 +1,54 @@
+{
+  "pipeline_id": 2,
+  "preview_mode": true,
+  "execution_mode": "jenkins",
+  "ci_tool_type": "jenkins",
+  "steps": [
+    {
+      "name": "获取代码",
+      "step_type": "git_clone",
+      "order": 1,
+      "parameters": {
+        "repository_url": "https://github.com/example/repo.git",
+        "branch": "main"
+      },
+      "parallel_group": ""
+    },
+    {
+      "name": "构建前端",
+      "step_type": "shell_command",
+      "order": 2,
+      "parameters": {
+        "command": "npm install && npm run build"
+      },
+      "parallel_group": "build_and_test"
+    },
+    {
+      "name": "运行测试",
+      "step_type": "test_execution",
+      "order": 3,
+      "parameters": {
+        "test_command": "npm test"
+      },
+      "parallel_group": "build_and_test"
+    },
+    {
+      "name": "代码扫描",
+      "step_type": "shell_command",
+      "order": 4,
+      "parameters": {
+        "command": "eslint src/"
+      },
+      "parallel_group": "build_and_test"
+    },
+    {
+      "name": "部署应用",
+      "step_type": "shell_command",
+      "order": 5,
+      "parameters": {
+        "command": "kubectl apply -f deployment.yaml"
+      },
+      "parallel_group": ""
+    }
+  ]
+}

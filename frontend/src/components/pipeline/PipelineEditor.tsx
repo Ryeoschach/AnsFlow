@@ -192,7 +192,8 @@ const normalizeStepForDisplay = (step: PipelineStep | AtomicStep): AtomicStep =>
       created_at: new Date().toISOString(),
       ansible_playbook: step.ansible_playbook,
       ansible_inventory: step.ansible_inventory,
-      ansible_credential: step.ansible_credential
+      ansible_credential: step.ansible_credential,
+      parallel_group: step.parallel_group || ''  // 添加并行组字段
     }
   }
 }

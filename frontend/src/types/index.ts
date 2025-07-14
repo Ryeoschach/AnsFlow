@@ -238,6 +238,7 @@ export interface AtomicStep {
   ansible_playbook?: number | null  // Ansible Playbook ID
   ansible_inventory?: number | null  // Ansible Inventory ID
   ansible_credential?: number | null  // Ansible Credential ID
+  parallel_group?: string  // 并行组名称
 }
 
 // 步骤执行类型

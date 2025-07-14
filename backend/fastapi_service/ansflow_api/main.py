@@ -16,6 +16,7 @@ from .websockets.routes import websocket_router
 from .monitoring.middleware import PrometheusMiddleware
 from .monitoring.health import health_router
 from .monitoring import init_monitoring
+from .services.django_db import django_db_service
 
 
 # Configure structured logging
@@ -48,6 +49,10 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("Starting AnsFlow FastAPI service", version=settings.api.version)
     
+    # Initialize Django database connection pool
+    await django_db_service.init_connection_pool()
+    logger.info("Django database connection pool initialized")
+    
     # Create database tables
     await create_tables()
     logger.info("Database tables created")
@@ -59,6 +64,10 @@ async def lifespan(app: FastAPI):
     
     # Shutdown
     logger.info("Shutting down AnsFlow FastAPI service")
+    
+    # Close Django database connection pool
+    await django_db_service.close_connection_pool()
+    logger.info("Django database connection pool closed")
 
 
 def create_application() -> FastAPI:

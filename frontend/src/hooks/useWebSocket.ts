@@ -21,6 +21,8 @@ interface RealtimeStepState {
   output?: string
   errorMessage?: string
   lastUpdated: string
+  type?: 'step' | 'parallel_group'  // 步骤类型字段
+  steps?: RealtimeStepState[]  // 并行组内的步骤
 }
 
 interface RealtimeLogEntry {
@@ -54,17 +56,53 @@ export function useWebSocket(executionId: number | null) {
       const ws = new PipelineExecutionWebSocket(executionId)
       
       // 设置事件监听器
-      ws.onExecutionUpdate((data: ExecutionUpdateMessage) => {
-        setExecutionState({
-          status: data.status,
-          totalSteps: data.total_steps || 0,
-          successfulSteps: data.successful_steps || 0,
-          failedSteps: data.failed_steps || 0,
-          executionTime: data.execution_time || 0,
-          message: data.message,
-          lastUpdated: data.timestamp,
-          pipeline_name: data.pipeline_name
-        })
+      ws.onExecutionUpdate((data: any) => {
+        console.log('Execution update received:', data)
+        
+        // 处理 execution_status 类型的消息
+        if (data.type === 'execution_status' || data.execution) {
+          const execData = data.execution || data
+          setExecutionState({
+            status: execData.status || data.status,
+            totalSteps: data.total_steps || execData.total_steps || 0,
+            successfulSteps: data.successful_steps || execData.successful_steps || 0,
+            failedSteps: data.failed_steps || execData.failed_steps || 0,
+            executionTime: data.execution_time || execData.execution_time || 0,
+            message: data.message || execData.message,
+            lastUpdated: data.timestamp || new Date().toISOString(),
+            pipeline_name: data.pipeline_name || execData.pipeline_name
+          })
+          
+          // 同时更新步骤状态
+          if (data.steps || execData.steps) {
+            const steps = data.steps || execData.steps
+            const newStepStates = new Map()
+            steps.forEach((step: any, index: number) => {
+              newStepStates.set(step.id || index, {
+                stepId: step.id || index,
+                stepName: step.name || step.step_name || `步骤 ${index + 1}`,
+                status: step.status || 'pending',
+                executionTime: step.execution_time,
+                output: step.output || step.logs,
+                errorMessage: step.error_message,
+                lastUpdated: new Date().toISOString()
+              })
+            })
+            setStepStates(newStepStates)
+          }
+        } else {
+          // 处理旧格式
+          setExecutionState({
+            status: data.status,
+            totalSteps: data.total_steps || 0,
+            successfulSteps: data.successful_steps || 0,
+            failedSteps: data.failed_steps || 0,
+            executionTime: data.execution_time || 0,
+            message: data.message,
+            lastUpdated: data.timestamp,
+            pipeline_name: data.pipeline_name
+          })
+        }
       })
 
       ws.onStepUpdate((data: StepUpdateMessage) => {
