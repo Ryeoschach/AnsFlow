@@ -17,6 +17,11 @@ tests/
 │   ├── api/
 │   ├── database/
 │   └── message_queue/
+├── jenkins_parallel_fix/    # 🆕 Jenkins并行语法修复测试 (2025-07-14)
+│   ├── test_jenkins_fixes.py           # 综合修复验证测试
+│   ├── test_parallel_comma_fix.py      # 并行逗号修复测试
+│   ├── test_preview_fix.py             # 预览API修复测试
+│   └── README.md                       # 测试说明文档
 ├── e2e/                     # 端到端测试
 │   ├── pipeline_creation/
 │   ├── execution_flow/

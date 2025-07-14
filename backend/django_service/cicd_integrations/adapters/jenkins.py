@@ -41,8 +41,14 @@ class JenkinsAdapter(CICDAdapter):
         if not command:
             return "echo 'No command specified'"
         
-        escaped_command = self._escape_shell_command(command)
-        return f"sh '{escaped_command}'"
+        # 如果命令包含单引号，使用双引号包围，并转义内部的双引号
+        if "'" in command:
+            # 转义命令中的双引号和反斜杠
+            escaped_command = command.replace('\\', '\\\\').replace('"', '\\"')
+            return f'sh "{escaped_command}"'
+        else:
+            # 如果命令不包含单引号，使用单引号包围
+            return f"sh '{command}'"
 
     async def _get_crumb(self) -> Optional[Tuple[str, str]]:
         """获取 Jenkins CSRF 保护令牌"""
@@ -83,33 +89,96 @@ class JenkinsAdapter(CICDAdapter):
         return await self.client.request(method, url, **kwargs)
     
     def _convert_atomic_steps_to_jenkinsfile(self, steps: List[Dict[str, Any]]) -> str:
-        """将原子步骤转换为 Jenkinsfile"""
-        stages = []
+        """将原子步骤转换为 Jenkinsfile（支持并行组）"""
+        from collections import defaultdict
+        
+        # 分析并行组
+        parallel_groups = defaultdict(list)
+        sequential_steps = []
         
         for i, step in enumerate(steps):
-            step_type = step.get('type', '')
-            step_name = step.get('name', f'Stage {i+1}')
-            params = step.get('parameters', {})
-            description = step.get('description', '')
+            parallel_group = step.get('parallel_group', '')
+            if parallel_group:
+                parallel_groups[parallel_group].append(step)
+            else:
+                sequential_steps.append(step)
+        
+        stages = []
+        processed_steps = set()
+        
+        for i, step in enumerate(steps):
+            step_id = id(step)
+            if step_id in processed_steps:
+                continue
+                
+            parallel_group = step.get('parallel_group', '')
             
-            # 使用安全的stage名称
-            safe_step_name = self._safe_stage_name(step_name)
-            safe_description = self._safe_description(description)
-            
-            # 根据步骤类型生成不同的 Jenkins 代码
-            stage_script = self._generate_stage_script(step_type, params)
-            
-            # 添加安全的描述作为注释
-            comment = f"// {safe_description}" if safe_description else ""
-            
-            stage = f"""
+            if parallel_group and parallel_group in parallel_groups:
+                # 处理并行组
+                parallel_steps = parallel_groups[parallel_group]
+                
+                # 生成并行组的stage
+                parallel_stage_name = f"parallel_group_{parallel_group}"
+                safe_parallel_name = self._safe_stage_name(parallel_stage_name)
+                
+                parallel_branches = []
+                for parallel_step in parallel_steps:
+                    step_name = parallel_step.get('name', f'Step {i+1}')
+                    safe_step_name = self._safe_stage_name(step_name).replace('-', '_')  # Jenkins parallel branch names can't have hyphens
+                    step_type = parallel_step.get('type', '')
+                    params = parallel_step.get('parameters', {})
+                    description = parallel_step.get('description', '')
+                    
+                    stage_script = self._generate_stage_script(step_type, params)
+                    safe_description = self._safe_description(description)
+                    comment = f"// {safe_description}" if safe_description else ""
+                    
+                    # 使用正确的Jenkins并行stage语法
+                    branch = f"""
+                stage('{safe_step_name}') {{
+                    steps {{
+                        {comment}
+                        {stage_script}
+                    }}
+                }}"""
+                    parallel_branches.append(branch)
+                    processed_steps.add(id(parallel_step))
+                
+                # 构建并行stage
+                parallel_content = ''.join(parallel_branches)
+                stage = f"""
+        stage('{safe_parallel_name}') {{
+            parallel {{{parallel_content}
+            }}
+        }}"""
+                stages.append(stage)
+                
+            elif not parallel_group:
+                # 处理顺序步骤
+                step_type = step.get('type', '')
+                step_name = step.get('name', f'Stage {i+1}')
+                params = step.get('parameters', {})
+                description = step.get('description', '')
+                
+                # 使用安全的stage名称
+                safe_step_name = self._safe_stage_name(step_name)
+                safe_description = self._safe_description(description)
+                
+                # 根据步骤类型生成不同的 Jenkins 代码
+                stage_script = self._generate_stage_script(step_type, params)
+                
+                # 添加安全的描述作为注释
+                comment = f"// {safe_description}" if safe_description else ""
+                
+                stage = f"""
         stage('{safe_step_name}') {{
             steps {{
                 {comment}
                 {stage_script}
             }}
         }}"""
-            stages.append(stage)
+                stages.append(stage)
+                processed_steps.add(step_id)
         
         return ''.join(stages)
     

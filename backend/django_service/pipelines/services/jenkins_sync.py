@@ -294,67 +294,231 @@ class JenkinsPipelineSyncService:
         )
     
     def _convert_steps_to_jenkins_script(self, pipeline: Pipeline) -> str:
-        """将AnsFlow步骤转换为Jenkins Pipeline脚本"""
+        """将AnsFlow步骤转换为Jenkins Pipeline脚本（支持并行组）"""
         
         script_lines = [
             "pipeline {",
             "    agent any",
+            "    ",
+            "    options {",
+            "        timeout(time: 60, unit: 'MINUTES')",
+            "        buildDiscarder(logRotator(numToKeepStr: '10'))",
+            "    }",
+            "    ",
+            "    environment {",
+            "        APP_ENV = 'development'",
+            "    }",
+            "    ",
             "    stages {"
         ]
         
-        # 获取流水线的原子步骤
-        atomic_steps = pipeline.atomic_steps.all().order_by('order')
+        # 获取流水线的步骤并分析并行组
+        pipeline_steps = pipeline.steps.all().order_by('order')
+        pipeline_steps_list = list(pipeline_steps)  # 转换为列表以便调试
+        logger.info(f"Jenkins同步: 获取到 {len(pipeline_steps_list)} 个步骤")
         
-        for step in atomic_steps:
-            stage_name = step.name.replace("'", "\\'")
-            script_lines.append(f"        stage('{stage_name}') {{")
-            script_lines.append("            steps {")
-            
-            # 根据步骤类型生成不同的Jenkins步骤
-            if step.step_type == 'shell_command':
-                command = step.parameters.get('command', 'echo "No command specified"')
-                script_lines.append(f"                sh '{command}'")
-            elif step.step_type == 'git_clone':
-                repo_url = step.parameters.get('repository_url', '')
-                branch = step.parameters.get('branch', 'main')
-                script_lines.append(f"                git branch: '{branch}', url: '{repo_url}'")
-            elif step.step_type == 'docker_build':
-                image_name = step.parameters.get('image_name', 'app')
-                dockerfile = step.parameters.get('dockerfile', 'Dockerfile')
-                script_lines.append(f"                sh 'docker build -t {image_name} -f {dockerfile} .'")
-            elif step.step_type == 'test_execution':
-                test_command = step.parameters.get('test_command', 'npm test')
-                script_lines.append(f"                sh '{test_command}'")
-            elif step.step_type == 'artifact_upload':
-                artifacts = step.parameters.get('artifacts', '**/*')
-                script_lines.append(f"                archiveArtifacts artifacts: '{artifacts}'")
-            elif step.step_type == 'notification':
-                message = step.parameters.get('message', 'Step completed')
-                script_lines.append(f"                echo '{message}'")
+        # 打印每个步骤的详细信息
+        for i, step in enumerate(pipeline_steps_list):
+            parallel_group = getattr(step, 'parallel_group', None)
+            logger.info(f"步骤 {i+1}: name='{step.name}', order={step.order}, parallel_group='{parallel_group}'")
+        
+        execution_plan = self._analyze_execution_plan(pipeline_steps_list)
+        
+        # 根据执行计划生成Jenkins stages
+        for stage_info in execution_plan['stages']:
+            if stage_info['parallel']:
+                # 生成并行stage
+                self._add_parallel_stage_to_script(script_lines, stage_info)
             else:
-                # 默认处理
-                script_lines.append(f"                echo 'Executing step: {stage_name}'")
-            
-            script_lines.append("            }")
-            script_lines.append("        }")
+                # 生成顺序stage
+                self._add_sequential_stage_to_script(script_lines, stage_info)
         
         script_lines.extend([
             "    }",
+            "    ",
             "    post {",
             "        always {",
-            "            echo 'Pipeline completed'",
+            "            cleanWs()",
             "        }",
             "        success {",
-            "            echo 'Pipeline succeeded'",
+            "            echo 'Pipeline 执行成功!'",
             "        }",
             "        failure {",
-            "            echo 'Pipeline failed'",
+            "            echo 'Pipeline 执行失败!'",
             "        }",
             "    }",
             "}"
         ])
         
-        return "\\n".join(script_lines)
+        return "\n".join(script_lines)
+    
+    def _analyze_execution_plan(self, pipeline_steps):
+        """分析原子步骤的执行计划，识别并行组"""
+        parallel_groups = {}
+        sequential_steps = []
+        execution_plan = {'stages': []}
+        
+        # 收集并行组信息
+        for step in pipeline_steps:
+            parallel_group_id = getattr(step, 'parallel_group', None)
+            logger.info(f"步骤 '{step.name}': parallel_group = '{parallel_group_id}'")
+            if parallel_group_id and parallel_group_id.strip():
+                group_id = parallel_group_id.strip()
+                logger.info(f"步骤 '{step.name}' 属于并行组 '{group_id}'")
+                if group_id not in parallel_groups:
+                    parallel_groups[group_id] = {
+                        'id': group_id,
+                        'name': f"并行组-{group_id}",
+                        'steps': [],
+                        'min_order': float('inf'),
+                        'max_order': 0
+                    }
+                
+                parallel_groups[group_id]['steps'].append(step)
+                parallel_groups[group_id]['min_order'] = min(parallel_groups[group_id]['min_order'], step.order)
+                parallel_groups[group_id]['max_order'] = max(parallel_groups[group_id]['max_order'], step.order)
+            else:
+                sequential_steps.append(step)
+        
+        logger.info(f"分析完成: {len(parallel_groups)} 个并行组, {len(sequential_steps)} 个顺序步骤")
+        
+        # 创建执行阶段
+        all_items = []
+        
+        # 添加单独步骤
+        for step in sequential_steps:
+            all_items.append({
+                'type': 'step',
+                'order': step.order,
+                'item': step,
+                'parallel': False
+            })
+        
+        # 添加并行组（使用最小order作为组的order）
+        for group_id, group_info in parallel_groups.items():
+            all_items.append({
+                'type': 'parallel_group',
+                'order': group_info['min_order'],
+                'item': group_info,
+                'parallel': True
+            })
+        
+        # 按order排序
+        all_items.sort(key=lambda x: x['order'])
+        
+        # 构建执行阶段
+        for item in all_items:
+            stage = {
+                'type': item['type'],
+                'parallel': item['parallel'],
+                'items': []
+            }
+            
+            if item['type'] == 'step':
+                stage['items'] = [item['item']]
+            else:  # parallel_group
+                stage['items'] = item['item']['steps']
+                stage['group_info'] = item['item']
+            
+            execution_plan['stages'].append(stage)
+        
+        return execution_plan
+    
+    def _add_parallel_stage_to_script(self, script_lines, stage_info):
+        """向脚本添加并行stage"""
+        group_info = stage_info.get('group_info', {})
+        group_name = group_info.get('name', '并行执行')
+        steps = stage_info['items']
+        
+        script_lines.append(f"        stage('{group_name}') {{")
+        script_lines.append("            parallel {")
+        
+        # 为每个并行步骤生成一个并行分支
+        for step in steps:
+            step_name = step.name.replace("'", "\\'").replace(" ", "_").replace("-", "_")
+            script_lines.append(f"                stage('{step_name}') {{")
+            script_lines.append("                    steps {")
+            
+            # 生成步骤命令
+            command = self._generate_step_command(step)
+            script_lines.append(f"                        {command}")
+            
+            script_lines.append("                    }")
+            script_lines.append("                }")
+        
+        script_lines.append("            }")
+        script_lines.append("        }")
+    
+    def _add_sequential_stage_to_script(self, script_lines, stage_info):
+        """向脚本添加顺序stage"""
+        step = stage_info['items'][0]  # 顺序stage只有一个步骤
+        stage_name = step.name.replace("'", "\\'")
+        
+        script_lines.append(f"        stage('{stage_name}') {{")
+        script_lines.append("            steps {")
+        
+        # 生成步骤命令
+        command = self._generate_step_command(step)
+        script_lines.append(f"                {command}")
+        
+        script_lines.append("            }")
+        script_lines.append("        }")
+    
+    def _generate_step_command(self, step):
+        """根据步骤类型生成Jenkins命令"""
+        # 首先检查step的config字段（新格式）
+        if hasattr(step, 'config') and step.config:
+            if step.step_type == 'shell' and 'command' in step.config:
+                command = step.config['command']
+                return self._safe_shell_command(command)
+            elif step.step_type == 'python' and 'script' in step.config:
+                script = step.config['script']
+                return f'sh "python3 -c \\"{script}\\""'
+            elif step.step_type == 'docker' and 'command' in step.config:
+                image = step.config.get('image', 'ubuntu:latest')
+                command = step.config['command']
+                return f'sh "docker run --rm {image} {command}"'
+        
+        # 兼容旧的parameters字段
+        if hasattr(step, 'parameters') and step.parameters:
+            if step.step_type == 'shell_command':
+                command = step.parameters.get('command', 'echo "No command specified"')
+                return self._safe_shell_command(command)
+            elif step.step_type == 'git_clone':
+                repo_url = step.parameters.get('repository_url', '')
+                branch = step.parameters.get('branch', 'main')
+                return f"git branch: '{branch}', url: '{repo_url}'"
+            elif step.step_type == 'docker_build':
+                image_name = step.parameters.get('image_name', 'app')
+                dockerfile = step.parameters.get('dockerfile', 'Dockerfile')
+                return f'sh "docker build -t {image_name} -f {dockerfile} ."'
+            elif step.step_type == 'test_execution':
+                test_command = step.parameters.get('test_command', 'npm test')
+                return self._safe_shell_command(test_command)
+            elif step.step_type == 'artifact_upload':
+                artifacts = step.parameters.get('artifacts', '**/*')
+                return f"archiveArtifacts artifacts: '{artifacts}'"
+            elif step.step_type == 'notification':
+                message = step.parameters.get('message', 'Step completed')
+                return f"echo '{message}'"
+        
+        # 默认处理
+        step_name = step.name.replace("'", "\\'")
+        return f"echo 'Executing step: {step_name}'"
+    
+    def _safe_shell_command(self, command):
+        """安全地转义shell命令中的引号"""
+        if not command:
+            return 'sh "Empty command"'
+        
+        # 如果命令包含单引号，使用双引号包围，并转义内部的双引号
+        if "'" in command:
+            # 转义命令中的双引号和反斜杠
+            escaped_command = command.replace('\\', '\\\\').replace('"', '\\"')
+            return f'sh "{escaped_command}"'
+        else:
+            # 如果命令不包含单引号，使用单引号包围
+            return f"sh '{command}'"
     
     def sync_pipeline_to_jenkins(self, pipeline: Pipeline) -> Dict[str, Any]:
         """将AnsFlow流水线同步到Jenkins"""

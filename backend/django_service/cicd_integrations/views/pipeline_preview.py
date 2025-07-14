@@ -12,6 +12,10 @@ from cicd_integrations.adapters.jenkins import JenkinsAdapter
 from cicd_integrations.adapters.base import PipelineDefinition
 from cicd_integrations.models import CICDTool
 
+# 引入并行执行服务
+from pipelines.services.parallel_execution import ParallelExecutionService
+from pipelines.services.jenkins_sync import JenkinsPipelineSyncService
+
 logger = logging.getLogger(__name__)
 
 @csrf_exempt
@@ -37,20 +41,29 @@ def pipeline_preview(request):
             try:
                 from pipelines.models import Pipeline
                 pipeline = Pipeline.objects.get(id=pipeline_id)
-                # 获取数据库中的实际步骤
-                db_steps = pipeline.atomic_steps.all().order_by('order')
+                # 获取数据库中的实际步骤 - 使用steps而不是atomic_steps
+                db_steps = pipeline.steps.all().order_by('order')
                 steps = []
                 for db_step in db_steps:
                     steps.append({
                         'name': db_step.name,
                         'step_type': db_step.step_type,
-                        'parameters': db_step.parameters or {},
+                        'parameters': db_step.environment_vars or {},  # 使用environment_vars作为parameters
                         'order': db_step.order,
-                        'description': db_step.description or ''
+                        'description': db_step.description or '',
+                        'parallel_group': db_step.parallel_group or ''  # 这个字段存在于PipelineStep中
                     })
+                    
+                logger.info(f"从数据库获取到 {len(steps)} 个步骤")
+                for step in steps:
+                    logger.info(f"数据库步骤: {step['name']}, parallel_group: {step['parallel_group']}")
+                    
             except Exception as e:
                 logger.warning(f"无法从数据库获取流水线 {pipeline_id} 的步骤: {e}")
-                # 如果获取失败，继续使用前端传递的步骤数据
+                # 如果数据库获取失败且前端没有提供steps，使用空列表
+                if not steps:
+                    logger.error(f"数据库获取失败且前端未提供步骤数据，pipeline_id={pipeline_id}")
+                    steps = []
         
         # 创建Pipeline定义对象
         pipeline_definition = PipelineDefinition(
@@ -76,7 +89,127 @@ def pipeline_preview(request):
         # 如果有Jenkins工具，生成Jenkinsfile
         ci_tool_type = data.get('ci_tool_type', 'jenkins')  # 默认为Jenkins
         
-        if execution_mode == 'remote' and execution_tool_id:
+        # 使用并行执行服务来分析并行组和生成Jenkins Pipeline
+        try:
+            parallel_service = ParallelExecutionService()
+            
+            # 分析并行组
+            parallel_groups = parallel_service.analyze_parallel_groups(steps)
+            
+            logger.info(f"Pipeline预览分析到并行组: {len(parallel_groups)}")
+            for group in parallel_groups:
+                logger.info(f"并行组 {group['name']}: {len(group['steps'])} 个步骤")                # 使用Jenkins同步服务生成Pipeline
+                if ci_tool_type == 'jenkins':
+                    # 创建一个临时的CICDTool对象用于Jenkins同步
+                    from cicd_integrations.models import CICDTool
+                    
+                    # 尝试获取真实的Jenkins工具，如果没有则创建临时对象
+                    if execution_tool_id:
+                        try:
+                            jenkins_tool = CICDTool.objects.get(id=execution_tool_id)
+                        except CICDTool.DoesNotExist:
+                            # 创建临时Jenkins工具对象
+                            jenkins_tool = CICDTool(
+                                name='Mock Jenkins',
+                                tool_type='jenkins',
+                                base_url='http://mock-jenkins:8080',
+                                username='mock',
+                                token='mock'
+                            )
+                    else:
+                        # 创建临时Jenkins工具对象
+                        jenkins_tool = CICDTool(
+                            name='Mock Jenkins',
+                            tool_type='jenkins',
+                            base_url='http://mock-jenkins:8080',
+                            username='mock',
+                            token='mock'
+                        )
+                    jenkins_sync = JenkinsPipelineSyncService(jenkins_tool)
+                    
+                    # 构建Pipeline配置数据
+                    pipeline_config = {
+                        'id': pipeline_id,
+                        'name': f"Pipeline {pipeline_id} Preview",
+                        'steps': steps,
+                        'parallel_groups': parallel_groups,
+                        'execution_mode': execution_mode,
+                        'environment': data.get('environment', {}),
+                        'timeout': data.get('timeout', 3600)
+                    }
+                    
+                    # 创建一个临时的Pipeline对象用于生成Jenkins脚本
+                    from pipelines.models import Pipeline, PipelineStep
+                    
+                    # 模拟Pipeline对象
+                    class MockPipeline:
+                        def __init__(self, pipeline_config):
+                            self.id = pipeline_config.get('id', 123)
+                            self.name = pipeline_config.get('name', 'Mock Pipeline')
+                            self.execution_mode = pipeline_config.get('execution_mode', 'jenkins')
+                            self.environment = pipeline_config.get('environment', {})
+                            self.timeout = pipeline_config.get('timeout', 3600)
+                            self._steps = pipeline_config.get('steps', [])
+                            
+                        @property
+                        def steps(self):
+                            # 创建原子步骤的QuerySet模拟
+                            class MockQuerySet:
+                                def __init__(self, steps_data):
+                                    self.steps_data = steps_data
+                                    self._mock_steps = None
+                                    
+                                def _create_mock_steps(self):
+                                    """创建MockPipelineStep对象列表"""
+                                    if self._mock_steps is None:
+                                        self._mock_steps = []
+                                        for step_data in self.steps_data:
+                                            step = type('MockPipelineStep', (), {
+                                                'id': step_data.get('id', 1),
+                                                'name': step_data.get('name', ''),
+                                                'step_type': step_data.get('step_type', ''),
+                                                'parameters': step_data.get('parameters', {}),
+                                                'order': step_data.get('order', 0),
+                                                'description': step_data.get('description', ''),
+                                                'parallel_group': step_data.get('parallel_group', None)
+                                            })()
+                                            self._mock_steps.append(step)
+                                    return self._mock_steps
+                                    
+                                def all(self):
+                                    return self._create_mock_steps()
+                                
+                                def order_by(self, field):
+                                    mock_steps = self._create_mock_steps()
+                                    if field == 'order':
+                                        return sorted(mock_steps, key=lambda x: getattr(x, 'order', 0))
+                                    return mock_steps
+                                
+                                def __iter__(self):
+                                    return iter(self._create_mock_steps())
+                                
+                                def __len__(self):
+                                    return len(self.steps_data)
+                            
+                            return MockQuerySet(self._steps)
+                    
+                    mock_pipeline = MockPipeline(pipeline_config)
+                    
+                    # 生成Jenkins脚本
+                    jenkinsfile = jenkins_sync._convert_steps_to_jenkins_script(mock_pipeline)
+                    result['jenkinsfile'] = jenkinsfile
+                    result['content'] = jenkinsfile  # 为了兼容前端
+                
+                # 添加并行组信息到摘要
+                result['workflow_summary']['parallel_groups'] = len(parallel_groups)
+                result['workflow_summary']['parallel_steps'] = sum(len(group['steps']) for group in parallel_groups)
+                
+                logger.info(f"成功生成Jenkins Pipeline，包含 {len(parallel_groups)} 个并行组")
+                
+        except Exception as e:
+            logger.error(f"使用并行执行服务生成Pipeline失败: {e}")
+            # 回退到原有逻辑
+            
             try:
                 tool = CICDTool.objects.get(id=execution_tool_id)
                 ci_tool_type = tool.tool_type
@@ -169,19 +302,217 @@ def generate_mock_pipeline_files(steps, tool_type='jenkins'):
     """生成多种CI/CD工具的Pipeline文件"""
     result = {}
     
-    if tool_type == 'jenkins':
-        result['jenkinsfile'] = generate_mock_jenkinsfile(steps)
-    elif tool_type == 'gitlab':
-        result['gitlab_ci'] = generate_mock_gitlab_ci(steps)
-    elif tool_type == 'github':
-        result['github_actions'] = generate_mock_github_actions(steps)
-    else:
-        # 默认生成所有类型
-        result['jenkinsfile'] = generate_mock_jenkinsfile(steps)
-        result['gitlab_ci'] = generate_mock_gitlab_ci(steps)
-        result['github_actions'] = generate_mock_github_actions(steps)
+    # 首先分析并行组
+    try:
+        from pipelines.services.parallel_execution import ParallelExecutionService
+        parallel_service = ParallelExecutionService()
+        parallel_groups = parallel_service.analyze_parallel_groups(steps)
+        
+        logger.info(f"Mock生成: 分析到 {len(parallel_groups)} 个并行组")
+        
+        if tool_type == 'jenkins':
+            result['jenkinsfile'] = generate_mock_jenkinsfile_with_parallel(steps, parallel_groups)
+        elif tool_type == 'gitlab':
+            result['gitlab_ci'] = generate_mock_gitlab_ci(steps)
+        elif tool_type == 'github':
+            result['github_actions'] = generate_mock_github_actions(steps)
+        else:
+            # 默认生成所有类型
+            result['jenkinsfile'] = generate_mock_jenkinsfile_with_parallel(steps, parallel_groups)
+            result['gitlab_ci'] = generate_mock_gitlab_ci(steps)
+            result['github_actions'] = generate_mock_github_actions(steps)
+            
+    except Exception as e:
+        logger.warning(f"并行组分析失败，使用简单模式: {e}")
+        # 回退到原有逻辑
+        if tool_type == 'jenkins':
+            result['jenkinsfile'] = generate_mock_jenkinsfile(steps)
+        elif tool_type == 'gitlab':
+            result['gitlab_ci'] = generate_mock_gitlab_ci(steps)
+        elif tool_type == 'github':
+            result['github_actions'] = generate_mock_github_actions(steps)
+        else:
+            result['jenkinsfile'] = generate_mock_jenkinsfile(steps)
+            result['gitlab_ci'] = generate_mock_gitlab_ci(steps)
+            result['github_actions'] = generate_mock_github_actions(steps)
     
     return result
+
+def generate_mock_jenkinsfile_with_parallel(steps, parallel_groups):
+    """生成支持并行组的Jenkins Pipeline - 简化版本"""
+    try:
+        logger.info(f"开始生成并行组Jenkins Pipeline，步骤数: {len(steps)}, 并行组数: {len(parallel_groups)}")
+        
+        # 构建Jenkins Pipeline脚本
+        script_lines = [
+            "pipeline {",
+            "    agent any",
+            "    ",
+            "    options {",
+            "        timeout(time: 60, unit: 'MINUTES')",
+            "        buildDiscarder(logRotator(numToKeepStr: '10'))",
+            "    }",
+            "    ",
+            "    environment {",
+            "        APP_ENV = 'development'",
+            "    }",
+            "    ",
+            "    stages {"
+        ]
+        
+        # 分离并行组步骤和顺序步骤
+        parallel_steps_map = {}
+        sequential_steps = []
+        
+        logger.info(f"输入的并行组数量: {len(parallel_groups)}")
+        for i, group in enumerate(parallel_groups):
+            logger.info(f"并行组 {i}: {group}")
+        
+        # 构建并行组映射
+        for group in parallel_groups:
+            group_name = group.get('name', f'Unknown Group')
+            for step in group.get('steps', []):
+                step_name = step.get('name', '')
+                parallel_steps_map[step_name] = group_name
+                logger.info(f"映射并行步骤: {step_name} -> {group_name}")
+        
+        logger.info(f"并行步骤映射: {parallel_steps_map}")
+        
+        # 分类步骤
+        for step in steps:
+            step_name = step.get('name', '')
+            if step_name in parallel_steps_map:
+                logger.info(f"步骤 {step_name} 将在并行组中处理")
+                continue  # 并行步骤会在并行组中处理
+            else:
+                logger.info(f"步骤 {step_name} 作为顺序步骤")
+                sequential_steps.append(step)
+        
+        # 创建执行序列（包含顺序步骤和并行组）
+        execution_sequence = []
+        
+        # 添加顺序步骤
+        for step in sequential_steps:
+            execution_sequence.append({
+                'type': 'sequential',
+                'order': step.get('order', 0),
+                'step': step
+            })
+        
+        # 添加并行组
+        for group in parallel_groups:
+            min_order = min(step.get('order', 0) for step in group['steps'])
+            execution_sequence.append({
+                'type': 'parallel',
+                'order': min_order,
+                'group': group
+            })
+        
+        # 按order排序
+        execution_sequence.sort(key=lambda x: x['order'])
+        
+        # 生成stages
+        for item in execution_sequence:
+            if item['type'] == 'sequential':
+                # 顺序步骤
+                step = item['step']
+                command = _generate_step_command_simple(step)
+                safe_shell_cmd = _safe_shell_command(command)
+                
+                script_lines.extend([
+                    f"        stage('{step.get('name', 'Unknown Step')}') {{",
+                    "            steps {",
+                    f"                {safe_shell_cmd}",
+                    "            }",
+                    "        }"
+                ])
+            else:
+                # 并行组
+                group = item['group']
+                group_name = group.get('name', '并行执行组')
+                
+                script_lines.extend([
+                    f"        stage('{group_name}') {{",
+                    "            parallel {"
+                ])
+                
+                for step in group['steps']:
+                    command = _generate_step_command_simple(step)
+                    step_name = step.get('name', 'Unknown Step')
+                    safe_shell_cmd = _safe_shell_command(command)
+                    
+                    script_lines.extend([
+                        f"                stage('{step_name}') {{",
+                        "                    steps {",
+                        f"                        {safe_shell_cmd}",
+                        "                    }",
+                        "}"
+                    ])
+                
+                script_lines.extend([
+                    "            }",
+                    "        }"
+                ])
+        
+        script_lines.extend([
+            "    }",
+            "    ",
+            "    post {",
+            "        always {",
+            "            cleanWs()",
+            "        }",
+            "        success {",
+            "            echo 'Pipeline 执行成功!'",
+            "        }",
+            "        failure {",
+            "            echo 'Pipeline 执行失败!'",
+            "        }",
+            "    }",
+            "}"
+        ])
+        
+        jenkinsfile = "\n".join(script_lines)
+        
+        logger.info(f"成功生成并行组Jenkins Pipeline，包含 {len(parallel_groups)} 个并行组")
+        return jenkinsfile
+        
+    except Exception as e:
+        logger.warning(f"生成并行组Jenkins Pipeline失败，回退到简单模式: {e}")
+        return generate_mock_jenkinsfile(steps)
+
+def _generate_step_command_simple(step):
+    """为步骤生成简单的命令"""
+    step_type = step.get('step_type', 'custom')
+    parameters = step.get('parameters', {})
+    
+    if step_type == 'ansible':
+        playbook = parameters.get('playbook_path', 'playbook.yml')
+        inventory = parameters.get('inventory_path', 'hosts')
+        return f"ansible-playbook -i {inventory} {playbook}"
+    elif step_type == 'fetch_code':
+        repo = parameters.get('repository', '')
+        if repo:
+            branch = parameters.get('branch', 'main')
+            return f"git clone --branch {branch} {repo} ."
+        return "echo '执行代码检出'"
+    elif step_type == 'test':
+        test_cmd = parameters.get('test_command', 'npm test')
+        return test_cmd
+    elif step_type == 'build':
+        build_tool = parameters.get('build_tool', 'npm')
+        if build_tool == 'npm':
+            return "npm ci && npm run build"
+        elif build_tool == 'maven':
+            return "mvn clean package"
+        return f"{build_tool} build"
+    elif step_type == 'deploy':
+        deploy_cmd = parameters.get('deploy_command', 'kubectl apply -f deployment.yaml')
+        return deploy_cmd
+    elif step_type == 'shell_script':
+        return parameters.get('script', 'echo "Shell脚本执行"')
+    else:
+        command = parameters.get('command', f'echo "执行{step_type}步骤"')
+        return command
 
 def generate_mock_gitlab_ci(steps):
     """生成GitLab CI配置文件"""
@@ -332,18 +663,6 @@ jobs:
     
     return github_actions
 
-def generate_mock_pipeline_files(steps, ci_tool_type):
-    """生成模拟的Pipeline文件用于预览"""
-    
-    if ci_tool_type == 'jenkins':
-        return {'jenkinsfile': generate_mock_jenkinsfile(steps)}
-    elif ci_tool_type == 'gitlab':
-        return {'gitlab_ci_yaml': generate_mock_gitlab_ci_yaml(steps)}
-    elif ci_tool_type == 'github':
-        return {'github_actions_yaml': generate_mock_github_actions_yaml(steps)}
-    else:
-        return {}
-
 def generate_mock_jenkinsfile(steps):
     """生成模拟的Jenkinsfile用于预览"""
     
@@ -474,7 +793,7 @@ def generate_mock_jenkinsfile(steps):
         
         stage = f"""        stage('{step_name}') {{
             steps {{
-                sh '{command}'
+                {_safe_shell_command(command)}
             }}
         }}"""
         stages.append(stage)
@@ -631,3 +950,17 @@ jobs:{chr(10).join(jobs)}
 """
     
     return github_actions_yaml
+
+def _safe_shell_command(command):
+    """安全地转义shell命令中的引号"""
+    if not command:
+        return 'echo "Empty command"'
+    
+    # 如果命令包含单引号，使用双引号包围，并转义内部的双引号
+    if "'" in command:
+        # 转义命令中的双引号和反斜杠
+        escaped_command = command.replace('\\', '\\\\').replace('"', '\\"')
+        return f'sh "{escaped_command}"'
+    else:
+        # 如果命令不包含单引号，使用单引号包围
+        return f"sh '{command}'"

@@ -12,18 +12,23 @@ docs/
 ├── 📁 testing/                      # 🆕 测试报告与验证
 │   ├── ansflow_optimization_test_report.json  # 最新性能测试结果
 │   └── README.md                           # 测试文档指南
+├── 📁 reports/                      # 项目完成报告
+│   ├── jenkins_parallel_fix/        # 🆕 Jenkins并行语法修复 (2025-07-14)
+│   │   ├── jenkins_fix_report.md           # 详细技术修复报告
+│   │   ├── jenkins_parallel_fix_summary.md # 修复前后对比摘要
+│   │   └── README.md                       # 修复文档索引
+│   └── 其他报告...
 ├── 📁 archive/                      # 历史修复报告和技术文档归档
 ├── 📁 api/                         # API文档
 ├── 📁 deployment/                  # 部署相关文档
 ├── 📁 development/                 # 开发指南和规范
 ├── 📁 guides/                      # 使用指南
-├── 📁 reports/                     # 项目完成报告
 └── 其他文档...
 ```文档概览
 
 欢迎来到 AnsFlow CI/CD 平台文档中心！本目录包含了完整的项目文档，包括开发指南、微服务优化方案、测试报告等。
 
-## 📂 文档结构 (更新于 2025年7月10日)
+## 📂 文档结构 (更新于 2025年7月14日)
 
 ```
 docs/
@@ -36,14 +41,28 @@ docs/
 ├── 📁 testing/                      # 🆕 测试报告与验证
 │   ├── ansflow_optimization_test_report.json  # 最新性能测试结果
 │   └── README.md                           # 测试文档指南
+├── 📁 reports/                      # 项目完成报告
+│   ├── jenkins_parallel_fix/        # 🆕 Jenkins并行语法修复 (2025-07-14)
+│   │   ├── jenkins_fix_report.md           # 详细技术修复报告
+│   │   ├── jenkins_parallel_fix_summary.md # 修复前后对比摘要
+│   │   └── README.md                       # 修复文档索引
+│   └── 其他报告...
 ├── 📁 archive/                      # 历史修复报告和技术文档归档
 ├── 📁 api/                         # API文档
 ├── 📁 deployment/                  # 部署相关文档
 ├── 📁 development/                 # 开发指南和规范
-├── � guides/                      # 使用指南
-├── � reports/                     # 项目完成报告
+├── 📁 guides/                      # 使用指南
 └── 其他文档...
 ```
+
+## 🔧 最新修复 (2025年7月14日)
+
+### ⚡ Jenkins并行语法修复完成
+- **修复问题**: 并行组渲染错误和Shell命令引号冲突
+- **影响范围**: 预览API、Jenkins适配器、同步服务
+- **修复文件**: 3个核心文件的并行语法生成逻辑
+- **测试验证**: 完整的测试脚本和验证报告
+- **文档位置**: [`reports/jenkins_parallel_fix/`](reports/jenkins_parallel_fix/)
 
 ## � 最新优化成果 (2025年7月10日)
 
