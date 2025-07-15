@@ -18,6 +18,7 @@ class CICDTool(models.Model):
         ('circleci', 'CircleCI'),
         ('github_actions', 'GitHub Actions'),
         ('azure_devops', 'Azure DevOps'),
+        ('local', 'Local Executor'),  # 本地执行器
         ('custom', 'Custom Tool'),
     ]
     
@@ -368,7 +369,11 @@ class StepExecution(models.Model):
     pipeline_execution = models.ForeignKey(PipelineExecution, on_delete=models.CASCADE,
                                           related_name='step_executions')
     atomic_step = models.ForeignKey(AtomicStep, on_delete=models.CASCADE,
-                                   related_name='executions')
+                                   related_name='executions', null=True, blank=True)
+    
+    # 支持新的PipelineStep（为了向后兼容，保留atomic_step字段）
+    pipeline_step = models.ForeignKey('pipelines.PipelineStep', on_delete=models.CASCADE,
+                                     related_name='executions', null=True, blank=True)
     
     # 执行信息
     external_id = models.CharField(max_length=255, blank=True, help_text="外部工具中的步骤ID")
@@ -395,7 +400,28 @@ class StepExecution(models.Model):
         unique_together = ['pipeline_execution', 'order']
     
     def __str__(self):
-        return f"{self.atomic_step.name} - {self.status}"
+        if self.atomic_step:
+            return f"{self.atomic_step.name} - {self.status}"
+        elif self.pipeline_step:
+            return f"{self.pipeline_step.name} - {self.status}"
+        else:
+            return f"Step {self.order} - {self.status}"
+    
+    @property
+    def step_name(self):
+        """获取步骤名称"""
+        if self.atomic_step:
+            return self.atomic_step.name
+        elif self.pipeline_step:
+            return self.pipeline_step.name
+        else:
+            return f"Step {self.order}"
+    
+    def clean(self):
+        """确保atomic_step和pipeline_step中至少有一个不为空"""
+        from django.core.exceptions import ValidationError
+        if not self.atomic_step and not self.pipeline_step:
+            raise ValidationError("Must have either atomic_step or pipeline_step")
     
     @property
     def duration(self):

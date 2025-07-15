@@ -124,10 +124,15 @@ class PipelineSerializer(serializers.ModelSerializer):
         return pipeline
     
     def update(self, instance, validated_data):
+        # 检查原始数据中是否包含steps字段
+        request_data = getattr(self.context.get('request'), 'data', {})
+        has_steps_field = 'steps' in request_data
+        
         steps_data = validated_data.pop('steps', None)
         instance = super().update(instance, validated_data)
         
-        if steps_data is not None:
+        # 只有当请求中明确包含steps字段时才更新步骤
+        if has_steps_field and steps_data is not None:
             # 删除现有的Pipeline步骤
             instance.steps.all().delete()
             

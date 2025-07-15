@@ -48,7 +48,7 @@ class SyncStepExecutor:
             # 更新步骤状态为运行中
             self._update_step_status(step_execution, 'running')
             
-            logger.info(f"开始执行原子步骤: {atomic_step.name} (ID: {atomic_step.id})")
+            logger.info(f"开始执行原子步骤: {self._get_step_name(atomic_step)} (ID: {atomic_step.id})")
             
             # 准备执行环境
             execution_env = self._prepare_execution_environment(atomic_step, tool_config)
@@ -72,12 +72,12 @@ class SyncStepExecutor:
                 'metadata': result.get('metadata', {})
             }
             
-            logger.info(f"原子步骤执行完成: {atomic_step.name} - {final_status}")
+            logger.info(f"原子步骤执行完成: {self._get_step_name(atomic_step)} - {final_status}")
             
             return execution_result
         
         except Exception as e:
-            logger.error(f"原子步骤执行异常: {atomic_step.name} - {str(e)}", exc_info=True)
+            logger.error(f"原子步骤执行异常: {self._get_step_name(atomic_step)} - {str(e)}", exc_info=True)
             
             # 更新步骤状态为失败
             if step_execution:
@@ -94,30 +94,59 @@ class SyncStepExecutor:
                 'metadata': {}
             }
     
-    def _create_step_execution(self, atomic_step: AtomicStep) -> StepExecution:
+    def _create_step_execution(self, step) -> StepExecution:
         """创建步骤执行记录"""
         try:
             # 获取流水线执行记录
             from ..models import PipelineExecution
             pipeline_execution = PipelineExecution.objects.get(id=self.context.execution_id)
             
+            # 检查step是AtomicStep还是PipelineStep
+            from ..models import AtomicStep
+            from pipelines.models import PipelineStep
+            
+            order = getattr(step, 'order', 0)
+            
             # 检查是否已存在相同order的执行记录
             existing_execution = StepExecution.objects.filter(
                 pipeline_execution=pipeline_execution,
-                order=atomic_step.order
+                order=order
             ).first()
             
             if existing_execution:
                 logger.warning(f"步骤执行记录已存在，复用: {existing_execution.id}")
                 return existing_execution
             
-            step_execution = StepExecution.objects.create(
-                pipeline_execution=pipeline_execution,
-                atomic_step=atomic_step,
-                status='pending',
-                order=atomic_step.order,  # 使用原子步骤的order字段
-                started_at=timezone.now()
-            )
+            # 根据step类型创建StepExecution
+            if isinstance(step, AtomicStep):
+                step_execution = StepExecution.objects.create(
+                    pipeline_execution=pipeline_execution,
+                    atomic_step=step,
+                    status='pending',
+                    order=order,
+                    started_at=timezone.now()
+                )
+            elif isinstance(step, PipelineStep):
+                step_execution = StepExecution.objects.create(
+                    pipeline_execution=pipeline_execution,
+                    pipeline_step=step,
+                    status='pending',
+                    order=order,
+                    started_at=timezone.now()
+                )
+            else:
+                # 兼容性：如果是其他类型，尝试使用PipelineStep
+                try:
+                    pipeline_step = PipelineStep.objects.get(id=step.id)
+                    step_execution = StepExecution.objects.create(
+                        pipeline_execution=pipeline_execution,
+                        pipeline_step=pipeline_step,
+                        status='pending',
+                        order=order,
+                        started_at=timezone.now()
+                    )
+                except PipelineStep.DoesNotExist:
+                    raise ValueError(f"无法识别的步骤类型: {type(step)}")
             
             logger.info(f"创建步骤执行记录: {step_execution.id}")
             return step_execution
@@ -146,7 +175,7 @@ class SyncStepExecutor:
                 if result:
                     step_execution.output = result
                     step_execution.logs = result.get('output', '')
-                    step_execution.error_message = result.get('error_message', '')
+                    step_execution.error_message = result.get('error_message', '') or ''
                 
                 step_execution.save()
                 
@@ -166,28 +195,29 @@ class SyncStepExecutor:
         # 添加步骤特定的环境变量
         env.update({
             'STEP_ID': str(atomic_step.id),
-            'STEP_NAME': atomic_step.name,
-            'STEP_TYPE': atomic_step.step_type,
+            'STEP_NAME': self._get_step_name(atomic_step),
+            'STEP_TYPE': self._get_step_type(atomic_step),
         })
         
         # 添加步骤配置中的环境变量
-        if atomic_step.config and 'environment' in atomic_step.config:
-            step_env = atomic_step.config['environment']
+        step_config = self._get_step_config(atomic_step)
+        if step_config and 'environment' in step_config:
+            step_env = step_config['environment']
             if isinstance(step_env, dict):
                 env.update(step_env)
             else:
-                logger.warning(f"步骤 {atomic_step.name} 的环境变量配置格式错误，应为字典格式")
+                logger.warning(f"步骤 {self._get_step_name(atomic_step)} 的环境变量配置格式错误，应为字典格式")
         
         return env
     
     def _execute_by_type(
         self,
-        atomic_step: AtomicStep,
+        atomic_step,
         execution_env: Dict[str, str],
         tool_config: Dict[str, Any]
     ) -> Dict[str, Any]:
         """根据步骤类型执行"""
-        step_type = atomic_step.step_type
+        step_type = self._get_step_type(atomic_step)
         
         if step_type == 'fetch_code':
             return self._execute_fetch_code(atomic_step, execution_env)
@@ -405,22 +435,39 @@ class SyncStepExecutor:
     
     def _execute_custom(
         self,
-        atomic_step: AtomicStep,
+        atomic_step,
         execution_env: Dict[str, str]
     ) -> Dict[str, Any]:
         """执行自定义步骤"""
         try:
-            config = atomic_step.config or {}
-            script = config.get('script', 'echo "执行自定义脚本"')
+            # 获取执行脚本，兼容AtomicStep和PipelineStep
+            script = self._get_step_command(atomic_step)
+            if not script:
+                config = self._get_step_config(atomic_step)
+                script = config.get('script', 'echo "执行自定义脚本"')
             
             result = self._run_command(script, execution_env)
             
+            # 生成详细的日志信息
+            log_content = f"执行命令: {script}\n"
+            if result.get('success'):
+                log_content += f"命令执行成功\n"
+                if result.get('output'):
+                    log_content += f"输出:\n{result['output']}"
+            else:
+                log_content += f"命令执行失败\n"
+                if result.get('error_message'):
+                    log_content += f"错误信息: {result['error_message']}\n"
+                if result.get('error_output'):
+                    log_content += f"错误输出: {result['error_output']}\n"
+            
             return {
                 'success': result['success'],
-                'output': result['output'],
+                'output': log_content,  # 使用详细的日志内容
                 'error_message': result.get('error_message'),
                 'metadata': {
-                    'script': script
+                    'script': script,
+                    'return_code': result.get('return_code', 0)
                 }
             }
             
@@ -428,7 +475,7 @@ class SyncStepExecutor:
             return {
                 'success': False,
                 'error_message': str(e),
-                'output': ''
+                'output': f'步骤执行异常: {str(e)}'
             }
     
     def _execute_mock(
@@ -448,19 +495,19 @@ class SyncStepExecutor:
         success = random.random() > 0.1
         
         if success:
-            output = f"模拟步骤 {atomic_step.name} 执行成功"
+            output = f"模拟步骤 {self._get_step_name(atomic_step)} 执行成功"
             return {
                 'success': True,
                 'output': output,
                 'metadata': {
                     'execution_time': execution_time,
-                    'step_type': atomic_step.step_type
+                    'step_type': self._get_step_type(atomic_step)
                 }
             }
         else:
             return {
                 'success': False,
-                'error_message': f"模拟步骤 {atomic_step.name} 执行失败",
+                'error_message': f"模拟步骤 {self._get_step_name(atomic_step)} 执行失败",
                 'output': '',
                 'metadata': {
                     'execution_time': execution_time
@@ -516,3 +563,76 @@ class SyncStepExecutor:
                 'output': '',
                 'return_code': -1
             }
+    
+    def _get_step_name(self, step):
+        """获取步骤名称，兼容AtomicStep和PipelineStep"""
+        return getattr(step, 'name', f'Step {getattr(step, "id", "unknown")}')
+    
+    def _get_step_config(self, step):
+        """获取步骤配置，兼容AtomicStep和PipelineStep"""
+        from ..models import AtomicStep
+        from pipelines.models import PipelineStep
+        
+        if isinstance(step, AtomicStep):
+            return getattr(step, 'config', {})
+        elif isinstance(step, PipelineStep):
+            return getattr(step, 'environment_vars', {})
+        else:
+            return {}
+    
+    def _get_step_type(self, step):
+        """获取步骤类型，兼容AtomicStep和PipelineStep"""
+        return getattr(step, 'step_type', 'custom')
+    
+    def _get_step_parameters(self, step):
+        """获取步骤参数，兼容AtomicStep和PipelineStep"""
+        from ..models import AtomicStep
+        from pipelines.models import PipelineStep
+        
+        if isinstance(step, AtomicStep):
+            return getattr(step, 'parameters', {})
+        elif isinstance(step, PipelineStep):
+            return getattr(step, 'ansible_parameters', {})
+        else:
+            return {}
+    
+    def _get_step_command(self, step):
+        """获取步骤命令，兼容AtomicStep和PipelineStep"""
+        from pipelines.models import PipelineStep
+        
+        if isinstance(step, PipelineStep):
+            # 首先尝试从command字段获取
+            command = getattr(step, 'command', '')
+            if command:
+                return command
+            
+            # 如果command字段为空，尝试从parameters中获取
+            parameters = self._get_step_parameters(step)
+            if parameters and 'command' in parameters:
+                return parameters['command']
+            
+            # 如果都没有，返回空字符串
+            return ''
+        else:
+            # AtomicStep没有command字段，返回空字符串
+            return ''
+    
+    def _get_step_timeout(self, step):
+        """获取步骤超时时间，兼容AtomicStep和PipelineStep"""
+        from ..models import AtomicStep
+        from pipelines.models import PipelineStep
+        
+        if isinstance(step, AtomicStep):
+            return getattr(step, 'timeout', 600)
+        elif isinstance(step, PipelineStep):
+            return getattr(step, 'timeout_seconds', 300)
+        else:
+            return 600
+    
+    def _get_step_ansible_config(self, step):
+        """获取步骤的Ansible配置，兼容AtomicStep和PipelineStep"""
+        return {
+            'playbook': getattr(step, 'ansible_playbook', None),
+            'inventory': getattr(step, 'ansible_inventory', None),
+            'credential': getattr(step, 'ansible_credential', None),
+        }

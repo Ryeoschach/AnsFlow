@@ -154,25 +154,51 @@ class SyncPipelineExecutor:
     
     def _get_steps_config_from_db(self, pipeline_execution: PipelineExecution) -> List[Dict[str, Any]]:
         """从数据库获取步骤配置"""
-        atomic_steps = AtomicStep.objects.filter(
-            pipeline=pipeline_execution.pipeline
-        ).order_by('order')
+        # 首先尝试获取PipelineStep（新系统）
+        pipeline_steps = pipeline_execution.pipeline.steps.all().order_by('order')
         
         steps_config = []
-        for step in atomic_steps:
+        for step in pipeline_steps:
             config = {
                 'id': step.id,
                 'name': step.name,
                 'type': step.step_type,
                 'order': step.order,
-                'dependencies': step.dependencies or [],
-                'config': step.config or {},
-                'timeout': step.timeout,
-                'retry_count': step.retry_count,
+                'dependencies': [],  # PipelineStep暂时不支持依赖关系
+                'config': step.environment_vars or {},  # 使用environment_vars作为config
+                'timeout': getattr(step, 'timeout', 3600),  # 默认超时
+                'retry_count': getattr(step, 'retry_count', 0),  # 默认不重试
                 'conditions': {},
-                'priority': step.order
+                'priority': step.order,
+                'parallel_group': getattr(step, 'parallel_group', None)
             }
             steps_config.append(config)
+        
+        # 如果没有PipelineStep，则尝试获取AtomicStep（兼容性）
+        if not steps_config:
+            try:
+                from cicd_integrations.models import AtomicStep
+                atomic_steps = AtomicStep.objects.filter(
+                    pipeline=pipeline_execution.pipeline
+                ).order_by('order')
+                
+                for step in atomic_steps:
+                    config = {
+                        'id': step.id,
+                        'name': step.name,
+                        'type': step.step_type,
+                        'order': step.order,
+                        'dependencies': step.dependencies or [],
+                        'config': step.config or {},
+                        'timeout': step.timeout,
+                        'retry_count': step.retry_count,
+                        'conditions': {},
+                        'priority': step.order
+                    }
+                    steps_config.append(config)
+            except ImportError:
+                # AtomicStep模型不存在，跳过
+                pass
         
         logger.info(f"从数据库加载了 {len(steps_config)} 个步骤配置")
         return steps_config
@@ -417,34 +443,45 @@ class SyncPipelineExecutor:
                 })
                 self.notifier.send_log_update(f"[步骤] 开始执行: {step_node.step_name}", step_name=step_node.step_name)
             
-            # 获取原子步骤对象
+            # 获取步骤对象
             try:
-                atomic_step = AtomicStep.objects.get(id=step_id)
-            except AtomicStep.DoesNotExist:
-                error_msg = f'原子步骤不存在: {step_id}'
-                logger.error(error_msg)
+                # 首先尝试获取PipelineStep（新系统）
+                from pipelines.models import PipelineStep
+                pipeline_step = PipelineStep.objects.get(id=step_id)
                 
-                # 发送失败通知
-                if self.notifier:
-                    self.notifier.send_step_update(step_node.step_name, 'failed', {
-                        'step_id': step_id,
-                        'error_message': error_msg
-                    })
-                    self.notifier.send_log_update(f"[错误] {error_msg}", level='error', step_name=step_node.step_name)
+                # 直接使用PipelineStep，不再创建AtomicStep
+                step_obj = pipeline_step
                 
-                context.step_results[step_key] = {
-                    'status': 'failed',
-                    'error_message': error_msg,
-                    'start_time': timezone.now().isoformat(),
-                    'end_time': timezone.now().isoformat()
-                }
-                return
+            except (ImportError, PipelineStep.DoesNotExist):
+                # 回退到AtomicStep（兼容性）
+                try:
+                    from cicd_integrations.models import AtomicStep
+                    step_obj = AtomicStep.objects.get(id=step_id)
+                except (ImportError, AtomicStep.DoesNotExist):
+                    error_msg = f'步骤不存在: {step_id}'
+                    logger.error(error_msg)
+                    
+                    # 发送失败通知
+                    if self.notifier:
+                        self.notifier.send_step_update(step_node.step_name, 'failed', {
+                            'step_id': step_id,
+                            'error_message': error_msg
+                        })
+                        self.notifier.send_log_update(f"[错误] {error_msg}", level='error', step_name=step_node.step_name)
+                    
+                    context.step_results[step_key] = {
+                        'status': 'failed',
+                        'error_message': error_msg,
+                        'start_time': timezone.now().isoformat(),
+                        'end_time': timezone.now().isoformat()
+                    }
+                    return
             
             # 创建步骤执行器
             step_executor = SyncStepExecutor(context)
             
             # 执行步骤
-            result = step_executor.execute_step(atomic_step, tool_config)
+            result = step_executor.execute_step(step_obj, tool_config)
             
             # 保存结果
             context.step_results[step_key] = result

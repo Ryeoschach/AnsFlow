@@ -167,8 +167,12 @@ class UnifiedCICDEngine:
             logger.info(f"Pipeline execution mode: {execution.pipeline.execution_mode}")
             logger.info(f"Associated CI/CD tool: {execution.cicd_tool}")
             
-            # 根据执行模式决定执行方式
-            if execution.pipeline.execution_mode == 'remote' and execution.cicd_tool:
+            # 根据执行模式和工具类型决定执行方式
+            if execution.cicd_tool and execution.cicd_tool.tool_type == 'local':
+                # 本地执行器：直接执行原子步骤
+                logger.info("Using local executor for execution")
+                return self._perform_local_execution(execution)
+            elif execution.pipeline.execution_mode == 'remote' and execution.cicd_tool:
                 # 远程执行：在外部CI/CD工具上执行
                 logger.info(f"Using remote execution mode with {execution.cicd_tool.tool_type}")
                 return self._perform_remote_execution(execution)

@@ -1115,6 +1115,23 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         toolId = pipeline.execution_tool.id
       }
 
+      // 如果是本地执行模式且没有配置工具，自动获取本地执行器
+      if (!toolId && pipeline.execution_mode === 'local') {
+        try {
+          const localTool = tools.find(tool => tool.tool_type === 'local')
+          if (localTool) {
+            toolId = localTool.id
+          } else {
+            message.error('未找到本地执行器工具，请联系系统管理员')
+            return
+          }
+        } catch (error) {
+          console.error('Failed to get local executor:', error)
+          message.error('获取本地执行器失败')
+          return
+        }
+      }
+
       // 检查流水线是否配置了执行工具
       if (!toolId) {
         message.error('流水线未配置执行工具，请先编辑流水线设置执行工具')

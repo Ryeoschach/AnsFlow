@@ -43,7 +43,7 @@ export interface LoginCredentials {
 export interface CICDTool {
   id: number
   name: string
-  tool_type: 'jenkins' | 'gitlab' | 'github' | 'azure_devops'
+  tool_type: 'jenkins' | 'gitlab' | 'github' | 'azure_devops' | 'local'
   base_url: string
   username: string
   token?: string  // 前端不会收到实际token值
