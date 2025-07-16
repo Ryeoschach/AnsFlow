@@ -662,7 +662,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
           {execution.step_executions.map((step) => (
             <Step
               key={step.id}
-              title={step.atomic_step_name || `步骤 ${step.order}`}
+              title={step.step_name || step.atomic_step_name || step.pipeline_step_name || `步骤 ${step.order}`}
               status={getStepStatus(step.status)}
               description={
                 <div>
@@ -866,7 +866,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
       execution.step_executions.forEach((step, index) => {
         const stepInfo = {
           id: step.id,
-          name: step.atomic_step_name,
+          name: step.step_name || step.atomic_step_name || step.pipeline_step_name || `步骤 ${step.order}`,
           logs: step.logs,
           logsLength: step.logs?.length || 0,
           hasLogs: !!(step.logs && step.logs.trim() !== '')
@@ -880,7 +880,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
         color: step.status === 'success' ? 'green' : step.status === 'failed' ? 'red' : 'blue',
         children: (
           <div>
-            <Text strong>{step.atomic_step_name}</Text>
+            <Text strong>{step.step_name || step.atomic_step_name || step.pipeline_step_name || `步骤 ${step.order}`}</Text>
             <Tag style={{ marginLeft: 8 }} color={step.status === 'success' ? 'green' : step.status === 'failed' ? 'red' : 'blue'}>
               {step.status_display}
             </Tag>
@@ -1483,7 +1483,7 @@ const blinkingStyle = `
                       borderBottom: '1px solid #d9d9d9',
                       paddingBottom: 4
                     }}>
-                      [{step.started_at ? new Date(step.started_at).toLocaleString() : ''}] {step.atomic_step_name} ({step.status_display})
+                      [{step.started_at ? new Date(step.started_at).toLocaleString() : ''}] {step.step_name || step.atomic_step_name || step.pipeline_step_name || `步骤 ${step.order}`} ({step.status_display})
                     </div>
                     <div style={{ 
                       marginLeft: 16, 

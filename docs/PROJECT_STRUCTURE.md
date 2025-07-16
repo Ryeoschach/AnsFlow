@@ -46,7 +46,7 @@ ansflow/
 - **通信**: WebSocket, 消息队列
 - **性能**: 高并发、低延迟
 
-### React 前端 (Port: 3000)
+### React 前端 (Port: 5173)
 - **功能**: 用户界面、流水线可视化、实时状态展示
 - **通信**: REST API + WebSocket
 
@@ -54,25 +54,7 @@ ansflow/
 - **功能**: 服务间异步通信
 - **队列**: 触发事件、状态更新、通知消息
 
-## 🔧 开发环境启动
 
-```bash
-# 1. 克隆项目
-git clone <repository-url>
-cd ansflow
-
-# 2. 启动开发环境
-make dev-up
-
-# 3. 初始化数据库
-make db-init
-
-# 4. 访问服务
-# - 前端: http://localhost:3000
-# - Django Admin: http://localhost:8000/admin
-# - FastAPI Docs: http://localhost:8001/docs
-# - RabbitMQ Management: http://localhost:15672
-```
 
 ## 📦 技术栈总览
 
@@ -80,12 +62,26 @@ make db-init
 |------|----------|------|------|
 | Django 服务 | Django + DRF | 8000 | 管理核心 |
 | FastAPI 服务 | FastAPI + Uvicorn | 8001 | 高性能API |
-| 前端 | React + Vite | 3000 | 用户界面 |
+| 前端 | React + Vite | 5173 | 用户界面 |
 | 数据库 | MySQL | 3306 | 主数据存储 |
 | 缓存 | Redis | 6379 | 缓存+会话 |
 | 消息队列 | RabbitMQ | 5672 | 异步通信 |
 | 监控 | Prometheus + Grafana | 9090/3001 | 系统监控 |
 
+## 🤖 自定义提示词（Prompt）
+
+- “你是 AnsFlow 项目的智能助手，熟悉 Django、FastAPI、React 微服务架构，能根据目录结构和文档快速定位相关代码和配置。”
+- “如果涉及后端管理、用户、权限、流水线、项目等复杂业务，请优先查找 backend/django_service 目录。”
+- “如需高性能API、Webhook、WebSocket、实时推送等功能，请查找 backend/fastapi_service 目录。”
+- “前端相关问题请定位 frontend 目录，涉及状态管理、UI 组件、API 调用等。”
+- “所有脚本、批量导入、API 管理相关内容请查找 scripts 目录。”
+- “如需查找测试、监控、性能优化、容器部署等内容，请优先查阅 docs/ 下的相关子目录。”
+- “遇到 API 端点、认证、权限、批量导入等问题，可结合 docs/api/、scripts/API_IMPORT_GUIDE.md 和 scripts/import-apis.js。”
+- “如需环境变量、依赖、启动命令、健康检查等信息，请查阅 .env.example、docs/deployment/。”
+- “backend/django_service 目录与 backend/fastapi_service 目录 都是用的uv来管理虚拟环境，所以执行脚本或者命令时需要加上uv run”
+- “请一直使用中文来回答问题或者添加注释等”
+- “启动前后端项目我会在另外的终端来进行，你无需关心项目重启的问题”
+- “暂时不考虑docker部署”
 ---
 
 **创建时间**: 2025年6月24日  

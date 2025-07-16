@@ -150,20 +150,31 @@ class StepExecutionSerializer(serializers.ModelSerializer):
     """步骤执行序列化器"""
     
     atomic_step_name = serializers.CharField(source='atomic_step.name', read_only=True)
+    pipeline_step_name = serializers.CharField(source='pipeline_step.name', read_only=True)
+    step_name = serializers.SerializerMethodField()
     status_display = serializers.CharField(source='get_status_display', read_only=True)
     duration = serializers.ReadOnlyField()
     
     class Meta:
         model = StepExecution
         fields = [
-            'id', 'atomic_step', 'atomic_step_name', 'external_id',
-            'status', 'status_display', 'order', 'logs', 'output',
+            'id', 'atomic_step', 'atomic_step_name', 'pipeline_step', 'pipeline_step_name', 
+            'step_name', 'external_id', 'status', 'status_display', 'order', 'logs', 'output',
             'error_message', 'started_at', 'completed_at', 'duration',
             'created_at', 'updated_at'
         ]
         read_only_fields = [
             'id', 'created_at', 'updated_at', 'started_at', 'completed_at'
         ]
+    
+    def get_step_name(self, obj):
+        """获取步骤名称，优先使用 pipeline_step，回退到 atomic_step"""
+        if obj.pipeline_step:
+            return obj.pipeline_step.name
+        elif obj.atomic_step:
+            return obj.atomic_step.name
+        else:
+            return f"Step {obj.order}"
 
 
 class PipelineExecutionSerializer(serializers.ModelSerializer):

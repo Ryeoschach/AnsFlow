@@ -258,6 +258,7 @@ Thumbs.db
 *.swp
 *.swo
 *~
+.github/
 
 # Project specific
 media/

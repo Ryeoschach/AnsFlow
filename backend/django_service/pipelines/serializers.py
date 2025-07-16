@@ -189,6 +189,8 @@ class PipelineSerializer(serializers.ModelSerializer):
                     'ansible_parameters': step_data.get('parameters', {}),
                     # 关键修复：处理并行组字段
                     'parallel_group': step_data.get('parallel_group', ''),
+                    # 关键修复：从parameters中提取command字段
+                    'command': parameters.get('command', ''),
                 }
                 
                 # 处理Ansible相关字段

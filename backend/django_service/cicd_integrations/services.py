@@ -197,63 +197,131 @@ class UnifiedCICDEngine:
         """本地执行流水线步骤"""
         logger.info(f"Performing local execution for {execution.id}")
         
-        # 获取流水线的PipelineStep而不是AtomicStep
+        # 获取流水线的PipelineStep
         pipeline_steps = list(
             execution.pipeline.steps.all().order_by('order')
         )
         
-        if not pipeline_steps:
-            logger.warning(f"No pipeline steps found for pipeline {execution.pipeline.id}")
+        # 获取流水线的AtomicStep（向后兼容）
+        atomic_steps = list(
+            execution.pipeline.atomic_steps.all().order_by('order')
+        )
+        
+        # 检查是否有步骤
+        if not pipeline_steps and not atomic_steps:
+            logger.warning(f"No pipeline steps or atomic steps found for pipeline {execution.pipeline.id}")
             execution.status = 'failed'
             execution.completed_at = timezone.now()
-            execution.logs = "No pipeline steps found in pipeline"
+            execution.logs = "No pipeline steps or atomic steps found in pipeline"
             execution.save()
             return
         
-        logger.info(f"本地执行: 获取到 {len(pipeline_steps)} 个PipelineStep")
+        logger.info(f"本地执行: 获取到 {len(pipeline_steps)} 个PipelineStep, {len(atomic_steps)} 个AtomicStep")
         
-        # 检查并行组
+        # 检查并行组 - 同时检查PipelineStep和AtomicStep
         parallel_groups = set()
+        
+        # 检查PipelineStep的并行组
         for step in pipeline_steps:
             if step.parallel_group:
                 parallel_groups.add(step.parallel_group)
-                logger.info(f"步骤 '{step.name}': parallel_group = '{step.parallel_group}'")
+                logger.info(f"PipelineStep '{step.name}': parallel_group = '{step.parallel_group}'")
+        
+        # 检查AtomicStep的并行组
+        for step in atomic_steps:
+            if step.parallel_group:
+                parallel_groups.add(step.parallel_group)
+                logger.info(f"AtomicStep '{step.name}': parallel_group = '{step.parallel_group}'")
         
         logger.info(f"本地执行: 检测到 {len(parallel_groups)} 个并行组")
         
-        logger.info(f"Found {len(pipeline_steps)} pipeline steps to execute locally")
+        # 如果有并行组，使用我们的并行执行引擎
+        if parallel_groups:
+            logger.info(f"Using parallel execution engine for {len(parallel_groups)} parallel groups")
+            
+            # 导入并行执行服务
+            from pipelines.services.parallel_execution import parallel_execution_service
+            
+            # 根据步骤类型选择合适的执行方法
+            if pipeline_steps:
+                # 有PipelineStep，使用新的执行方法
+                logger.info("Using PipelineStep execution method")
+                execution_plan = parallel_execution_service.analyze_pipeline_step_execution_plan(execution.pipeline)
+                result = parallel_execution_service.execute_pipeline_step_with_parallel_support(
+                    execution.pipeline,
+                    execution,
+                    execution_plan
+                )
+            else:
+                # 只有AtomicStep，使用旧的执行方法
+                logger.info("Using AtomicStep execution method")
+                execution_plan = parallel_execution_service.analyze_pipeline_execution_plan(execution.pipeline)
+                
+                # 创建一个临时的PipelineRun对象来兼容接口
+                class TempPipelineRun:
+                    def __init__(self, pipeline_execution):
+                        self.pipeline_execution = pipeline_execution
+                        self.pipeline = pipeline_execution.pipeline
+                        self.parameters = pipeline_execution.parameters
+                        self.triggered_by = pipeline_execution.triggered_by
+                        self.trigger_data = pipeline_execution.trigger_data
+                
+                temp_run = TempPipelineRun(execution)
+                result = parallel_execution_service.execute_pipeline_with_parallel_support(
+                    execution.pipeline,
+                    temp_run,
+                    execution_plan
+                )
+            
+            # 更新执行状态
+            if result.get('success', False):
+                execution.status = 'success'
+                execution.completed_at = timezone.now()
+                execution.logs = f"Parallel execution completed successfully: {result.get('message', '')}"
+            else:
+                execution.status = 'failed'
+                execution.completed_at = timezone.now()
+                execution.logs = f"Parallel execution failed: {result.get('message', '')}"
+            
+            execution.save()
+            
+            logger.info(f"Parallel pipeline execution completed: {execution.id} - {execution.status}")
+            return result
         
-        # 使用同步执行器进行本地执行
-        sync_executor = SyncPipelineExecutor()
-        
-        # 准备工具配置（用于本地执行）
-        tool_config = {}
-        if execution.cicd_tool:
-            tool_config = {
-                'tool_type': execution.cicd_tool.tool_type,
-                'base_url': execution.cicd_tool.base_url,
-                'project_id': execution.cicd_tool.project_id,
-                'config': execution.cicd_tool.config
-            }
-        
-        # 执行流水线
-        result = sync_executor.execute_pipeline(
-            execution_id=execution.id,
-            tool_config=tool_config,
-            parameters=execution.parameters
-        )
-        
-        # 检查结果类型并处理
-        if result is None:
-            logger.warning(f"Pipeline execution returned None for execution {execution.id}")
-            result = {'success': False, 'error_message': 'Execution returned None'}
-        elif not isinstance(result, dict):
-            logger.error(f"Pipeline execution returned unexpected type: {type(result)} - {result}")
-            result = {'success': False, 'error_message': f'Unexpected result type: {type(result)}'}
-        
-        success = result.get('success', False)
-        logger.info(f"Local pipeline execution completed: {execution.id} - {'success' if success else 'failed'}")
-        return result
+        else:
+            # 没有并行组，使用原有的同步执行器
+            logger.info(f"No parallel groups found, using sync executor for {len(pipeline_steps)} steps")
+            
+            sync_executor = SyncPipelineExecutor()
+            
+            # 准备工具配置（用于本地执行）
+            tool_config = {}
+            if execution.cicd_tool:
+                tool_config = {
+                    'tool_type': execution.cicd_tool.tool_type,
+                    'base_url': execution.cicd_tool.base_url,
+                    'project_id': execution.cicd_tool.project_id,
+                    'config': execution.cicd_tool.config
+                }
+            
+            # 执行流水线
+            result = sync_executor.execute_pipeline(
+                execution_id=execution.id,
+                tool_config=tool_config,
+                parameters=execution.parameters
+            )
+            
+            # 检查结果类型并处理
+            if result is None:
+                logger.warning(f"Pipeline execution returned None for execution {execution.id}")
+                result = {'success': False, 'error_message': 'Execution returned None'}
+            elif not isinstance(result, dict):
+                logger.error(f"Pipeline execution returned unexpected type: {type(result)} - {result}")
+                result = {'success': False, 'error_message': f'Unexpected result type: {type(result)}'}
+            
+            success = result.get('success', False)
+            logger.info(f"Local pipeline execution completed: {execution.id} - {'success' if success else 'failed'}")
+            return result
     
     def _perform_remote_execution(self, execution: PipelineExecution):
         """在外部CI/CD工具上执行流水线"""
@@ -530,7 +598,33 @@ class UnifiedCICDEngine:
                 lambda: PipelineExecution.objects.select_related('cicd_tool').get(id=execution_id)
             )()
             
-            # 如果已有日志，直接返回
+            # 首先尝试合并步骤日志
+            step_executions = await sync_to_async(
+                lambda: list(execution.step_executions.select_related('atomic_step', 'pipeline_step').all().order_by('order'))
+            )()
+            
+            if step_executions:
+                combined_logs = []
+                for step in step_executions:
+                    if step.logs and step.logs.strip():
+                        # 支持 pipeline_step 和 atomic_step
+                        step_name = await sync_to_async(lambda: step.step_name)()
+                        
+                        combined_logs.append(f"=== {step_name} ===")
+                        combined_logs.append(step.logs.strip())
+                        combined_logs.append("")
+                
+                if combined_logs:
+                    logs = "\n".join(combined_logs)
+                    # 保存合并后的日志
+                    def save_logs():
+                        execution.logs = logs
+                        execution.save(update_fields=['logs'])
+                    
+                    await sync_to_async(save_logs)()
+                    return logs
+            
+            # 如果没有步骤日志，但有执行日志，返回执行日志
             if execution.logs:
                 return execution.logs
             
@@ -552,27 +646,6 @@ class UnifiedCICDEngine:
                     execution.logs = logs
                     await sync_to_async(execution.save)(update_fields=['logs'])
                     
-                    return logs
-            
-            # 如果没有外部日志，尝试合并步骤日志
-            step_executions = await sync_to_async(
-                lambda: list(execution.step_executions.all().order_by('order'))
-            )()
-            
-            if step_executions:
-                combined_logs = []
-                for step in step_executions:
-                    if step.logs and step.logs.strip():
-                        step_name = step.atomic_step.name if step.atomic_step else f"步骤 {step.order}"
-                        combined_logs.append(f"=== {step_name} ===")
-                        combined_logs.append(step.logs.strip())
-                        combined_logs.append("")
-                
-                if combined_logs:
-                    logs = "\n".join(combined_logs)
-                    # 保存合并后的日志
-                    execution.logs = logs
-                    await sync_to_async(execution.save)(update_fields=['logs'])
                     return logs
             
             return "暂无日志信息"

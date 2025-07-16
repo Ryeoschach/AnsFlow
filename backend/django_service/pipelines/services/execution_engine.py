@@ -85,24 +85,70 @@ class PipelineExecutionEngine:
         logger.info(f"Executing pipeline {pipeline.id} locally with parallel support")
         
         try:
-            # 分析执行计划，识别并行组
-            execution_plan = parallel_execution_service.analyze_pipeline_execution_plan(pipeline)
+            # 检查是否有并行组 - 首先检查 PipelineStep
+            pipeline_steps = pipeline.steps.all().order_by('order')
+            atomic_steps = pipeline.atomic_steps.all().order_by('order')
             
-            # 检查是否有并行组
-            has_parallel_groups = len(execution_plan['parallel_groups']) > 0
+            # 检查 PipelineStep 是否有并行组
+            has_pipeline_step_parallel_groups = any(
+                hasattr(step, 'parallel_group') and step.parallel_group 
+                for step in pipeline_steps
+            )
             
-            if has_parallel_groups:
-                logger.info(f"Pipeline has {len(execution_plan['parallel_groups'])} parallel groups")
+            # 检查 AtomicStep 是否有并行组
+            has_atomic_step_parallel_groups = any(
+                hasattr(step, 'parallel_group') and step.parallel_group 
+                for step in atomic_steps
+            )
+            
+            if has_pipeline_step_parallel_groups:
+                logger.info("Pipeline has PipelineStep parallel groups")
                 
-                # 使用并行执行服务
-                result = parallel_execution_service.execute_pipeline_with_parallel_support(
-                    pipeline, pipeline_run, execution_plan
+                # 分析 PipelineStep 执行计划
+                execution_plan = parallel_execution_service.analyze_pipeline_step_execution_plan(pipeline)
+                
+                # 执行并行组
+                result = parallel_execution_service.execute_pipeline_step_with_parallel_support(
+                    pipeline, 
+                    pipeline_run, 
+                    execution_plan
                 )
                 
                 # 更新运行记录
                 pipeline_run.trigger_data.update({
-                    'execution_mode': 'local_parallel',
-                    'execution_plan': execution_plan,
+                    'execution_mode': 'local_parallel_pipeline_step',
+                    'execution_plan': {
+                        'total_stages': execution_plan['total_stages'],
+                        'parallel_groups_count': len(execution_plan['parallel_groups']),
+                        'parallel_group_names': list(execution_plan['parallel_groups'].keys())
+                    },
+                    'parallel_groups_count': len(execution_plan['parallel_groups'])
+                })
+                pipeline_run.save()
+                
+                return result
+                
+            elif has_atomic_step_parallel_groups:
+                logger.info("Pipeline has AtomicStep parallel groups")
+                
+                # 分析 AtomicStep 执行计划
+                execution_plan = parallel_execution_service.analyze_pipeline_execution_plan(pipeline)
+                
+                # 执行并行组
+                result = parallel_execution_service.execute_pipeline_with_parallel_support(
+                    pipeline, 
+                    pipeline_run, 
+                    execution_plan
+                )
+                
+                # 更新运行记录
+                pipeline_run.trigger_data.update({
+                    'execution_mode': 'local_parallel_atomic_step',
+                    'execution_plan': {
+                        'total_stages': execution_plan['total_stages'],
+                        'parallel_groups_count': len(execution_plan['parallel_groups']),
+                        'parallel_group_names': list(execution_plan['parallel_groups'].keys())
+                    },
                     'parallel_groups_count': len(execution_plan['parallel_groups'])
                 })
                 pipeline_run.save()

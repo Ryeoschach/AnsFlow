@@ -79,7 +79,7 @@ const PipelineStepList: React.FC<PipelineStepListProps> = ({
                     <BranchesOutlined /> 条件
                   </span>
                 )}
-                {(step as any).parallel_group_id && (
+                {((step as any).parallel_group_id || (step as any).parallel_group) && (
                   <span style={{ 
                     background: '#52c41a', 
                     color: 'white', 
@@ -87,7 +87,7 @@ const PipelineStepList: React.FC<PipelineStepListProps> = ({
                     padding: '2px 6px', 
                     borderRadius: '4px' 
                   }}>
-                    <ShareAltOutlined /> 并行
+                    <ShareAltOutlined /> 并行: {(step as any).parallel_group_id || (step as any).parallel_group}
                   </span>
                 )}
                 {(step as any).approval_config && (

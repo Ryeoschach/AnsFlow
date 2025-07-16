@@ -139,6 +139,13 @@ class LocalPipelineExecutor:
                 'error': str(e)
             }
     
+    def execute_step(self, step, context: Dict[str, Any] = None) -> Dict[str, Any]:
+        """
+        执行单个步骤，用于并行执行服务调用
+        """
+        context = context or {}
+        return self._execute_step(step, context)
+    
     def _execute_step(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """根据步骤类型选择合适的执行器"""
         

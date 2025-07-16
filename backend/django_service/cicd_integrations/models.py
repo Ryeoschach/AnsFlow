@@ -256,6 +256,9 @@ class AtomicStep(models.Model):
     # 依赖关系(字符串形式的步骤名称列表)
     dependencies = models.JSONField(default=list, help_text="依赖的步骤名称列表")
     
+    # 并行执行组
+    parallel_group = models.CharField(max_length=100, blank=True, help_text="并行执行组名称")
+    
     # 条件执行
     conditions = models.JSONField(default=dict, help_text="执行条件")
     

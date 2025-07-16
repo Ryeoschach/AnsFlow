@@ -246,6 +246,9 @@ export interface StepExecution {
   id: number
   atomic_step: number
   atomic_step_name: string
+  pipeline_step?: number  // 新增 pipeline_step 字段
+  pipeline_step_name?: string  // 新增 pipeline_step_name 字段
+  step_name?: string  // 新增统一的步骤名称字段
   external_id: string
   status: 'pending' | 'running' | 'success' | 'failed' | 'cancelled' | 'skipped'
   status_display: string

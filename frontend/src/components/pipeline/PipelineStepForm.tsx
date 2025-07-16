@@ -139,6 +139,18 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
           <Input type="number" placeholder="执行顺序" />
         </Form.Item>
 
+        <Form.Item
+          name="parallel_group"
+          label="并行组"
+          tooltip="设置相同并行组名称的步骤将会并行执行"
+        >
+          <Input 
+            placeholder="输入并行组名称（可选）" 
+            allowClear
+            autoComplete="off"
+          />
+        </Form.Item>
+
         <Divider>参数配置</Divider>
         
         {/* 参数说明按钮 */}
