@@ -202,6 +202,21 @@ class AtomicStep(models.Model):
         ('ansible', 'Ansible Automation'),
         ('notify', 'Notify'),
         ('custom', 'Custom'),
+        # Docker 步骤类型
+        ('docker_build', 'Docker Build'),
+        ('docker_run', 'Docker Run'),
+        ('docker_push', 'Docker Push'),
+        ('docker_pull', 'Docker Pull'),
+        # Kubernetes 步骤类型
+        ('k8s_deploy', 'Kubernetes Deploy'),
+        ('k8s_scale', 'Kubernetes Scale'),
+        ('k8s_delete', 'Kubernetes Delete'),
+        ('k8s_wait', 'Kubernetes Wait'),
+        ('k8s_exec', 'Kubernetes Exec'),
+        ('k8s_logs', 'Kubernetes Logs'),
+        # 工作流控制步骤
+        ('approval', 'Approval'),
+        ('shell_script', 'Shell Script'),
     ]
     
     name = models.CharField(max_length=255, help_text="步骤名称")

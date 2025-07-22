@@ -397,6 +397,10 @@ class SyncPipelineExecutor:
                 if step_result:
                     if step_result.get('status') == 'success':
                         completed_steps.add(step_id)
+                        # 如果步骤之前失败过但现在成功了，从失败集合中移除
+                        if step_id in failed_steps:
+                            failed_steps.remove(step_id)
+                            logger.info(f"步骤 {step_id} 重新执行成功，从失败列表中移除")
                         logger.info(f"步骤 {step_id} 执行成功")
                     else:
                         failed_steps.add(step_id)
@@ -562,6 +566,16 @@ class SyncPipelineExecutor:
                     pipeline_execution.completed_at = timezone.now()
                     if context:
                         pipeline_execution.result = context.step_results
+                    
+                    # 流水线执行完成时，默认保留工作目录以便调试和查看执行结果
+                    # 如需清理工作目录，可以手动调用 context.cleanup_workspace(force_cleanup=True)
+                    if context:
+                        try:
+                            # 默认不清理工作目录，保留用于调试
+                            logger.info(f"流水线执行完成，工作目录已保留: {context.get_workspace_path()} (execution_id: {pipeline_execution.id})")
+                            logger.info(f"如需手动清理工作目录，请使用: context.cleanup_workspace(force_cleanup=True)")
+                        except Exception as info_error:
+                            logger.warning(f"Failed to log workspace info for pipeline execution {pipeline_execution.id}: {info_error}")
                 
                 if error_message:
                     if not pipeline_execution.result:

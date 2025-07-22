@@ -106,7 +106,7 @@ class AtomicStepSerializer(serializers.ModelSerializer):
     
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
     step_type_display = serializers.CharField(source='get_step_type_display', read_only=True)
-    dependencies_count = serializers.IntegerField(source='dependencies.count', read_only=True)
+    dependencies_count = serializers.SerializerMethodField(read_only=True)
     
     # Git凭据相关字段
     git_credential_name = serializers.CharField(source='git_credential.name', read_only=True)
@@ -134,6 +134,12 @@ class AtomicStepSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user
         return super().create(validated_data)
+    
+    def get_dependencies_count(self, obj):
+        """获取依赖数量"""
+        if obj.dependencies and isinstance(obj.dependencies, list):
+            return len(obj.dependencies)
+        return 0
 
 
 class AtomicStepSimpleSerializer(serializers.ModelSerializer):
@@ -252,11 +258,12 @@ class PipelineExecutionCreateSerializer(serializers.Serializer):
     def validate_cicd_tool_id(self, value):
         try:
             tool = CICDTool.objects.get(id=value)
-            # 只有 authenticated 状态的工具才能被用于触发流水线
-            if tool.status != 'authenticated':
+            # 检查工具状态：authenticated 或 active（向后兼容）状态的工具才能被用于触发流水线
+            valid_statuses = ['authenticated', 'active']
+            if tool.status not in valid_statuses:
                 raise serializers.ValidationError(
                     f"CI/CD tool is not ready for execution. Current status: {tool.status}. "
-                    f"Tool must be in 'authenticated' status to trigger pipelines."
+                    f"Tool must be in 'authenticated' or 'active' status to trigger pipelines."
                 )
             return value
         except CICDTool.DoesNotExist:

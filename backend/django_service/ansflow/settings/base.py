@@ -446,3 +446,6 @@ SIMPLE_JWT = {
     'SLIDING_TOKEN_LIFETIME': timedelta(minutes=60),
     'SLIDING_TOKEN_REFRESH_LIFETIME': timedelta(days=1),
 }
+
+# URL配置
+APPEND_SLASH = False  # 禁用自动添加斜杠，避免POST请求重定向问题

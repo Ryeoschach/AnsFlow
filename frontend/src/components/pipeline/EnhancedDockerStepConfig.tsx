@@ -74,13 +74,13 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
     // 监听注册表变化
     const registryId = form?.getFieldValue('docker_registry')
     if (registryId) {
-      const registry = registries.find((r: any) => r.id === registryId)
+      const registry = Array.isArray(registries) ? registries.find((r: any) => r.id === registryId) : null
       setSelectedRegistry(registry || null)
     }
   }, [registries, form])
 
   const handleRegistryChange = (registryId: number) => {
-    const registry = registries.find((r: any) => r.id === registryId)
+    const registry = Array.isArray(registries) ? registries.find((r: any) => r.id === registryId) : null
     setSelectedRegistry(registry || null)
     
     if (onRegistryChange) {
@@ -507,7 +507,7 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
             </div>
           )}
         >
-          {registries.map((registry: any) => (
+          {Array.isArray(registries) && registries.map((registry: any) => (
             <Option key={registry.id} value={registry.id}>
               <Space>
                 <span>{registry.name}</span>

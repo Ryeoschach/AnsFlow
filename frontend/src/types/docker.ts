@@ -35,6 +35,7 @@ export interface DockerRegistry extends BaseModel {
   url: string;
   registry_type: DockerRegistryType;
   username: string;
+  project_name: string;
   description: string;
   status: DockerRegistryStatus;
   last_check?: string;
@@ -49,6 +50,7 @@ export interface DockerRegistryList {
   name: string;
   url: string;
   registry_type: DockerRegistryType;
+  project_name: string;
   status: DockerRegistryStatus;
   is_default: boolean;
 }

@@ -10,19 +10,39 @@ from .models import (
 
 class DockerRegistrySerializer(serializers.ModelSerializer):
     """Docker仓库序列化器"""
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
     
     class Meta:
         model = DockerRegistry
         fields = [
-            'id', 'name', 'url', 'registry_type', 'username', 'description',
+            'id', 'name', 'url', 'registry_type', 'username', 'password', 'project_name', 'description',
             'status', 'last_check', 'check_message', 'is_default',
             'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at', 'last_check']
 
     def create(self, validated_data):
+        # 处理密码字段
+        password = validated_data.pop('password', None)
         validated_data['created_by'] = self.context['request'].user
+        
+        # 如果提供了密码，存储到 auth_config 中
+        if password:
+            validated_data['auth_config'] = {'password': password}
+        
         return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        # 处理密码字段
+        password = validated_data.pop('password', None)
+        
+        # 如果提供了密码，更新 auth_config
+        if password:
+            auth_config = instance.auth_config or {}
+            auth_config['password'] = password
+            validated_data['auth_config'] = auth_config
+        
+        return super().update(instance, validated_data)
 
 
 class DockerImageVersionSerializer(serializers.ModelSerializer):
@@ -130,7 +150,7 @@ class DockerRegistryListSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = DockerRegistry
-        fields = ['id', 'name', 'url', 'registry_type', 'status', 'is_default']
+        fields = ['id', 'name', 'url', 'registry_type', 'project_name', 'status', 'is_default']
 
 
 class DockerImageListSerializer(serializers.ModelSerializer):

@@ -440,7 +440,7 @@ const DockerRegistrySettings: React.FC = () => {
           </Form.Item>
 
           <Row gutter={16}>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item
                 label="用户名"
                 name="username"
@@ -449,13 +449,22 @@ const DockerRegistrySettings: React.FC = () => {
                 <Input placeholder="输入用户名" />
               </Form.Item>
             </Col>
-            <Col span={12}>
+            <Col span={8}>
               <Form.Item
                 label="密码"
                 name="password"
                 rules={[{ required: !editingRegistry, message: '请输入密码' }]}
               >
                 <Password placeholder="输入密码" />
+              </Form.Item>
+            </Col>
+            <Col span={8}>
+              <Form.Item
+                label="项目名称"
+                name="project_name"
+                tooltip="Harbor等私有仓库的项目名称，如果为空则直接使用镜像名"
+              >
+                <Input placeholder="项目名称（可选）" />
               </Form.Item>
             </Col>
           </Row>

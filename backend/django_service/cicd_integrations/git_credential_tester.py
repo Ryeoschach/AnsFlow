@@ -65,15 +65,9 @@ class GitCredentialTester:
             scheme = parsed_url.scheme or 'https'
             auth_url = f"{scheme}://{username}:{password}@{parsed_url.netloc}"
             
-            # 使用实际存在的仓库路径
-            if '127.0.0.1:8929' in server_url:
-                # 本地GitLab，使用已知存在的仓库
-                test_repo_url = f"{auth_url}/root/demo.git"
-            else:
-                # 其他服务器，使用通用测试路径
-                test_repo_url = f"{auth_url}/test.git"
-            
-            return self._test_git_ls_remote(test_repo_url, username, password)
+            # 直接测试服务器连接而不指定具体仓库
+            # 这样可以验证认证是否正确，而不依赖特定仓库的存在
+            return self._test_git_server_connection(auth_url, username, password)
         else:
             return False, "无效的服务器URL"
     
@@ -238,11 +232,8 @@ class GitCredentialTester:
             if parsed_url.netloc:
                 # 构造带认证的URL
                 test_url = f"https://{username or 'token'}:{token}@{parsed_url.netloc}"
-                # 本地GitLab使用实际存在的仓库
-                if '127.0.0.1:8929' in server_url:
-                    return self._test_git_ls_remote(f"{test_url}/root/demo.git", username, token)
-                else:
-                    return self._test_git_ls_remote(f"{test_url}/test.git", username, token)
+                # 使用新的服务器连接测试方法，不依赖特定仓库
+                return self._test_git_server_connection(test_url, username or 'token', token)
             else:
                 return False, "无效的服务器URL"
                 
@@ -303,6 +294,63 @@ class GitCredentialTester:
             return False, "系统中未找到git命令，请确保已安装Git"
         except Exception as e:
             return False, f"Git测试失败: {str(e)}"
+
+    def _test_git_server_connection(self, auth_url: str, username: str, password: str) -> Tuple[bool, str]:
+        """测试Git服务器连接，不依赖特定仓库"""
+        try:
+            # 设置环境变量
+            env = os.environ.copy()
+            env['GIT_USERNAME'] = username
+            env['GIT_PASSWORD'] = password
+            env['GIT_TERMINAL_PROMPT'] = '0'
+            env['GIT_ASKPASS'] = 'echo'
+            
+            # 对于本地/开发环境，忽略SSL验证
+            if '127.0.0.1' in auth_url or 'localhost' in auth_url:
+                env['GIT_SSL_NO_VERIFY'] = 'true'
+            
+            # 使用基础的Git连接测试，而不是检查具体仓库
+            # 这里使用一个肯定不存在的仓库名来测试认证
+            test_repo_url = f"{auth_url}/non-existent-test-repo-for-auth-check.git"
+            
+            cmd = ['git', 'ls-remote', '--exit-code', test_repo_url]
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                env=env
+            )
+            
+            # 分析结果
+            if result.returncode == 0:
+                return True, "Git认证成功，服务器连接正常"
+            elif result.returncode == 2:
+                # 仓库不存在，但认证成功
+                return True, "Git认证成功，服务器连接正常"
+            elif result.returncode == 128:
+                error_msg = result.stderr.lower()
+                if 'authentication failed' in error_msg or 'access denied' in error_msg:
+                    return False, "Git认证失败：用户名或密码错误"
+                elif 'repository not found' in error_msg or 'namespace' in error_msg and 'not found' in error_msg:
+                    # 这种情况表示认证成功，但仓库不存在，这是我们期望的结果
+                    return True, "Git认证成功，服务器连接正常"
+                elif 'ssl' in error_msg or 'tls' in error_msg:
+                    return False, f"SSL/TLS连接问题: {result.stderr}"
+                elif 'could not resolve host' in error_msg:
+                    return False, f"DNS解析失败，请检查服务器地址: {result.stderr}"
+                else:
+                    return False, f"Git连接失败: {result.stderr}"
+            else:
+                return False, f"Git连接测试失败: {result.stderr}"
+                
+        except subprocess.TimeoutExpired:
+            return False, "Git连接超时，请检查网络或服务器状态"
+        except FileNotFoundError:
+            return False, "系统中未找到git命令，请确保已安装Git"
+        except Exception as e:
+            return False, f"Git连接测试失败: {str(e)}"
 
 
 def main():

@@ -11,7 +11,8 @@ import {
   Select,
   message,
   Tooltip,
-  Tabs
+  Tabs,
+  Alert
 } from 'antd'
 import {
   PlusOutlined,
@@ -21,7 +22,8 @@ import {
   CloseCircleOutlined,
   ExclamationCircleOutlined,
   ReloadOutlined,
-  ApiOutlined
+  ApiOutlined,
+  ToolOutlined
 } from '@ant-design/icons'
 import { ColumnsType } from 'antd/es/table'
 import { Tool } from '../types'
@@ -39,11 +41,19 @@ const Tools: React.FC = () => {
   const [form] = Form.useForm()
   const [activeTab, setActiveTab] = useState('list')
   const [projects, setProjects] = useState<any[]>([])
+  const [hasLocalExecutor, setHasLocalExecutor] = useState<boolean>(false)
+  const [creatingLocalExecutor, setCreatingLocalExecutor] = useState(false)
 
   useEffect(() => {
     loadTools()
     loadProjects()
   }, [loadTools])
+
+  useEffect(() => {
+    // 检查是否存在本地执行器
+    const localExecutor = tools.find(tool => tool.tool_type === 'local')
+    setHasLocalExecutor(!!localExecutor)
+  }, [tools])
 
   const loadProjects = async () => {
     try {
@@ -95,6 +105,26 @@ const Tools: React.FC = () => {
         }
       }
     })
+  }
+
+  const handleCreateLocalExecutor = async () => {
+    try {
+      setCreatingLocalExecutor(true)
+      const result = await apiService.createLocalExecutor()
+      
+      if (result.success) {
+        message.success(result.message)
+        // 重新加载工具列表
+        await loadTools()
+      } else {
+        message.error(result.error || '创建本地执行器失败')
+      }
+    } catch (error) {
+      console.error('Failed to create local executor:', error)
+      message.error('创建本地执行器失败')
+    } finally {
+      setCreatingLocalExecutor(false)
+    }
   }
 
   const handleTestConnection = async (tool: Tool) => {
@@ -291,6 +321,17 @@ const Tools: React.FC = () => {
                 title="CI/CD工具管理"
                 extra={
                   <Space>
+                    {!hasLocalExecutor && (
+                      <Button
+                        type="default"
+                        icon={<ToolOutlined />}
+                        onClick={handleCreateLocalExecutor}
+                        loading={creatingLocalExecutor}
+                        style={{ backgroundColor: '#52c41a', borderColor: '#52c41a', color: 'white' }}
+                      >
+                        创建本地执行器
+                      </Button>
+                    )}
                     <Button
                       type="primary"
                       icon={<PlusOutlined />}
@@ -308,6 +349,26 @@ const Tools: React.FC = () => {
                   </Space>
                 }
               >
+                {!hasLocalExecutor && (
+                  <Alert
+                    message="缺少本地执行器"
+                    description="系统检测到您还没有配置本地执行器。本地执行器是系统内置的执行环境，用于直接在AnsFlow服务器上执行流水线步骤。建议您先创建本地执行器。"
+                    type="warning"
+                    action={
+                      <Button
+                        size="small"
+                        type="primary"
+                        icon={<ToolOutlined />}
+                        onClick={handleCreateLocalExecutor}
+                        loading={creatingLocalExecutor}
+                      >
+                        立即创建
+                      </Button>
+                    }
+                    showIcon
+                    style={{ marginBottom: 16 }}
+                  />
+                )}
                 <Table
                   columns={columns}
                   dataSource={tools}

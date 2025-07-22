@@ -35,6 +35,14 @@ class DockerRegistry(models.Model):
     username = models.CharField(max_length=100, blank=True, verbose_name='用户名')
     description = models.TextField(blank=True, verbose_name='描述')
     
+    # Harbor/私有仓库项目名称配置
+    project_name = models.CharField(
+        max_length=100, 
+        blank=True, 
+        verbose_name='项目名称',
+        help_text='Harbor等私有仓库的项目名称，如果为空则直接使用镜像名'
+    )
+    
     # 加密存储的认证信息
     auth_config = models.JSONField(default=dict, verbose_name='认证配置')
     

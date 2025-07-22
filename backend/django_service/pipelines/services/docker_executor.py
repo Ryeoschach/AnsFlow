@@ -56,6 +56,30 @@ class DockerManager:
     
     def build_image(self, dockerfile_path, build_context, image_name, build_args=None, no_cache=False):
         """执行 Docker 构建"""
+        # 添加详细的路径调试信息
+        current_dir = os.getcwd()
+        logger.info(f"[DEBUG] Docker构建调试信息:")
+        logger.info(f"[DEBUG] 当前工作目录: {current_dir}")
+        logger.info(f"[DEBUG] Dockerfile路径参数: {dockerfile_path}")
+        logger.info(f"[DEBUG] 构建上下文参数: {build_context}")
+        
+        # 解析绝对路径
+        abs_dockerfile_path = os.path.abspath(dockerfile_path)
+        abs_build_context = os.path.abspath(build_context)
+        
+        logger.info(f"[DEBUG] Dockerfile绝对路径: {abs_dockerfile_path}")
+        logger.info(f"[DEBUG] 构建上下文绝对路径: {abs_build_context}")
+        logger.info(f"[DEBUG] Dockerfile是否存在: {os.path.exists(abs_dockerfile_path)}")
+        logger.info(f"[DEBUG] 构建上下文是否存在: {os.path.exists(abs_build_context)}")
+        
+        # 列出构建上下文目录内容
+        if os.path.exists(abs_build_context) and os.path.isdir(abs_build_context):
+            try:
+                context_files = os.listdir(abs_build_context)
+                logger.info(f"[DEBUG] 构建上下文目录内容: {context_files}")
+            except Exception as e:
+                logger.warning(f"[DEBUG] 无法列出构建上下文目录内容: {e}")
+        
         command = ['docker', 'build', '-t', image_name, '-f', dockerfile_path]
         
         if no_cache:
@@ -223,7 +247,17 @@ class DockerStepExecutor:
         """
         context = context or {}
         
+        # 获取并切换到正确的工作目录
+        working_directory = context.get('working_directory')
+        original_cwd = os.getcwd()
+        
         try:
+            if working_directory and os.path.exists(working_directory):
+                logger.info(f"[DEBUG] Docker执行器切换工作目录: {original_cwd} -> {working_directory}")
+                os.chdir(working_directory)
+            else:
+                logger.warning(f"[DEBUG] Docker执行器工作目录无效或不存在: {working_directory}")
+        
             # 根据步骤类型选择执行方法
             executor_map = {
                 'docker_build': self._execute_docker_build,
@@ -263,6 +297,11 @@ class DockerStepExecutor:
                 'output': getattr(e, 'output', ''),
                 'data': {}
             }
+        finally:
+            # 恢复原始工作目录
+            if working_directory and os.getcwd() != original_cwd:
+                logger.info(f"[DEBUG] Docker执行器恢复工作目录: {os.getcwd()} -> {original_cwd}")
+                os.chdir(original_cwd)
     
     def _execute_docker_build(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """执行 Docker 构建步骤"""
@@ -274,6 +313,33 @@ class DockerStepExecutor:
         dockerfile_path = params.get('dockerfile') or docker_config.get('dockerfile', 'Dockerfile')
         build_context = params.get('context') or docker_config.get('context', '.')
         build_args = params.get('build_args') or docker_config.get('build_args', {})
+        
+        # 添加当前工作目录信息
+        current_working_dir = os.getcwd()
+        logger.info(f"[DEBUG] Docker构建前工作目录: {current_working_dir}")
+        logger.info(f"[DEBUG] 原始Dockerfile路径: {dockerfile_path}")
+        logger.info(f"[DEBUG] 原始构建上下文: {build_context}")
+        
+        # 智能调整Dockerfile路径
+        # 如果dockerfile_path包含路径分隔符，检查是否存在
+        if os.path.sep in dockerfile_path or '/' in dockerfile_path:
+            # 首先检查原始路径是否存在
+            if not os.path.exists(dockerfile_path):
+                # 如果不存在，尝试只使用文件名
+                dockerfile_name = os.path.basename(dockerfile_path)
+                if os.path.exists(dockerfile_name):
+                    logger.info(f"[DEBUG] 调整Dockerfile路径从 '{dockerfile_path}' 到 '{dockerfile_name}'")
+                    dockerfile_path = dockerfile_name
+                else:
+                    # 尝试在当前目录查找Dockerfile
+                    possible_paths = ['Dockerfile', 'dockerfile', 'Dockerfile.txt']
+                    for possible_path in possible_paths:
+                        if os.path.exists(possible_path):
+                            logger.info(f"[DEBUG] 找到Dockerfile: '{possible_path}'")
+                            dockerfile_path = possible_path
+                            break
+        
+        logger.info(f"[DEBUG] 最终Dockerfile路径: {dockerfile_path}")
         
         # 构建镜像名称和标签 - 支持多种参数名称
         image_name = (
@@ -377,28 +443,97 @@ class DockerStepExecutor:
     
     def _execute_docker_push(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """执行 Docker 推送步骤"""
-        # 从 ansible_parameters 中获取参数
-        params = step.ansible_parameters or {}
+        # 兼容不同的步骤模型
+        params = getattr(step, 'ansible_parameters', None) or {}
         docker_config = params.get('docker_config', {})
         
-        # 获取镜像信息 - 支持多种参数名称
-        image_name = (
-            params.get('image') or 
-            params.get('image_name') or 
-            params.get('docker_image') or
-            getattr(step, 'docker_image', None) or 
-            context.get('docker_image')
-        )
+        # **FIX: 处理 AtomicStep 模型的 parameters 字段**
+        registry = None
+        image_name = None
+        tag = 'latest'
+        
+        if hasattr(step, 'parameters') and step.parameters:
+            # AtomicStep 模型使用 parameters 字段
+            step_params = step.parameters
+            image_name = step_params.get('image') or step_params.get('image_name')
+            tag = step_params.get('tag', 'latest')
+            registry_id = step_params.get('registry_id')
+            
+            logger.info(f"[DEBUG] AtomicStep参数: image={image_name}, tag={tag}, registry_id={registry_id}")
+            
+            # 如果指定了 registry_id，获取注册表信息
+            if registry_id:
+                from docker_integration.models import DockerRegistry
+                try:
+                    registry = DockerRegistry.objects.get(id=registry_id)
+                    logger.info(f"[DEBUG] 使用指定的注册表: {registry.name} ({registry.url})")
+                except DockerRegistry.DoesNotExist:
+                    logger.warning(f"[WARNING] 注册表ID {registry_id} 不存在，使用默认设置")
+                    registry = None
+        elif hasattr(step, 'docker_registry'):
+            # PipelineStep 模型的处理方式（原有逻辑）
+            image_name = (
+                params.get('image') or 
+                params.get('image_name') or 
+                params.get('docker_image') or
+                getattr(step, 'docker_image', None) or 
+                context.get('docker_image')
+            )
+            tag = params.get('tag') or params.get('docker_tag') or getattr(step, 'docker_tag', None) or 'latest'
+            registry = getattr(step, 'docker_registry', None)
+            
+            # 如果直接属性中没有注册表信息，尝试从 ansible_parameters 获取
+            if not registry:
+                step_params = getattr(step, 'ansible_parameters', {})
+                registry_id = step_params.get('registry_id')
+                if registry_id:
+                    from docker_integration.models import DockerRegistry
+                    try:
+                        registry = DockerRegistry.objects.get(id=registry_id)
+                        logger.info(f"[DEBUG] PipelineStep从ansible_parameters获取注册表: {registry.name} ({registry.url})")
+                    except DockerRegistry.DoesNotExist:
+                        logger.warning(f"[WARNING] PipelineStep中ansible_parameters注册表ID {registry_id} 不存在")
+                        registry = None
+        else:
+            # 兜底处理：从 ansible_parameters、parameters 或 config 中获取
+            step_params = (
+                getattr(step, 'ansible_parameters', {}) or 
+                getattr(step, 'parameters', {}) or 
+                getattr(step, 'config', {})
+            )
+            image_name = step_params.get('image') or step_params.get('image_name')
+            tag = step_params.get('tag', 'latest')
+            registry_id = step_params.get('registry_id')
+            
+            logger.info(f"[DEBUG] 兜底处理参数: image={image_name}, tag={tag}, registry_id={registry_id}")
+            logger.info(f"[DEBUG] step_params来源: ansible_parameters={bool(getattr(step, 'ansible_parameters', None))}")
+            
+            if registry_id:
+                from docker_integration.models import DockerRegistry
+                try:
+                    registry = DockerRegistry.objects.get(id=registry_id)
+                    logger.info(f"[DEBUG] 兜底处理成功获取注册表: {registry.name} ({registry.url})")
+                except DockerRegistry.DoesNotExist:
+                    logger.warning(f"[WARNING] 兜底处理中注册表ID {registry_id} 不存在")
+                    registry = None
+            else:
+                logger.warning(f"[WARNING] 兜底处理中没有找到 registry_id")
+        
         if not image_name:
             raise ValueError("No Docker image specified for push step")
         
         # 获取仓库信息
-        registry = step.docker_registry
         if registry:
             # 使用配置的仓库
             registry_url = registry.url
             username = registry.username
-            password = registry.get_decrypted_password()
+            
+            # 从 auth_config 中获取密码
+            password = None
+            if registry.auth_config and isinstance(registry.auth_config, dict):
+                password = registry.auth_config.get('password')
+            
+            logger.info(f"[DEBUG] 注册表认证信息: url={registry_url}, username={username}, has_password={bool(password)}")
         else:
             # 使用步骤配置中的仓库信息
             registry_url = docker_config.get('registry_url')
@@ -406,31 +541,71 @@ class DockerStepExecutor:
             password = docker_config.get('password')
         
         # 构建完整的镜像名称
-        if registry_url and not image_name.startswith(registry_url):
-            full_image_name = f"{registry_url}/{image_name}"
+        if registry and registry.registry_type != 'dockerhub':
+            # 私有注册表需要添加前缀
+            registry_host = registry.url.replace('https://', '').replace('http://', '')
+            
+            # 检查是否有项目名称配置
+            if hasattr(registry, 'project_name') and registry.project_name:
+                # 使用项目名称构建完整路径
+                if not image_name.startswith(f"{registry_host}/{registry.project_name}/"):
+                    full_image_name = f"{registry_host}/{registry.project_name}/{image_name}"
+                else:
+                    full_image_name = image_name
+            else:
+                # 没有项目名称，使用原有逻辑
+                if not image_name.startswith(registry_host):
+                    full_image_name = f"{registry_host}/{image_name}"
+                else:
+                    full_image_name = image_name
         else:
             full_image_name = image_name
+        
+        # 添加标签 - 修复：检查镜像名部分是否包含标签，而不是整个URL
+        # 从完整镜像名中提取镜像名部分（去掉注册表前缀）
+        image_part = full_image_name.split('/')[-1] if '/' in full_image_name else full_image_name
+        if ':' not in image_part:
+            full_image_name = f"{full_image_name}:{tag}"
+        
+        logger.info(f"[DEBUG] 最终推送镜像名: {full_image_name}")
+        logger.info(f"[DEBUG] 使用注册表: {registry.url if registry else '默认Docker Hub'}")
         
         try:
             # 创建 Docker 管理器 - 支持真实执行
             docker_manager = DockerManager(enable_real_execution=self.enable_real_execution)
             
             # 登录仓库（如果需要）
-            if username and password:
-                docker_manager.login_registry(registry_url, username, password)
+            if username and password and registry_url:
+                login_success = docker_manager.login_registry(registry_url, username, password)
+                if not login_success:
+                    raise Exception(f"Docker仓库登录失败: {registry_url}")
             
-            # 标记镜像
-            if full_image_name != image_name:
-                docker_manager.tag_image(image_name, full_image_name)
+            # 标记镜像（如果需要重命名）
+            # 构建本地源镜像名称：确保包含完整的镜像名和标签
+            if ':' in image_name:
+                # 如果 image_name 已经包含标签，直接使用
+                source_image_name = image_name
+            else:
+                # 如果没有标签，添加标签
+                source_image_name = f"{image_name}:{tag}"
+            
+            logger.info(f"[DEBUG] 本地源镜像: {source_image_name}")
+            logger.info(f"[DEBUG] 目标镜像名: {full_image_name}")
+            
+            if full_image_name != source_image_name:
+                logger.info(f"[DEBUG] 标记镜像: {source_image_name} -> {full_image_name}")
+                docker_manager.tag_image(source_image_name, full_image_name)
             
             # 推送镜像
             result = docker_manager.push_image(full_image_name)
             
             return {
-                'message': f'Image {full_image_name} pushed successfully',
+                'message': f'Image {full_image_name} pushed successfully to {registry.name if registry else "Docker Hub"}',
                 'output': result.get('push_log', ''),
                 'data': {
                     'image_name': full_image_name,
+                    'registry_url': registry_url,
+                    'registry_name': registry.name if registry else 'Docker Hub',
                     'digest': result.get('digest'),
                     'size': result.get('size')
                 }
@@ -445,30 +620,123 @@ class DockerStepExecutor:
         params = step.ansible_parameters or {}
         docker_config = params.get('docker_config', {})
         
-        # 获取镜像信息 - 支持多种参数名称
-        image_name = (
-            params.get('image') or 
-            params.get('image_name') or 
-            params.get('docker_image') or
-            getattr(step, 'docker_image', None)
-        )
+        # **FIX: 处理 AtomicStep 模型的 parameters 字段**
+        registry = None
+        image_name = None
+        tag = 'latest'
+        
+        if hasattr(step, 'parameters') and step.parameters:
+            # AtomicStep 模型使用 parameters 字段
+            step_params = step.parameters
+            image_name = step_params.get('image') or step_params.get('image_name')
+            tag = step_params.get('tag', 'latest')
+            registry_id = step_params.get('registry_id')
+            
+            logger.info(f"[DEBUG] AtomicStep参数: image={image_name}, tag={tag}, registry_id={registry_id}")
+            
+            # 如果指定了 registry_id，获取注册表信息
+            if registry_id:
+                from docker_integration.models import DockerRegistry
+                try:
+                    registry = DockerRegistry.objects.get(id=registry_id)
+                    logger.info(f"[DEBUG] 使用指定的注册表: {registry.name} ({registry.url})")
+                except DockerRegistry.DoesNotExist:
+                    logger.warning(f"[WARNING] 注册表ID {registry_id} 不存在，使用默认设置")
+                    registry = None
+        elif hasattr(step, 'docker_registry'):
+            # PipelineStep 模型的处理方式（原有逻辑）
+            image_name = (
+                params.get('image') or 
+                params.get('image_name') or 
+                params.get('docker_image') or
+                getattr(step, 'docker_image', None) or 
+                context.get('docker_image')
+            )
+            tag = params.get('tag') or params.get('docker_tag') or getattr(step, 'docker_tag', None) or 'latest'
+            registry = getattr(step, 'docker_registry', None)
+# 如果直接属性中没有注册表信息，尝试从 ansible_parameters 获取
+            if not registry:
+                step_params = getattr(step, 'ansible_parameters', {})
+                registry_id = step_params.get('registry_id')
+                if registry_id:
+                    from docker_integration.models import DockerRegistry
+                    try:
+                        registry = DockerRegistry.objects.get(id=registry_id)
+                        logger.info(f"[DEBUG] PipelineStep从ansible_parameters获取注册表: {registry.name} ({registry.url})")
+                    except DockerRegistry.DoesNotExist:
+                        logger.warning(f"[WARNING] PipelineStep中ansible_parameters注册表ID {registry_id} 不存在")
+                        registry = None
+        else:
+            # 兜底处理：从 ansible_parameters、parameters 或 config 中获取
+            step_params = (
+                getattr(step, 'ansible_parameters', {}) or 
+                getattr(step, 'parameters', {}) or 
+                getattr(step, 'config', {})
+            )
+            image_name = step_params.get('image') or step_params.get('image_name')
+            tag = step_params.get('tag', 'latest')
+            registry_id = step_params.get('registry_id')
+            
+            logger.info(f"[DEBUG] Pull兜底处理参数: image={image_name}, tag={tag}, registry_id={registry_id}")
+            
+            if registry_id:
+                from docker_integration.models import DockerRegistry
+                try:
+                    registry = DockerRegistry.objects.get(id=registry_id)
+                    logger.info(f"[DEBUG] Pull兜底处理成功获取注册表: {registry.name} ({registry.url})")
+                except DockerRegistry.DoesNotExist:
+                    logger.warning(f"[WARNING] Pull兜底处理中注册表ID {registry_id} 不存在")
+                    registry = None
         
         if not image_name:
             raise ValueError("No Docker image specified for pull step")
         
-        tag = params.get('tag') or params.get('docker_tag') or getattr(step, 'docker_tag', None) or 'latest'
-        full_image_name = f"{image_name}:{tag}"
-        
         # 获取仓库信息
-        registry = getattr(step, 'docker_registry', None)
         if registry:
-            username = registry.username
-            password = registry.get_decrypted_password()
+            # 使用配置的仓库
             registry_url = registry.url
+            username = registry.username
+            
+            # 从 auth_config 中获取密码
+            password = None
+            if registry.auth_config and isinstance(registry.auth_config, dict):
+                password = registry.auth_config.get('password')
+            
+            logger.info(f"[DEBUG] 注册表认证信息: url={registry_url}, username={username}, has_password={bool(password)}")
         else:
+            # 使用步骤配置中的仓库信息
+            registry_url = docker_config.get('registry_url')
             username = docker_config.get('username')
             password = docker_config.get('password')
-            registry_url = docker_config.get('registry_url')
+        
+        # 构建完整的镜像名称
+        if registry and registry.registry_type != 'dockerhub':
+            # 私有注册表需要添加前缀
+            registry_host = registry.url.replace('https://', '').replace('http://', '')
+            
+            # 检查是否有项目名称配置
+            if hasattr(registry, 'project_name') and registry.project_name:
+                # 使用项目名称构建完整路径
+                if not image_name.startswith(f"{registry_host}/{registry.project_name}/"):
+                    full_image_name = f"{registry_host}/{registry.project_name}/{image_name}"
+                else:
+                    full_image_name = image_name
+            else:
+                # 没有项目名称，使用原有逻辑
+                if not image_name.startswith(registry_host):
+                    full_image_name = f"{registry_host}/{image_name}"
+                else:
+                    full_image_name = image_name
+        else:
+            full_image_name = image_name
+        
+        # 添加标签
+        image_part = full_image_name.split('/')[-1] if '/' in full_image_name else full_image_name
+        if ':' not in image_part:
+            full_image_name = f"{full_image_name}:{tag}"
+        
+        logger.info(f"[DEBUG] 最终拉取镜像名: {full_image_name}")
+        logger.info(f"[DEBUG] 使用注册表: {registry.url if registry else '默认Docker Hub'}")
         
         try:
             # 创建 Docker 管理器 - 支持真实执行
@@ -487,10 +755,12 @@ class DockerStepExecutor:
             context['docker_image'] = full_image_name
             
             return {
-                'message': f'Image {full_image_name} pulled successfully',
+                'message': f'Image {full_image_name} pulled successfully from {registry.name if registry else "Docker Hub"}',
                 'output': result.get('pull_log', ''),
                 'data': {
                     'image_name': full_image_name,
+                    'registry_url': registry_url,
+                    'registry_name': registry.name if registry else 'Docker Hub',
                     'image_id': result.get('image_id'),
                     'size': result.get('size')
                 }

@@ -6,6 +6,7 @@ export interface CreateDockerRegistryRequest {
   registry_type: string
   username?: string
   password?: string
+  project_name?: string
   description?: string
   is_default?: boolean
 }
@@ -16,6 +17,7 @@ export interface UpdateDockerRegistryRequest {
   registry_type?: string
   username?: string
   password?: string
+  project_name?: string
   description?: string
   is_default?: boolean
 }
@@ -35,7 +37,7 @@ class DockerRegistryService {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -54,7 +56,7 @@ class DockerRegistryService {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -73,7 +75,7 @@ class DockerRegistryService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       },
       body: JSON.stringify(data)
     })
@@ -93,7 +95,7 @@ class DockerRegistryService {
       method: 'PATCH',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       },
       body: JSON.stringify(data)
     })
@@ -113,7 +115,7 @@ class DockerRegistryService {
       method: 'DELETE',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -126,11 +128,11 @@ class DockerRegistryService {
    * 测试注册表连接
    */
   async testRegistry(id: number): Promise<{ success: boolean; message: string }> {
-    const response = await fetch(`${this.baseUrl}/${id}/test/`, {
+    const response = await fetch(`${this.baseUrl}/${id}/test_connection/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -149,7 +151,7 @@ class DockerRegistryService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -178,7 +180,7 @@ class DockerRegistryService {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -202,7 +204,7 @@ class DockerRegistryService {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -227,7 +229,7 @@ class DockerRegistryService {
       method: 'GET',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 
@@ -246,7 +248,7 @@ class DockerRegistryService {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Authorization': `Bearer ${localStorage.getItem('token')}`
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`
       }
     })
 

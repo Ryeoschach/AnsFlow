@@ -29,4 +29,7 @@ urlpatterns = [
     
     # ViewSet路由
     path('', include(router.urls)),
+    
+    # 兼容性路由：支持不带尾部斜杠的请求
+    path('registries', views.DockerRegistryViewSet.as_view({'get': 'list', 'post': 'create'}), name='registries-compat'),
 ]

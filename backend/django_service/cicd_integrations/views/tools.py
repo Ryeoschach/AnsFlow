@@ -344,3 +344,85 @@ class CICDToolViewSet(JenkinsManagementMixin, viewsets.ModelViewSet):
                 {'error': f"Failed to test connection: {str(e)}"},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR
             )
+
+    @extend_schema(
+        summary="Create local executor",
+        description="Create system default local executor tool"
+    )
+    @action(detail=False, methods=['post'])
+    def create_local_executor(self, request):
+        """创建系统默认的本地执行器工具"""
+        try:
+            from project_management.models import Project
+            from django.contrib.auth import get_user_model
+            from django.db import transaction
+            
+            User = get_user_model()
+            
+            with transaction.atomic():
+                # 检查是否已存在本地执行器
+                existing_local_tool = CICDTool.objects.filter(tool_type='local').first()
+                if existing_local_tool:
+                    return Response({
+                        'success': True,
+                        'message': '本地执行器已存在',
+                        'tool': {
+                            'id': existing_local_tool.id,
+                            'name': existing_local_tool.name,
+                            'status': existing_local_tool.status
+                        }
+                    })
+                
+                # 获取或创建系统项目
+                system_project, project_created = Project.objects.get_or_create(
+                    name='系统项目',
+                    defaults={
+                        'description': '用于存放系统级工具和配置的项目',
+                        'owner': User.objects.filter(is_superuser=True).first() or User.objects.first(),
+                        'is_active': True,
+                        'visibility': 'private'
+                    }
+                )
+                
+                # 创建本地执行器
+                local_executor = CICDTool.objects.create(
+                    tool_type='local',
+                    project=system_project,
+                    name='AnsFlow 本地执行器',
+                    description='系统内置的本地执行器，用于在AnsFlow服务器上直接执行流水线步骤',
+                    base_url='http://localhost:8000',
+                    username='system',
+                    token='local-executor-token',
+                    status='active',
+                    created_by=request.user,
+                    config={
+                        'executor_type': 'local',
+                        'max_concurrent_jobs': 5,
+                        'timeout': 3600,
+                        'enable_logs': True,
+                        'workspace_path': '/tmp/ansflow-workspace',
+                        'is_default': True
+                    }
+                )
+                
+                logger.info(f"Created local executor tool: {local_executor.name} (ID: {local_executor.id})")
+                
+                return Response({
+                    'success': True,
+                    'message': '本地执行器创建成功',
+                    'tool': {
+                        'id': local_executor.id,
+                        'name': local_executor.name,
+                        'tool_type': local_executor.tool_type,
+                        'status': local_executor.status,
+                        'base_url': local_executor.base_url,
+                        'description': local_executor.description
+                    }
+                })
+                
+        except Exception as e:
+            logger.error(f"Failed to create local executor: {e}")
+            return Response(
+                {'success': False, 'error': f"创建本地执行器失败: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )

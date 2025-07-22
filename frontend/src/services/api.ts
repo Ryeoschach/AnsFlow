@@ -132,6 +132,23 @@ class ApiService {
     return response.data
   }
 
+  async createLocalExecutor(): Promise<{
+    success: boolean;
+    message: string;
+    tool?: {
+      id: number;
+      name: string;
+      tool_type: string;
+      status: string;
+      base_url: string;
+      description: string;
+    };
+    error?: string;
+  }> {
+    const response = await this.api.post('/cicd/tools/create_local_executor/')
+    return response.data
+  }
+
   // Projects
   async getProjects(): Promise<any[]> {
     const response = await this.api.get('/projects/projects/')
@@ -1115,7 +1132,7 @@ class ApiService {
   }
 
   async testDockerRegistry(id: number): Promise<DockerRegistryTestResponse> {
-    const response = await this.api.post(`/docker/registries/${id}/test/`)
+    const response = await this.api.post(`/docker/registries/${id}/test_connection/`)
     return response.data
   }
 

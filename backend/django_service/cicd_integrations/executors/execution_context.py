@@ -4,6 +4,8 @@
 """
 import json
 import asyncio
+import os
+import threading
 from typing import Dict, Any, Optional, List
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -18,6 +20,10 @@ class ExecutionContext:
     pipeline_name: str
     trigger_type: str
     triggered_by: Optional[str] = None
+    
+    # 工作目录
+    workspace_path: Optional[str] = None
+    current_working_directory: Optional[str] = None
     
     # 执行状态
     status: str = 'pending'
@@ -35,11 +41,163 @@ class ExecutionContext:
     
     # 并发控制
     _locks: Dict[str, asyncio.Lock] = field(default_factory=dict)
+    _directory_lock: threading.Lock = field(default_factory=threading.Lock)
     
     def __post_init__(self):
         """初始化后处理"""
         if self.started_at is None and self.status == 'running':
             self.started_at = timezone.now()
+        
+        # 如果没有指定工作目录，自动创建
+        if self.workspace_path is None:
+            self._create_workspace()
+    
+    def _create_workspace(self):
+        """创建工作目录"""
+        try:
+            from .workspace_manager import workspace_manager
+            self.workspace_path = workspace_manager.create_workspace(
+                self.pipeline_name, 
+                self.execution_id
+            )
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to create workspace: {e}")
+            # 如果创建失败，使用临时目录
+            import tempfile
+            self.workspace_path = tempfile.mkdtemp(prefix=f"pipeline_{self.execution_id}_")
+    
+    def get_workspace_path(self) -> str:
+        """获取工作目录路径"""
+        if self.workspace_path is None:
+            self._create_workspace()
+        return self.workspace_path
+    
+    def get_current_directory(self) -> str:
+        """获取当前工作目录（线程安全）"""
+        with self._directory_lock:
+            if self.current_working_directory is None:
+                self.current_working_directory = self.get_workspace_path()
+            return self.current_working_directory
+    
+    def set_current_directory(self, path: str) -> None:
+        """设置当前工作目录（线程安全）"""
+        with self._directory_lock:
+            if not os.path.isabs(path):
+                # 相对路径转为绝对路径
+                current_dir = self.current_working_directory or self.get_workspace_path()
+                if path == '..':
+                    # 上级目录
+                    path = os.path.dirname(current_dir)
+                elif path == '.':
+                    # 当前目录，无变化
+                    return
+                else:
+                    # 相对路径
+                    path = os.path.join(current_dir, path)
+            
+            # 标准化路径
+            path = os.path.abspath(path)
+            
+            # 确保目录存在且可访问
+            if os.path.exists(path) and os.path.isdir(path):
+                self.current_working_directory = path
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.info(f"目录状态已更新 (线程: {threading.current_thread().name}): {path}")
+            else:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"目录不存在或不可访问: {path}, 保持当前目录: {self.current_working_directory}")
+
+    def change_directory(self, path: Optional[str] = None) -> str:
+        """
+        切换到工作目录或指定路径（线程安全）
+        
+        Args:
+            path: 可选的相对路径，如果为None则切换到工作目录根目录
+            
+        Returns:
+            当前工作目录
+        """
+        with self._directory_lock:
+            workspace = self.get_workspace_path()
+            
+            if path:
+                # 处理相对路径
+                if not os.path.isabs(path):
+                    target_path = os.path.join(workspace, path)
+                else:
+                    target_path = path
+            else:
+                target_path = workspace
+            
+            # 确保目录存在
+            try:
+                os.makedirs(target_path, exist_ok=True)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to create directory {target_path}: {e}")
+                # 如果无法创建目标目录，尝试创建基础工作目录
+                try:
+                    os.makedirs(workspace, exist_ok=True)
+                    target_path = workspace
+                    logger.info(f"Fallback to workspace directory: {workspace}")
+                except Exception as fallback_error:
+                    logger.error(f"Failed to create workspace directory {workspace}: {fallback_error}")
+                    raise
+            
+            # 更新当前工作目录状态（不切换系统目录，因为多线程环境不安全）
+            self.current_working_directory = target_path
+            
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"Working directory updated to: {target_path} (thread: {threading.current_thread().name})")
+            
+            return target_path
+    
+    def resolve_path(self, path: str) -> str:
+        """
+        解析路径，相对路径会基于工作目录
+        
+        Args:
+            path: 文件或目录路径
+            
+        Returns:
+            绝对路径
+        """
+        if os.path.isabs(path):
+            return path
+        
+        workspace = self.get_workspace_path()
+        return os.path.join(workspace, path)
+    
+    def cleanup_workspace(self, force_cleanup: bool = False):
+        """
+        清理工作目录
+        
+        Args:
+            force_cleanup: 是否强制清理。默认为False，保留工作目录以便调试和查看执行结果
+        """
+        if not force_cleanup:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"工作目录保留模式：跳过清理 {self.workspace_path} (execution_id: {self.execution_id})")
+            return
+            
+        try:
+            from .workspace_manager import workspace_manager
+            workspace_manager.cleanup_workspace(self.execution_id, force_cleanup=force_cleanup)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Failed to cleanup workspace: {e}")
+    
+    def force_cleanup_workspace(self):
+        """强制清理工作目录（手动清理接口）"""
+        return self.cleanup_workspace(force_cleanup=True)
     
     def get_variable(self, key: str, default: Any = None) -> Any:
         """获取变量值"""
