@@ -14,6 +14,7 @@ import { QuestionCircleOutlined } from '@ant-design/icons'
 import { PipelineStep, AtomicStep, GitCredential, DockerRegistry, KubernetesCluster, KubernetesNamespace } from '../../types'
 import ParameterDocumentation from '../ParameterDocumentation'
 import DockerStepConfig from './DockerStepConfig'
+import EnhancedDockerStepConfig from './EnhancedDockerStepConfig'
 import KubernetesStepConfig from './KubernetesStepConfig'
 
 const { Option } = Select
@@ -448,10 +449,12 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
 
         {/* Docker 步骤配置 - 仅在 Docker 步骤显示 */}
         {(selectedStepType?.startsWith('docker_')) && (
-          <DockerStepConfig 
+          <EnhancedDockerStepConfig 
             stepType={selectedStepType}
-            dockerRegistries={dockerRegistries}
-            onCreateRegistry={onCreateDockerRegistry}
+            form={form}
+            onRegistryChange={(registryId) => {
+              form?.setFieldValue('docker_registry', registryId)
+            }}
           />
         )}
 

@@ -233,6 +233,8 @@ class SyncStepExecutor:
             return self._execute_notify(atomic_step, execution_env)
         elif step_type == 'custom':
             return self._execute_custom(atomic_step, execution_env)
+        elif step_type in ['docker_build', 'docker_run', 'docker_push', 'docker_pull']:
+            return self._execute_docker_step(atomic_step, execution_env)
         else:
             return self._execute_mock(atomic_step, execution_env)
     
@@ -635,4 +637,89 @@ class SyncStepExecutor:
             'playbook': getattr(step, 'ansible_playbook', None),
             'inventory': getattr(step, 'ansible_inventory', None),
             'credential': getattr(step, 'ansible_credential', None),
+            'extra_vars': getattr(step, 'ansible_extra_vars', {}),
+            'vault_password': getattr(step, 'ansible_vault_password', None)
+        }
+    
+    def _execute_docker_step(
+        self,
+        atomic_step,
+        execution_env: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """执行 Docker 相关步骤"""
+        try:
+            step_type = self._get_step_type(atomic_step)
+            logger.info(f"执行 Docker 步骤: {step_type}")
+            
+            # 导入 Docker 执行器
+            try:
+                from pipelines.services.docker_executor import DockerStepExecutor
+                docker_executor = DockerStepExecutor()
+                
+                # 检查是否可以执行该步骤类型
+                if not docker_executor.can_execute(step_type):
+                    raise ValueError(f"Docker 执行器不支持步骤类型: {step_type}")
+                
+                # 执行 Docker 步骤
+                result = docker_executor.execute_step(atomic_step, execution_env)
+                
+                return {
+                    'success': result.get('success', False),
+                    'output': result.get('output', ''),
+                    'error_message': result.get('error') if not result.get('success') else None,
+                    'metadata': result.get('data', {})
+                }
+                
+            except ImportError as e:
+                logger.error(f"Docker 执行器不可用: {e}")
+                # 如果 Docker 执行器不可用，执行基本的模拟命令
+                return self._execute_docker_fallback(atomic_step, execution_env)
+                
+        except Exception as e:
+            logger.error(f"Docker 步骤执行失败: {e}")
+            return {
+                'success': False,
+                'error_message': str(e),
+                'output': ''
+            }
+    
+    def _execute_docker_fallback(
+        self,
+        atomic_step,
+        execution_env: Dict[str, str]
+    ) -> Dict[str, Any]:
+        """Docker 步骤的回退执行方法"""
+        step_type = self._get_step_type(atomic_step)
+        
+        # 获取 Docker 配置
+        docker_image = getattr(atomic_step, 'docker_image', 'nginx:latest')
+        docker_tag = getattr(atomic_step, 'docker_tag', 'latest')
+        full_image = f"{docker_image}:{docker_tag}" if not docker_image.endswith(docker_tag) else docker_image
+        
+        # 根据步骤类型生成相应的 Docker 命令
+        if step_type == 'docker_build':
+            command = f"echo '构建 Docker 镜像: {full_image}' && docker build -t {full_image} ."
+        elif step_type == 'docker_run':
+            command = f"echo '运行 Docker 容器: {full_image}' && docker run --rm {full_image} echo 'Container executed successfully'"
+        elif step_type == 'docker_push':
+            command = f"echo '推送 Docker 镜像: {full_image}' && docker push {full_image}"
+        elif step_type == 'docker_pull':
+            command = f"echo '拉取 Docker 镜像: {full_image}' && docker pull {full_image}"
+        else:
+            command = f"echo '执行 Docker 操作: {step_type}'"
+        
+        logger.info(f"执行命令: {command}")
+        
+        # 执行命令
+        result = self._run_command(command, execution_env)
+        
+        return {
+            'success': result['success'],
+            'output': result['output'],
+            'error_message': result.get('error_message'),
+            'metadata': {
+                'docker_image': docker_image,
+                'docker_tag': docker_tag,
+                'step_type': step_type
+            }
         }

@@ -226,10 +226,17 @@ class PipelineSerializer(serializers.ModelSerializer):
     
     def _map_step_type(self, frontend_step_type):
         """映射前端步骤类型到PipelineStep模型的choices"""
-        # 定义支持的步骤类型
+        # 定义支持的步骤类型 - 保持与PipelineStep.STEP_TYPE_CHOICES一致
         valid_step_types = [
             'fetch_code', 'build', 'test', 'security_scan',
-            'deploy', 'ansible', 'notify', 'custom', 'script'
+            'deploy', 'ansible', 'notify', 'custom', 'script',
+            # Docker 步骤类型
+            'docker_build', 'docker_run', 'docker_push', 'docker_pull',
+            # Kubernetes 步骤类型
+            'k8s_deploy', 'k8s_scale', 'k8s_delete', 'k8s_wait',
+            'k8s_exec', 'k8s_logs',
+            # 其他高级步骤类型
+            'approval', 'condition'
         ]
         
         # 如果前端传来的类型在支持列表中，直接使用

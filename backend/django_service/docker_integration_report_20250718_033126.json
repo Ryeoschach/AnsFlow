@@ -1,0 +1,26 @@
+{
+  "timestamp": "2025-07-18T03:31:26.919017",
+  "summary": {
+    "completion_score": 5,
+    "total_features": 8,
+    "completion_percentage": 62.5,
+    "models_info": {
+      "DockerRegistry": 0,
+      "DockerImage": 0,
+      "DockerImageVersion": 0,
+      "DockerContainer": 0,
+      "DockerContainerStats": 0,
+      "DockerCompose": 0
+    },
+    "pipeline_info": {
+      "total_docker_steps": 0,
+      "step_types": {},
+      "steps_with_registry": 0
+    }
+  },
+  "recommendations": [
+    "创建默认的 Docker 注册表配置",
+    "为现有 Docker 步骤关联注册表",
+    "创建示例 Docker 流水线步骤"
+  ]
+}

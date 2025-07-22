@@ -1315,6 +1315,32 @@ class ApiService {
     return response.data
   }
 
+  // Local Docker Resources API
+  async getLocalDockerImages(): Promise<any[]> {
+    const response = await this.api.get('/docker/local/images/')
+    return response.data.images || []
+  }
+
+  async getLocalDockerContainers(): Promise<any[]> {
+    const response = await this.api.get('/docker/local/containers/')
+    return response.data.containers || []
+  }
+
+  async importLocalDockerImages(): Promise<any> {
+    const response = await this.api.post('/docker/local/import/images/')
+    return response.data
+  }
+
+  async importLocalDockerContainers(): Promise<any> {
+    const response = await this.api.post('/docker/local/import/containers/')
+    return response.data
+  }
+
+  async syncLocalDockerResources(): Promise<any> {
+    const response = await this.api.post('/docker/local/sync/')
+    return response.data
+  }
+
   // ============================================================================
   // Settings Management API Methods
   // ============================================================================

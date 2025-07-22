@@ -93,7 +93,7 @@ class DockerImage(models.Model):
     
     # 镜像信息
     image_size = models.BigIntegerField(null=True, blank=True, verbose_name='镜像大小(字节)')
-    image_id = models.CharField(max_length=64, blank=True, verbose_name='镜像ID')
+    image_id = models.CharField(max_length=100, blank=True, verbose_name='镜像ID')  # 增加长度以支持完整SHA256
     image_digest = models.CharField(max_length=100, blank=True, verbose_name='镜像摘要')
     
     # 构建状态
@@ -159,8 +159,8 @@ class DockerImageVersion(models.Model):
     changelog = models.TextField(blank=True, verbose_name='变更说明')
     
     # 构建信息
-    docker_image_id = models.CharField(max_length=64, blank=True, verbose_name='镜像ID')
-    image_size = models.BigIntegerField(null=True, blank=True, verbose_name='镜像大小')
+    docker_image_id = models.CharField(max_length=100, blank=True, verbose_name='镜像ID')  # 增加长度以支持完整SHA256
+    size = models.BigIntegerField(null=True, blank=True, verbose_name='镜像大小')
     is_release = models.BooleanField(default=False, verbose_name='是否为发布版本')
     
     created_by = models.ForeignKey(
@@ -206,7 +206,7 @@ class DockerContainer(models.Model):
         on_delete=models.CASCADE,
         verbose_name='镜像'
     )
-    container_id = models.CharField(max_length=64, blank=True, verbose_name='容器ID')
+    container_id = models.CharField(max_length=100, blank=True, verbose_name='容器ID')  # 增加长度以支持完整SHA256
     
     # 容器配置
     command = models.TextField(blank=True, verbose_name='启动命令')

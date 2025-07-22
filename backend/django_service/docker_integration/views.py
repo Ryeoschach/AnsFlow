@@ -654,3 +654,454 @@ def docker_system_cleanup(request):
             'errors': [str(e)],
             'space_reclaimed': 0
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_local_docker_images(request):
+    """获取本地Docker镜像列表"""
+    try:
+        client = docker.from_env()
+        images = client.images.list()
+        
+        image_list = []
+        for image in images:
+            # 获取镜像标签，处理<none>标签的情况
+            tags = image.tags if image.tags else ['<none>:<none>']
+            
+            for tag in tags:
+                # 解析镜像名称和标签
+                if ':' in tag:
+                    name, version = tag.rsplit(':', 1)
+                else:
+                    name, version = tag, 'latest'
+                
+                image_data = {
+                    'docker_id': image.id,
+                    'short_id': image.short_id,
+                    'name': name,
+                    'tag': version,
+                    'size': image.attrs.get('Size', 0),
+                    'created': image.attrs.get('Created', ''),
+                    'labels': image.attrs.get('Config', {}).get('Labels') or {},
+                    'architecture': image.attrs.get('Architecture', ''),
+                    'os': image.attrs.get('Os', ''),
+                    'parent_id': image.attrs.get('Parent', ''),
+                    'repo_digests': image.attrs.get('RepoDigests', []),
+                    'repo_tags': image.attrs.get('RepoTags', [])
+                }
+                image_list.append(image_data)
+        
+        return Response({
+            'success': True,
+            'images': image_list,
+            'total': len(image_list)
+        })
+        
+    except docker.errors.DockerException as e:
+        return Response({
+            'success': False,
+            'error': f'Docker连接失败: {str(e)}',
+            'images': [],
+            'total': 0
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': f'获取本地镜像失败: {str(e)}',
+            'images': [],
+            'total': 0
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_local_docker_containers(request):
+    """获取本地Docker容器列表"""
+    try:
+        client = docker.from_env()
+        containers = client.containers.list(all=True)
+        
+        container_list = []
+        for container in containers:
+            # 获取容器端口映射
+            ports = []
+            if container.attrs.get('NetworkSettings', {}).get('Ports'):
+                for port, bindings in container.attrs['NetworkSettings']['Ports'].items():
+                    if bindings:
+                        for binding in bindings:
+                            ports.append(f"{binding.get('HostPort', '')}->{port}")
+                    else:
+                        ports.append(port)
+            
+            # 获取环境变量
+            env_vars = container.attrs.get('Config', {}).get('Env', [])
+            
+            container_data = {
+                'docker_id': container.id,
+                'short_id': container.short_id,
+                'name': container.name,
+                'image': container.image.tags[0] if container.image.tags else container.image.id,
+                'status': container.status,
+                'state': container.attrs.get('State', {}),
+                'created': container.attrs.get('Created', ''),
+                'started_at': container.attrs.get('State', {}).get('StartedAt', ''),
+                'finished_at': container.attrs.get('State', {}).get('FinishedAt', ''),
+                'ports': ports,
+                'labels': container.attrs.get('Config', {}).get('Labels') or {},
+                'env': env_vars,
+                'mounts': [
+                    {
+                        'source': mount.get('Source', ''),
+                        'destination': mount.get('Destination', ''),
+                        'type': mount.get('Type', ''),
+                        'read_only': mount.get('RW', True) == False
+                    }
+                    for mount in container.attrs.get('Mounts', [])
+                ],
+                'network_mode': container.attrs.get('HostConfig', {}).get('NetworkMode', ''),
+                'restart_policy': container.attrs.get('HostConfig', {}).get('RestartPolicy', {}),
+                'log_config': container.attrs.get('HostConfig', {}).get('LogConfig', {})
+            }
+            container_list.append(container_data)
+        
+        return Response({
+            'success': True,
+            'containers': container_list,
+            'total': len(container_list)
+        })
+        
+    except docker.errors.DockerException as e:
+        return Response({
+            'success': False,
+            'error': f'Docker连接失败: {str(e)}',
+            'containers': [],
+            'total': 0
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': f'获取本地容器失败: {str(e)}',
+            'containers': [],
+            'total': 0
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def import_local_docker_images(request):
+    """将本地Docker镜像导入到系统"""
+    try:
+        client = docker.from_env()
+        images = client.images.list()
+        
+        imported_count = 0
+        skipped_count = 0
+        errors = []
+        
+        # 获取默认仓库
+        default_registry = DockerRegistry.objects.filter(is_default=True).first()
+        if not default_registry:
+            # 如果没有默认仓库，创建一个本地仓库
+            default_registry = DockerRegistry.objects.create(
+                name='Local Registry',
+                url='local://',
+                registry_type='private',
+                status='active',
+                is_default=True,
+                created_by=request.user,
+                description='本地Docker镜像仓库'
+            )
+        
+        for image in images:
+            try:
+                # 获取镜像标签
+                tags = image.tags if image.tags else ['<none>:<none>']
+                
+                for tag in tags:
+                    # 跳过<none>标签
+                    if tag == '<none>:<none>':
+                        continue
+                    
+                    # 解析镜像名称和标签
+                    if ':' in tag:
+                        name, version = tag.rsplit(':', 1)
+                    else:
+                        name, version = tag, 'latest'
+                    
+                    # 检查是否已存在
+                    existing_image = DockerImage.objects.filter(
+                        name=name,
+                        registry=default_registry
+                    ).first()
+                    
+                    if existing_image:
+                        skipped_count += 1
+                        continue
+                    
+                    # 创建新的镜像记录
+                    docker_image = DockerImage.objects.create(
+                        name=name,
+                        registry=default_registry,
+                        dockerfile_content=f'# 从本地Docker导入的镜像\n# 原始镜像: {tag}',
+                        build_context='.',
+                        image_size=image.attrs.get('Size', 0),
+                        image_id=image.id,
+                        build_status='success',
+                        build_completed_at=timezone.now(),
+                        created_by=request.user,
+                        description=f'从本地Docker导入的镜像: {tag}'
+                    )
+                    
+                    # 创建镜像版本
+                    DockerImageVersion.objects.create(
+                        image=docker_image,
+                        version=version,
+                        dockerfile_content=f'# 从本地Docker导入的镜像\n# 原始镜像: {tag}',
+                        build_context='.',
+                        docker_image_id=image.id,
+                        size=image.attrs.get('Size', 0),
+                        created_by=request.user,
+                        changelog=f'从本地Docker导入的版本: {version}'
+                    )
+                    
+                    imported_count += 1
+                    
+            except Exception as e:
+                errors.append(f'镜像 {image.short_id}: {str(e)}')
+        
+        return Response({
+            'success': True,
+            'imported': imported_count,
+            'skipped': skipped_count,
+            'errors': errors,
+            'message': f'成功导入 {imported_count} 个镜像，跳过 {skipped_count} 个已存在的镜像'
+        })
+        
+    except docker.errors.DockerException as e:
+        return Response({
+            'success': False,
+            'error': f'Docker连接失败: {str(e)}',
+            'imported': 0,
+            'skipped': 0,
+            'errors': [str(e)]
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': f'导入镜像失败: {str(e)}',
+            'imported': 0,
+            'skipped': 0,
+            'errors': [str(e)]
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def import_local_docker_containers(request):
+    """将本地Docker容器导入到系统"""
+    try:
+        client = docker.from_env()
+        containers = client.containers.list(all=True)
+        
+        imported_count = 0
+        skipped_count = 0
+        errors = []
+        
+        for container in containers:
+            try:
+                # 检查是否已存在
+                existing_container = DockerContainer.objects.filter(
+                    container_id=container.id
+                ).first()
+                
+                if existing_container:
+                    skipped_count += 1
+                    continue
+                
+                # 获取容器关联的镜像
+                image_name = container.image.tags[0] if container.image.tags else container.image.id
+                docker_image = None
+                
+                # 尝试找到对应的镜像记录
+                if ':' in image_name:
+                    name, tag = image_name.rsplit(':', 1)
+                    docker_image = DockerImage.objects.filter(name=name).first()
+                
+                # 获取端口映射
+                port_mappings = []
+                if container.attrs.get('NetworkSettings', {}).get('Ports'):
+                    for port, bindings in container.attrs['NetworkSettings']['Ports'].items():
+                        if bindings:
+                            for binding in bindings:
+                                port_mappings.append({
+                                    'container_port': port,
+                                    'host_port': binding.get('HostPort'),
+                                    'host_ip': binding.get('HostIp', '0.0.0.0')
+                                })
+                
+                # 获取环境变量
+                env_vars = {}
+                for env in container.attrs.get('Config', {}).get('Env', []):
+                    if '=' in env:
+                        key, value = env.split('=', 1)
+                        env_vars[key] = value
+                
+                # 获取挂载点
+                volumes = []
+                for mount in container.attrs.get('Mounts', []):
+                    volumes.append({
+                        'source': mount.get('Source', ''),
+                        'destination': mount.get('Destination', ''),
+                        'type': mount.get('Type', 'bind'),
+                        'mode': mount.get('Mode', 'rw')
+                    })
+                
+                # 状态映射
+                status_mapping = {
+                    'running': 'running',
+                    'exited': 'exited',
+                    'created': 'created',
+                    'restarting': 'restarting',
+                    'removing': 'removing',
+                    'paused': 'paused',
+                    'dead': 'dead'
+                }
+                mapped_status = status_mapping.get(container.status, 'stopped')
+                
+                # 处理命令
+                cmd = container.attrs.get('Config', {}).get('Cmd', [])
+                if cmd and isinstance(cmd, list):
+                    command = ' '.join(str(c) for c in cmd)
+                else:
+                    command = str(cmd) if cmd else ''
+                
+                # 创建容器记录
+                docker_container = DockerContainer.objects.create(
+                    name=container.name,
+                    image=docker_image,
+                    container_id=container.id,
+                    status=mapped_status,
+                    command=command,
+                    working_dir=container.attrs.get('Config', {}).get('WorkingDir', ''),
+                    environment_vars=env_vars,
+                    port_mappings=port_mappings,
+                    volumes=volumes,
+                    network_mode=container.attrs.get('HostConfig', {}).get('NetworkMode', 'bridge'),
+                    restart_policy=container.attrs.get('HostConfig', {}).get('RestartPolicy', {}).get('Name', 'no'),
+                    created_by=request.user,
+                    description=f'从本地Docker导入的容器: {container.name}'
+                )
+                
+                imported_count += 1
+                
+            except Exception as e:
+                errors.append(f'容器 {container.name}: {str(e)}')
+        
+        return Response({
+            'success': True,
+            'imported': imported_count,
+            'skipped': skipped_count,
+            'errors': errors,
+            'message': f'成功导入 {imported_count} 个容器，跳过 {skipped_count} 个已存在的容器'
+        })
+        
+    except docker.errors.DockerException as e:
+        return Response({
+            'success': False,
+            'error': f'Docker连接失败: {str(e)}',
+            'imported': 0,
+            'skipped': 0,
+            'errors': [str(e)]
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': f'导入容器失败: {str(e)}',
+            'imported': 0,
+            'skipped': 0,
+            'errors': [str(e)]
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def sync_local_docker_resources(request):
+    """同步本地Docker资源状态"""
+    try:
+        client = docker.from_env()
+        
+        # 同步容器状态
+        updated_containers = 0
+        container_errors = []
+        
+        for container_record in DockerContainer.objects.exclude(container_id=''):
+            try:
+                # 尝试获取本地容器
+                try:
+                    local_container = client.containers.get(container_record.container_id)
+                    # 更新状态
+                    if container_record.status != local_container.status:
+                        container_record.status = local_container.status
+                        container_record.save()
+                        updated_containers += 1
+                except docker.errors.NotFound:
+                    # 本地容器不存在，标记为已删除
+                    container_record.status = 'removed'
+                    container_record.save()
+                    updated_containers += 1
+                    
+            except Exception as e:
+                container_errors.append(f'容器 {container_record.name}: {str(e)}')
+        
+        # 同步镜像状态
+        updated_images = 0
+        image_errors = []
+        
+        for image_record in DockerImage.objects.exclude(image_id=''):
+            try:
+                # 尝试获取本地镜像
+                try:
+                    local_image = client.images.get(image_record.image_id)
+                    # 更新大小等信息
+                    if image_record.image_size != local_image.attrs.get('Size', 0):
+                        image_record.image_size = local_image.attrs.get('Size', 0)
+                        image_record.save()
+                        updated_images += 1
+                except docker.errors.ImageNotFound:
+                    # 本地镜像不存在，更新构建状态
+                    if image_record.build_status != 'removed':
+                        image_record.build_status = 'removed'
+                        image_record.save()
+                        updated_images += 1
+                        
+            except Exception as e:
+                image_errors.append(f'镜像 {image_record.name}: {str(e)}')
+        
+        return Response({
+            'success': True,
+            'updated_containers': updated_containers,
+            'updated_images': updated_images,
+            'container_errors': container_errors,
+            'image_errors': image_errors,
+            'message': f'同步完成：更新了 {updated_containers} 个容器和 {updated_images} 个镜像'
+        })
+        
+    except docker.errors.DockerException as e:
+        return Response({
+            'success': False,
+            'error': f'Docker连接失败: {str(e)}',
+            'updated_containers': 0,
+            'updated_images': 0,
+            'container_errors': [str(e)],
+            'image_errors': []
+        }, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+    except Exception as e:
+        return Response({
+            'success': False,
+            'error': f'同步失败: {str(e)}',
+            'updated_containers': 0,
+            'updated_images': 0,
+            'container_errors': [str(e)],
+            'image_errors': []
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

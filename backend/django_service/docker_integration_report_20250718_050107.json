@@ -1,0 +1,27 @@
+{
+  "timestamp": "2025-07-18T05:01:07.235492",
+  "summary": {
+    "completion_score": 8,
+    "total_features": 8,
+    "completion_percentage": 100.0,
+    "models_info": {
+      "DockerRegistry": 3,
+      "DockerImage": 0,
+      "DockerImageVersion": 0,
+      "DockerContainer": 0,
+      "DockerContainerStats": 0,
+      "DockerCompose": 0
+    },
+    "pipeline_info": {
+      "total_docker_steps": 13,
+      "step_types": {
+        "docker_build": 4,
+        "docker_pull": 3,
+        "docker_run": 3,
+        "docker_push": 3
+      },
+      "steps_with_registry": 4
+    }
+  },
+  "recommendations": []
+}

@@ -840,13 +840,35 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         }
       }
 
+      // 处理Docker步骤的特殊字段
+      if (values.step_type?.startsWith('docker_')) {
+        // 将Docker相关字段添加到parameters中
+        parameters = {
+          ...parameters,
+          // 核心参数
+          image: values.docker_image,
+          tag: values.docker_tag || 'latest',
+          // 注册表关联
+          registry_id: values.docker_registry,
+          // 其他Docker特定参数
+          ...(values.docker_dockerfile && { dockerfile: values.docker_dockerfile }),
+          ...(values.docker_context && { context: values.docker_context }),
+          ...(values.docker_build_args && { build_args: values.docker_build_args }),
+          ...(values.docker_ports && { ports: values.docker_ports }),
+          ...(values.docker_volumes && { volumes: values.docker_volumes }),
+          ...(values.docker_env_vars && { env_vars: values.docker_env_vars })
+        }
+      }
+
       const stepData: StepFormData = {
         ...values,
         parameters,
         // 同时保存为独立字段（兼容性）
         ansible_playbook: values.step_type === 'ansible' ? values.ansible_playbook_id : undefined,
         ansible_inventory: values.step_type === 'ansible' ? values.ansible_inventory_id : undefined,
-        ansible_credential: values.step_type === 'ansible' ? values.ansible_credential_id : undefined
+        ansible_credential: values.step_type === 'ansible' ? values.ansible_credential_id : undefined,
+        // Docker步骤的兼容性字段
+        docker_registry: values.step_type?.startsWith('docker_') ? values.docker_registry : undefined
       }
 
       console.log('📝 Step edit - constructed stepData:', {

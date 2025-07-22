@@ -161,6 +161,64 @@ const Docker: React.FC = () => {
     }
   };
 
+  // 导入本地Docker镜像
+  const importLocalImages = async () => {
+    try {
+      message.loading('正在导入本地镜像...', 0);
+      const result = await apiService.importLocalDockerImages();
+      message.destroy();
+      
+      if (result.success) {
+        message.success(result.message);
+        loadImages(); // 重新加载镜像列表
+      } else {
+        message.error(`导入失败: ${result.error}`);
+      }
+    } catch (error) {
+      message.destroy();
+      message.error('导入本地镜像失败');
+    }
+  };
+
+  // 导入本地Docker容器
+  const importLocalContainers = async () => {
+    try {
+      message.loading('正在导入本地容器...', 0);
+      const result = await apiService.importLocalDockerContainers();
+      message.destroy();
+      
+      if (result.success) {
+        message.success(result.message);
+        loadContainers(); // 重新加载容器列表
+      } else {
+        message.error(`导入失败: ${result.error}`);
+      }
+    } catch (error) {
+      message.destroy();
+      message.error('导入本地容器失败');
+    }
+  };
+
+  // 同步本地Docker资源状态
+  const syncLocalResources = async () => {
+    try {
+      message.loading('正在同步本地资源状态...', 0);
+      const result = await apiService.syncLocalDockerResources();
+      message.destroy();
+      
+      if (result.success) {
+        message.success(result.message);
+        loadImages();
+        loadContainers();
+      } else {
+        message.error(`同步失败: ${result.error}`);
+      }
+    } catch (error) {
+      message.destroy();
+      message.error('同步本地资源失败');
+    }
+  };
+
   const loadComposes = async () => {
     setState(prev => ({ ...prev, loading: { ...prev.loading, composes: true } }));
     try {
@@ -701,7 +759,58 @@ const Docker: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Title level={2}>Docker 管理</Title>
+      <Title level={2}>
+        Docker 管理
+        <span style={{ fontSize: '14px', fontWeight: 'normal', color: '#666', marginLeft: '16px' }}>
+          托管资源模式 - 显示 AnsFlow 系统管理的 Docker 资源
+        </span>
+      </Title>
+      
+      {/* 快速操作面板 */}
+      <Card size="small" style={{ marginBottom: 16 }}>
+        <Row justify="space-between" align="middle">
+          <Col>
+            <Space>
+              <Button 
+                type="primary" 
+                icon={<CloudDownloadOutlined />}
+                onClick={importLocalImages}
+              >
+                导入本地镜像
+              </Button>
+              <Button 
+                type="primary" 
+                icon={<ContainerOutlined />}
+                onClick={importLocalContainers}
+              >
+                导入本地容器
+              </Button>
+              <Button 
+                icon={<ReloadOutlined />}
+                onClick={syncLocalResources}
+              >
+                同步状态
+              </Button>
+            </Space>
+          </Col>
+          <Col>
+            <Space>
+              <Button 
+                icon={<ReloadOutlined />} 
+                onClick={() => {
+                  loadRegistries();
+                  loadImages();
+                  loadContainers();
+                  loadComposes();
+                  loadSystemStats();
+                }}
+              >
+                全部刷新
+              </Button>
+            </Space>
+          </Col>
+        </Row>
+      </Card>
       
       {/* 系统统计 */}
       {state.systemStats && (
@@ -763,6 +872,12 @@ const Docker: React.FC = () => {
             extra={
               <Space>
                 <Button
+                  icon={<ContainerOutlined />}
+                  onClick={importLocalContainers}
+                >
+                  导入本地容器
+                </Button>
+                <Button
                   type="primary"
                   icon={<PlusOutlined />}
                   onClick={() => {
@@ -778,13 +893,36 @@ const Docker: React.FC = () => {
               </Space>
             }
           >
-            <Table
-              columns={containerColumns}
-              dataSource={state.containers}
-              rowKey="id"
-              loading={state.loading.containers}
-              pagination={{ pageSize: 10 }}
-            />
+            {state.containers.length > 0 ? (
+              <Table
+                columns={containerColumns}
+                dataSource={state.containers}
+                rowKey="id"
+                loading={state.loading.containers}
+                pagination={{ pageSize: 10 }}
+              />
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                <ContainerOutlined style={{ fontSize: 48, color: '#d9d9d9', marginBottom: 16 }} />
+                <div style={{ fontSize: 16, color: '#999', marginBottom: 16 }}>
+                  暂无容器数据
+                </div>
+                <div style={{ fontSize: 14, color: '#666', marginBottom: 24 }}>
+                  当前系统中没有管理的 Docker 容器。您可以：
+                </div>
+                <Space direction="vertical">
+                  <Button type="primary" icon={<PlusOutlined />} size="large">
+                    创建新容器
+                  </Button>
+                  <Button icon={<ContainerOutlined />} size="large" onClick={importLocalContainers}>
+                    导入本地容器
+                  </Button>
+                  <Button icon={<ReloadOutlined />} onClick={loadContainers}>
+                    刷新列表
+                  </Button>
+                </Space>
+              </div>
+            )}
           </Card>
         </TabPane>
 
@@ -803,6 +941,12 @@ const Docker: React.FC = () => {
             extra={
               <Space>
                 <Button
+                  icon={<CloudDownloadOutlined />}
+                  onClick={importLocalImages}
+                >
+                  导入本地镜像
+                </Button>
+                <Button
                   type="primary"
                   icon={<PlusOutlined />}
                   onClick={() => {
@@ -818,13 +962,36 @@ const Docker: React.FC = () => {
               </Space>
             }
           >
-            <Table
-              columns={imageColumns}
-              dataSource={state.images}
-              rowKey="id"
-              loading={state.loading.images}
-              pagination={{ pageSize: 10 }}
-            />
+            {state.images.length > 0 ? (
+              <Table
+                columns={imageColumns}
+                dataSource={state.images}
+                rowKey="id"
+                loading={state.loading.images}
+                pagination={{ pageSize: 10 }}
+              />
+            ) : (
+              <div style={{ textAlign: 'center', padding: '40px 0' }}>
+                <DatabaseOutlined style={{ fontSize: 48, color: '#d9d9d9', marginBottom: 16 }} />
+                <div style={{ fontSize: 16, color: '#999', marginBottom: 16 }}>
+                  暂无镜像数据
+                </div>
+                <div style={{ fontSize: 14, color: '#666', marginBottom: 24 }}>
+                  当前系统中没有管理的 Docker 镜像。您可以：
+                </div>
+                <Space direction="vertical">
+                  <Button type="primary" icon={<PlusOutlined />} size="large">
+                    添加新镜像
+                  </Button>
+                  <Button icon={<CloudDownloadOutlined />} size="large" onClick={importLocalImages}>
+                    导入本地镜像
+                  </Button>
+                  <Button icon={<ReloadOutlined />} onClick={loadImages}>
+                    刷新列表
+                  </Button>
+                </Space>
+              </div>
+            )}
           </Card>
         </TabPane>
 

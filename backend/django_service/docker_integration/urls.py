@@ -20,6 +20,13 @@ urlpatterns = [
     path('system/stats/', views.docker_system_stats, name='docker-system-stats'),
     path('system/cleanup/', views.docker_system_cleanup, name='docker-system-cleanup'),
     
+    # 本地Docker资源API
+    path('local/images/', views.get_local_docker_images, name='get-local-docker-images'),
+    path('local/containers/', views.get_local_docker_containers, name='get-local-docker-containers'),
+    path('local/import/images/', views.import_local_docker_images, name='import-local-docker-images'),
+    path('local/import/containers/', views.import_local_docker_containers, name='import-local-docker-containers'),
+    path('local/sync/', views.sync_local_docker_resources, name='sync-local-docker-resources'),
+    
     # ViewSet路由
     path('', include(router.urls)),
 ]
