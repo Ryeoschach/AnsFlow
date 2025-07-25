@@ -452,56 +452,6 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
           <EnhancedDockerStepConfig 
             stepType={selectedStepType}
             form={form}
-            initialValues={editingStep ? (() => {
-              console.log('🔧 Docker步骤映射调试 - editingStep:', editingStep)
-              console.log('🔧 Docker步骤映射调试 - selectedStepType:', selectedStepType)
-              
-              // 辅助函数：检查是否为 PipelineStep
-              const isPipelineStep = (step: PipelineStep | AtomicStep): step is PipelineStep => {
-                return 'docker_image' in step; // PipelineStep 有 docker_image 字段
-              }
-              
-              // 辅助函数：获取步骤参数
-              const getStepParameters = (step: PipelineStep | AtomicStep): Record<string, any> => {
-                let params = {}
-                
-                if (isPipelineStep(step)) {
-                  // 对于PipelineStep，尝试多个可能的参数来源
-                  params = {
-                    ...step.ansible_parameters,
-                    ...(step as any).parameters, // 某些PipelineStep可能也有parameters字段
-                    ...(step as any).docker_parameters
-                  }
-                } else {
-                  // 对于AtomicStep，参数在parameters字段中
-                  params = step.parameters || {}
-                }
-                
-                console.log('🔧 获取到的步骤参数:', params)
-                return params
-              }
-              
-              const stepParams = getStepParameters(editingStep)
-              
-              // 构建初始值，优先使用直接字段，然后使用参数映射
-              const initialValues = {
-                docker_image: isPipelineStep(editingStep) ? 
-                  (editingStep.docker_image || stepParams.image || stepParams.docker_image) : 
-                  (stepParams.image || stepParams.docker_image),
-                docker_tag: isPipelineStep(editingStep) ? 
-                  (editingStep.docker_tag || stepParams.tag || stepParams.docker_tag || 'latest') : 
-                  (stepParams.tag || stepParams.docker_tag || 'latest'),
-                docker_registry: isPipelineStep(editingStep) ? 
-                  (editingStep.docker_registry || stepParams.registry_id || stepParams.docker_registry) : 
-                  (stepParams.registry_id || stepParams.docker_registry),
-                docker_config: isPipelineStep(editingStep) ? 
-                  (editingStep.docker_config || stepParams.docker_config) : 
-                  stepParams.docker_config
-              }
-              
-              console.log('🔧 最终的Docker初始值:', initialValues)
-              return initialValues
-            })() : undefined}
             onRegistryChange={(registryId) => {
               form?.setFieldValue('docker_registry', registryId)
             }}

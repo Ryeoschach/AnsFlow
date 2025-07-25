@@ -139,19 +139,6 @@ const getStepParameters = (step: PipelineStep | AtomicStep): Record<string, any>
       }
     }
     
-    // 如果是Docker步骤，从独立字段构建Docker参数
-    if (step.step_type?.startsWith('docker_')) {
-      return {
-        ...parameters,
-        image: step.docker_image,
-        tag: step.docker_tag,
-        registry_id: step.docker_registry,
-        // 注意：PipelineStep 模型中可能没有 docker_project 字段，
-        // 所以项目ID可能存储在parameters中
-        ...(step.docker_config && { docker_config: step.docker_config })
-      }
-    }
-    
     return parameters
   }
 }
@@ -795,71 +782,12 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         originalStep: step,
         cleanParameters: cleanParameters
       })
-    } else if (step.step_type?.startsWith('docker_')) {
-      // 如果是Docker步骤，从步骤字段和参数中提取Docker相关字段
-      console.log('🐳 Loading Docker step for editing:', {
-        stepType: step.step_type,
-        originalStep: step,
-        stepParams: stepParams
-      })
-      
-      // 从步骤直接字段获取Docker配置（PipelineStep模型字段）
-      formValues.docker_image = isPipelineStep(step) ? step.docker_image : stepParams.image
-      formValues.docker_tag = isPipelineStep(step) ? (step.docker_tag || 'latest') : (stepParams.tag || 'latest')
-      formValues.docker_registry = isPipelineStep(step) ? step.docker_registry : stepParams.registry_id
-      // 添加项目回填支持（从参数中获取）
-      formValues.docker_project = stepParams.project_id
-      
-      // 从docker_config字段或参数中获取配置
-      const dockerConfig = isPipelineStep(step) ? step.docker_config : stepParams.docker_config
-      if (dockerConfig) {
-        formValues.docker_config = dockerConfig
-      }
-      
-      // 清理参数中的Docker字段，避免重复显示
-      const cleanParameters = { ...stepParams }
-      delete cleanParameters.image
-      delete cleanParameters.tag
-      delete cleanParameters.registry_id
-      delete cleanParameters.project_id
-      delete cleanParameters.docker_config
-      delete cleanParameters.dockerfile
-      delete cleanParameters.context
-      delete cleanParameters.build_args
-      delete cleanParameters.ports
-      delete cleanParameters.volumes
-      delete cleanParameters.env_vars
-      
-      // 只有在清理后的参数不为空时才显示
-      formValues.parameters = Object.keys(cleanParameters).length > 0 
-        ? JSON.stringify(cleanParameters, null, 2) 
-        : '{}'
-      
-      console.log('🐳 Docker step form values prepared:', {
-        docker_image: formValues.docker_image,
-        docker_tag: formValues.docker_tag,
-        docker_registry: formValues.docker_registry,
-        docker_project: formValues.docker_project,
-        docker_config: formValues.docker_config,
-        cleanParameters: cleanParameters
-      })
     } else {
-      // 非ansible和Docker步骤直接使用原始参数
+      // 非ansible步骤直接使用原始参数
       formValues.parameters = JSON.stringify(stepParams, null, 2)
     }
 
     form.setFieldsValue(formValues)
-    
-    // 对于Docker步骤，延迟强制更新表单值以确保覆盖initialValue
-    if (step.step_type?.startsWith('docker_')) {
-      setTimeout(() => {
-        console.log('🔄 强制更新Docker表单值:', formValues)
-        form.setFieldsValue(formValues)
-        // 强制重新渲染表单
-        form.validateFields().catch(() => {})
-      }, 100)
-    }
-    
     setStepFormVisible(true)
   }
 
@@ -922,8 +850,6 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           tag: values.docker_tag || 'latest',
           // 注册表关联
           registry_id: values.docker_registry,
-          // 项目关联 - 新增项目选择支持
-          project_id: values.docker_project,
           // 其他Docker特定参数
           ...(values.docker_dockerfile && { dockerfile: values.docker_dockerfile }),
           ...(values.docker_context && { context: values.docker_context }),
@@ -942,8 +868,7 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         ansible_inventory: values.step_type === 'ansible' ? values.ansible_inventory_id : undefined,
         ansible_credential: values.step_type === 'ansible' ? values.ansible_credential_id : undefined,
         // Docker步骤的兼容性字段
-        docker_registry: values.step_type?.startsWith('docker_') ? values.docker_registry : undefined,
-        docker_project: values.step_type?.startsWith('docker_') ? values.docker_project : undefined
+        docker_registry: values.step_type?.startsWith('docker_') ? values.docker_registry : undefined
       }
 
       console.log('📝 Step edit - constructed stepData:', {
