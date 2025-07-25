@@ -27,6 +27,7 @@ import {
 } from '@ant-design/icons'
 import { DockerRegistry } from '../../types/docker'
 import useDockerStepConfig from '../../hooks/useDockerStepConfig'
+import { useDockerRegistryProjects } from '../../hooks/useDockerRegistryProjects'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -59,16 +60,61 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
     clearError
   } = useDockerStepConfig()
 
+  const {
+    projects,
+    getRegistryProjects
+  } = useDockerRegistryProjects()
+
   const [selectedRegistry, setSelectedRegistry] = useState<any>(null)
+  const [selectedRegistryProjects, setSelectedRegistryProjects] = useState<any[]>([])
   const [showRegistryModal, setShowRegistryModal] = useState(false)
 
   useEffect(() => {
     // 设置表单初始值
     if (form && initialValues) {
+      console.log('🔄 EnhancedDockerStepConfig - 设置初始值:', {
+        stepType,
+        initialValues,
+        currentFormValues: form.getFieldsValue()
+      })
+      
       const mergedValues = getInitialFormValues(stepType, initialValues)
+      console.log('🔄 EnhancedDockerStepConfig - 合并后的值:', mergedValues)
+      
       form.setFieldsValue(mergedValues)
+      
+      // 强制更新以确保值被正确设置
+      setTimeout(() => {
+        console.log('🔄 EnhancedDockerStepConfig - 延迟强制更新:', mergedValues)
+        form.setFieldsValue(mergedValues)
+      }, 50)
     }
   }, [form, initialValues, stepType, getInitialFormValues])
+
+  useEffect(() => {
+    // 监听表单值变化，特别是在编辑模式下
+    if (form) {
+      const currentValues = form.getFieldsValue()
+      console.log('🔄 EnhancedDockerStepConfig - 表单值变化:', {
+        stepType,
+        docker_image: currentValues.docker_image,
+        docker_tag: currentValues.docker_tag,
+        docker_registry: currentValues.docker_registry,
+        docker_config: currentValues.docker_config
+      })
+      
+      // 如果有注册表ID，更新注册表相关状态
+      if (currentValues.docker_registry) {
+        const registry = Array.isArray(registries) ? registries.find((r: any) => r.id === currentValues.docker_registry) : null
+        setSelectedRegistry(registry || null)
+        
+        if (registry) {
+          const registryProjects = getRegistryProjects(currentValues.docker_registry)
+          setSelectedRegistryProjects(registryProjects)
+        }
+      }
+    }
+  }, [form, stepType, registries, getRegistryProjects])
 
   useEffect(() => {
     // 监听注册表变化
@@ -76,12 +122,32 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
     if (registryId) {
       const registry = Array.isArray(registries) ? registries.find((r: any) => r.id === registryId) : null
       setSelectedRegistry(registry || null)
+      
+      // 获取该注册表的项目列表
+      if (registry) {
+        const registryProjects = getRegistryProjects(registryId)
+        setSelectedRegistryProjects(registryProjects)
+      }
+    } else {
+      setSelectedRegistry(null)
+      setSelectedRegistryProjects([])
     }
-  }, [registries, form])
+  }, [registries, projects, form, getRegistryProjects])
 
   const handleRegistryChange = (registryId: number) => {
     const registry = Array.isArray(registries) ? registries.find((r: any) => r.id === registryId) : null
     setSelectedRegistry(registry || null)
+    
+    // 获取该注册表的项目列表
+    if (registry) {
+      const registryProjects = getRegistryProjects(registryId)
+      setSelectedRegistryProjects(registryProjects)
+    } else {
+      setSelectedRegistryProjects([])
+    }
+    
+    // 清空项目选择
+    form?.setFieldValue('docker_project', undefined)
     
     if (onRegistryChange) {
       onRegistryChange(registryId)
@@ -194,7 +260,6 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
       <Form.Item
         name="docker_tag"
         label="镜像标签"
-        initialValue="latest"
         tooltip="Docker 镜像的标签，例如: latest, v1.0.0"
       >
         <Input placeholder="例如: latest, v1.0.0" />
@@ -318,7 +383,6 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
       <Form.Item
         name="docker_tag"
         label="镜像标签"
-        initialValue="latest"
         tooltip="Docker 镜像的标签"
       >
         <Input placeholder="例如: latest, v1.0.0" />
@@ -475,7 +539,6 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
       <Form.Item
         name="docker_tag"
         label="镜像标签"
-        initialValue="latest"
         tooltip={`要${stepType === 'docker_push' ? '推送' : '拉取'}的镜像标签`}
       >
         <Input placeholder="例如: latest, v1.0.0" />
@@ -520,6 +583,34 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
           ))}
         </Select>
       </Form.Item>
+
+      {/* 项目选择 */}
+      {selectedRegistry && selectedRegistryProjects.length > 0 && (
+        <Form.Item
+          name="docker_project"
+          label="选择项目"
+          tooltip="选择该注册表下的具体项目，不选择则直接使用镜像名"
+        >
+          <Select 
+            placeholder="选择项目（可选）"
+            allowClear
+            showSearch
+            filterOption={(input, option) =>
+              (option?.children as any)?.toLowerCase().includes(input.toLowerCase()) ?? false
+            }
+          >
+            {selectedRegistryProjects.map((project: any) => (
+              <Option key={project.id} value={project.id}>
+                <Space>
+                  <span>{project.name}</span>
+                  {project.is_default && <Tag color="gold">默认</Tag>}
+                  {project.description && <Text type="secondary">- {project.description}</Text>}
+                </Space>
+              </Option>
+            ))}
+          </Select>
+        </Form.Item>
+      )}
 
       {renderRegistryInfo()}
 

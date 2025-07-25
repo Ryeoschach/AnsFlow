@@ -1,0 +1,1033 @@
+import React, { useState, useEffect } from 'react';
+import {
+  Card,
+  Table,
+  Button,
+  Space,
+  Tag,
+  Modal,
+  Form,
+  Input,
+  Select,
+  message,
+  Popconfirm,
+  Typography,
+  Tooltip,
+  Switch,
+  Alert,
+  Row,
+  Col,
+  Statistic,
+  Tabs
+} from 'antd';
+import {
+  CloudUploadOutlined,
+  PlusOutlined,
+  EditOutlined,
+  DeleteOutlined,
+  LinkOutlined,
+  CheckCircleOutlined,
+  ExclamationCircleOutlined,
+  CloseCircleOutlined,
+  SafetyCertificateOutlined,
+  FolderOutlined,
+  ProjectOutlined
+} from '@ant-design/icons';
+import { useDockerRegistryProjects } from '../../hooks/useDockerRegistryProjects';
+import { authUtils } from '../../utils/auth';
+
+const { Text } = Typography;
+const { TextArea } = Input;
+const { Password } = Input;
+const { TabPane } = Tabs;
+
+interface DockerRegistry {
+  id: number;
+  name: string;
+  url: string;
+  username: string;
+  description?: string;
+  registry_type: 'dockerhub' | 'aws_ecr' | 'azure_acr' | 'google_gcr' | 'harbor' | 'private';
+  status: 'active' | 'inactive' | 'error';
+  is_default: boolean;
+  created_at: string;
+  updated_at: string;
+  available_projects?: DockerRegistryProject[];
+}
+
+interface DockerRegistryProject {
+  id: number;
+  name: string;
+  description?: string;
+  is_default: boolean;
+  registry: number;
+  registry_name?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+const DockerRegistrySettings: React.FC = () => {
+  // 使用真实的API Hook
+  const {
+    registries,
+    projects,
+    registriesLoading,
+    projectsLoading,
+    createRegistry,
+    updateRegistry,
+    deleteRegistry,
+    testRegistry,
+    setDefaultRegistry,
+    createProject,
+    updateProject,
+    deleteProject,
+    setDefaultProject,
+    refreshRegistries,
+    refreshProjects,
+    getRegistryProjects,
+    error,
+    clearError
+  } = useDockerRegistryProjects();
+
+  const [modalVisible, setModalVisible] = useState(false);
+  const [projectModalVisible, setProjectModalVisible] = useState(false);
+  const [editingRegistry, setEditingRegistry] = useState<any | null>(null);
+  const [editingProject, setEditingProject] = useState<any | null>(null);
+  const [form] = Form.useForm();
+  const [projectForm] = Form.useForm();
+
+  useEffect(() => {
+    // 检查认证状态
+    if (!authUtils.isAuthenticated()) {
+      message.warning('请先登录以管理Docker注册表');
+    }
+  }, []);
+
+  const loadMockData = () => {
+    const mockRegistries: DockerRegistry[] = [
+      {
+        id: 1,
+        name: 'Docker Hub',
+        url: 'https://registry-1.docker.io',
+        username: 'myuser',
+        description: '官方 Docker Hub 镜像仓库',
+        registry_type: 'dockerhub',
+        status: 'active',
+        is_default: true,
+        created_at: '2024-01-15T10:00:00Z',
+        updated_at: '2024-01-20T15:30:00Z'
+      },
+      {
+        id: 2,
+        name: '阿里云容器镜像',
+        url: 'registry.cn-hangzhou.aliyuncs.com',
+        username: 'aliyun_user',
+        description: '阿里云 ACR 容器镜像服务',
+        registry_type: 'private',
+        status: 'active',
+        is_default: false,
+        created_at: '2024-01-10T08:00:00Z',
+        updated_at: '2024-01-18T12:15:00Z'
+      },
+      {
+        id: 3,
+        name: 'AWS ECR',
+        url: '123456789012.dkr.ecr.us-west-2.amazonaws.com',
+        username: 'aws_user',
+        description: 'AWS Elastic Container Registry',
+        registry_type: 'aws_ecr',
+        status: 'inactive',
+        is_default: false,
+        created_at: '2024-01-05T14:00:00Z',
+        updated_at: '2024-01-15T09:45:00Z'
+      }
+    ];
+
+    setRegistries(mockRegistries);
+  };
+
+  const loadMockProjects = () => {
+    const mockProjects: DockerRegistryProject[] = [
+      {
+        id: 1,
+        name: 'frontend',
+        description: '前端应用项目',
+        is_default: true,
+        registry: 2,
+        registry_name: '阿里云容器镜像',
+        created_at: '2024-01-15T10:00:00Z',
+        updated_at: '2024-01-20T15:30:00Z'
+      },
+      {
+        id: 2,
+        name: 'backend',
+        description: '后端API项目',
+        is_default: false,
+        registry: 2,
+        registry_name: '阿里云容器镜像',
+        created_at: '2024-01-16T11:00:00Z',
+        updated_at: '2024-01-21T16:30:00Z'
+      },
+      {
+        id: 3,
+        name: 'microservice',
+        description: '微服务项目',
+        is_default: false,
+        registry: 3,
+        registry_name: 'AWS ECR',
+        created_at: '2024-01-17T12:00:00Z',
+        updated_at: '2024-01-22T17:30:00Z'
+      }
+    ];
+
+    setProjects(mockProjects);
+  };
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case 'active':
+        return 'success';
+      case 'inactive':
+        return 'warning';
+      case 'error':
+        return 'error';
+      default:
+        return 'default';
+    }
+  };
+
+  const getStatusIcon = (status: string) => {
+    switch (status) {
+      case 'active':
+        return <CheckCircleOutlined />;
+      case 'inactive':
+        return <ExclamationCircleOutlined />;
+      case 'error':
+        return <CloseCircleOutlined />;
+      default:
+        return null;
+    }
+  };
+
+  const getRegistryTypeLabel = (type: string) => {
+    const typeMap: Record<string, string> = {
+      dockerhub: 'Docker Hub',
+      aws_ecr: 'AWS ECR',
+      azure_acr: 'Azure ACR',
+      google_gcr: 'Google GCR',
+      harbor: 'Harbor',
+      private: '私有仓库'
+    };
+    return typeMap[type] || type;
+  };
+
+  // 注册表相关操作
+  const handleAdd = () => {
+    setEditingRegistry(null);
+    form.resetFields();
+    setModalVisible(true);
+  };
+
+  const handleEdit = (registry: DockerRegistry) => {
+    setEditingRegistry(registry);
+    form.setFieldsValue({
+      ...registry,
+      password: '' // 不显示密码
+    });
+    setModalVisible(true);
+  };
+
+  const handleDelete = async (registryId: number) => {
+    try {
+      setRegistries(registries.filter(r => r.id !== registryId));
+      message.success('注册表删除成功');
+    } catch (error) {
+      message.error('删除注册表失败');
+    }
+  };
+
+  const handleSubmit = async () => {
+    try {
+      const values = await form.validateFields();
+      
+      if (editingRegistry) {
+        const updatedRegistries = registries.map(r => 
+          r.id === editingRegistry.id 
+            ? { ...r, ...values, updated_at: new Date().toISOString() }
+            : r
+        );
+        setRegistries(updatedRegistries);
+        message.success('注册表更新成功');
+      } else {
+        const newRegistry: DockerRegistry = {
+          id: Date.now(),
+          ...values,
+          status: 'inactive',
+          is_default: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        setRegistries([...registries, newRegistry]);
+        message.success('注册表添加成功');
+      }
+      
+      setModalVisible(false);
+    } catch (error) {
+      message.error('保存注册表失败');
+    }
+  };
+
+  const handleTestConnection = async (registry: DockerRegistry) => {
+    setLoading(true);
+    try {
+      // 模拟连接测试
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const updatedRegistries = registries.map(r => 
+        r.id === registry.id 
+          ? { ...r, status: 'active' as const, updated_at: new Date().toISOString() }
+          : r
+      );
+      setRegistries(updatedRegistries);
+      message.success('连接测试成功');
+    } catch (error) {
+      message.error('连接测试失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetDefault = async (registryId: number) => {
+    try {
+      const updatedRegistries = registries.map(r => ({
+        ...r,
+        is_default: r.id === registryId,
+        updated_at: r.id === registryId ? new Date().toISOString() : r.updated_at
+      }));
+      setRegistries(updatedRegistries);
+      message.success('默认注册表设置成功');
+    } catch (error) {
+      message.error('设置默认注册表失败');
+    }
+  };
+
+  // 获取指定注册表的项目列表 - 使用Hook提供的函数
+  // const getRegistryProjects = (registryId: number) => {
+  //   return projects.filter(p => p.registry === registryId);
+  // };
+
+  // 注册表内项目管理器组件
+  const RegistryProjectManager: React.FC<{
+    registry: DockerRegistry;
+    onProjectsChange: (projects: DockerRegistryProject[]) => void;
+  }> = ({ registry, onProjectsChange }) => {
+    const registryProjects = getRegistryProjects(registry.id);
+    const [localProjectForm] = Form.useForm();
+    const [addingProject, setAddingProject] = useState(false);
+
+    const handleAddRegistryProject = () => {
+      localProjectForm.resetFields();
+      setAddingProject(true);
+    };
+
+    const handleProjectSubmit = async () => {
+      try {
+        const values = await localProjectForm.validateFields();
+        const newProject: DockerRegistryProject = {
+          id: Date.now(),
+          name: values.name,
+          description: values.description || '',
+          is_default: registryProjects.length === 0, // 第一个项目自动设为默认
+          registry: registry.id,
+          registry_name: registry.name,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+
+        const updatedProjects = [...registryProjects, newProject];
+        onProjectsChange(updatedProjects);
+        
+        setAddingProject(false);
+        message.success('项目添加成功');
+      } catch (error) {
+        message.error('添加项目失败');
+      }
+    };
+
+    const handleDeleteRegistryProject = (projectId: number) => {
+      const updatedProjects = registryProjects.filter(p => p.id !== projectId);
+      onProjectsChange(updatedProjects);
+      message.success('项目删除成功');
+    };
+
+    const handleSetDefaultProject = (projectId: number) => {
+      const updatedProjects = registryProjects.map(p => ({
+        ...p,
+        is_default: p.id === projectId
+      }));
+      onProjectsChange(updatedProjects);
+      message.success('默认项目设置成功');
+    };
+
+    const projectTableColumns = [
+      {
+        title: '项目名称',
+        dataIndex: 'name',
+        key: 'name',
+        render: (text: string, record: DockerRegistryProject) => (
+          <Space>
+            <ProjectOutlined />
+            <strong>{text}</strong>
+            {record.is_default && <Tag color="gold">默认</Tag>}
+          </Space>
+        )
+      },
+      {
+        title: '描述',
+        dataIndex: 'description',
+        key: 'description',
+        render: (text: string) => text || '-'
+      },
+      {
+        title: '创建时间',
+        dataIndex: 'created_at',
+        key: 'created_at',
+        render: (text: string) => new Date(text).toLocaleString('zh-CN', { 
+          year: 'numeric', 
+          month: '2-digit', 
+          day: '2-digit', 
+          hour: '2-digit', 
+          minute: '2-digit' 
+        })
+      },
+      {
+        title: '操作',
+        key: 'actions',
+        render: (_: any, record: DockerRegistryProject) => (
+          <Space>
+            {!record.is_default && (
+              <Tooltip title="设为默认项目">
+                <Button
+                  size="small"
+                  icon={<SafetyCertificateOutlined />}
+                  onClick={() => handleSetDefaultProject(record.id)}
+                />
+              </Tooltip>
+            )}
+            <Tooltip title="删除项目">
+              <Popconfirm
+                title="确定要删除这个项目吗？"
+                onConfirm={() => handleDeleteRegistryProject(record.id)}
+                okText="确定"
+                cancelText="取消"
+              >
+                <Button
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                />
+              </Popconfirm>
+            </Tooltip>
+          </Space>
+        )
+      }
+    ];
+
+    return (
+      <div>
+        <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Text strong>注册表：{registry.name}</Text>
+          <Button 
+            type="primary" 
+            size="small"
+            icon={<PlusOutlined />} 
+            onClick={handleAddRegistryProject}
+          >
+            添加项目
+          </Button>
+        </div>
+
+        <Table
+          columns={projectTableColumns}
+          dataSource={registryProjects}
+          rowKey="id"
+          size="small"
+          pagination={false}
+          locale={{ emptyText: '该注册表暂无项目' }}
+        />
+
+        {addingProject && (
+          <Card 
+            title="添加新项目" 
+            size="small" 
+            style={{ marginTop: 16 }}
+            extra={
+              <Button size="small" onClick={() => setAddingProject(false)}>
+                取消
+              </Button>
+            }
+          >
+            <Form
+              form={localProjectForm}
+              layout="vertical"
+              size="small"
+            >
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item
+                    label="项目名称"
+                    name="name"
+                    rules={[
+                      { required: true, message: '请输入项目名称' },
+                      { pattern: /^[a-zA-Z0-9_-]+$/, message: '项目名称只能包含字母、数字、下划线和连字符' }
+                    ]}
+                  >
+                    <Input placeholder="如：frontend、backend、api" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="项目描述" name="description">
+                    <Input placeholder="简要描述项目用途" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <div style={{ textAlign: 'right' }}>
+                <Space>
+                  <Button size="small" onClick={() => setAddingProject(false)}>
+                    取消
+                  </Button>
+                  <Button type="primary" size="small" onClick={handleProjectSubmit}>
+                    保存项目
+                  </Button>
+                </Space>
+              </div>
+            </Form>
+          </Card>
+        )}
+      </div>
+    );
+  };
+
+  // 项目相关操作
+  const handleAddProject = () => {
+    setEditingProject(null);
+    projectForm.resetFields();
+    setProjectModalVisible(true);
+  };
+
+  const handleEditProject = (project: DockerRegistryProject) => {
+    setEditingProject(project);
+    projectForm.setFieldsValue(project);
+    setProjectModalVisible(true);
+  };
+
+  const handleDeleteProject = async (projectId: number) => {
+    try {
+      setProjects(projects.filter(p => p.id !== projectId));
+      message.success('项目删除成功');
+    } catch (error) {
+      message.error('删除项目失败');
+    }
+  };
+
+  const handleProjectSubmit = async () => {
+    try {
+      const values = await projectForm.validateFields();
+      
+      if (editingProject) {
+        const updatedProjects = projects.map(p => 
+          p.id === editingProject.id 
+            ? { 
+                ...p, 
+                ...values, 
+                registry_name: registries.find(r => r.id === values.registry)?.name,
+                updated_at: new Date().toISOString() 
+              }
+            : p
+        );
+        setProjects(updatedProjects);
+        message.success('项目更新成功');
+      } else {
+        const newProject: DockerRegistryProject = {
+          id: Date.now(),
+          ...values,
+          registry_name: registries.find(r => r.id === values.registry)?.name,
+          is_default: false,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString()
+        };
+        setProjects([...projects, newProject]);
+        message.success('项目添加成功');
+      }
+      
+      setProjectModalVisible(false);
+    } catch (error) {
+      message.error('保存项目失败');
+    }
+  };
+
+  const handleSetDefaultProject = async (projectId: number, registryId: number) => {
+    try {
+      const updatedProjects = projects.map(p => ({
+        ...p,
+        is_default: p.id === projectId && p.registry === registryId,
+        updated_at: p.id === projectId && p.registry === registryId ? new Date().toISOString() : p.updated_at
+      }));
+      setProjects(updatedProjects);
+      message.success('默认项目设置成功');
+    } catch (error) {
+      message.error('设置默认项目失败');
+    }
+  };
+
+  // 表格列定义
+  const registryColumns = [
+    {
+      title: '注册表名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (text: string, record: DockerRegistry) => (
+        <Space>
+          <CloudUploadOutlined />
+          <strong>{text}</strong>
+          {record.is_default && <Tag color="gold">默认</Tag>}
+          <Tag color={getStatusColor(record.status)}>
+            {getStatusIcon(record.status)}
+            {record.status}
+          </Tag>
+        </Space>
+      )
+    },
+    {
+      title: '类型',
+      dataIndex: 'registry_type',
+      key: 'registry_type',
+      render: (type: string) => (
+        <Tag color="blue">{getRegistryTypeLabel(type)}</Tag>
+      )
+    },
+    {
+      title: '注册表地址',
+      dataIndex: 'url',
+      key: 'url',
+      render: (text: string) => (
+        <Text code copyable={{ text }}>{text}</Text>
+      )
+    },
+    {
+      title: '用户名',
+      dataIndex: 'username',
+      key: 'username'
+    },
+    {
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
+      render: (text: string) => text || '-'
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (text: string) => new Date(text).toLocaleString()
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (_: any, record: DockerRegistry) => (
+        <Space>
+          <Tooltip title="测试连接">
+            <Button
+              size="small"
+              icon={<LinkOutlined />}
+              onClick={() => handleTestConnection(record)}
+              loading={loading}
+            />
+          </Tooltip>
+          {!record.is_default && (
+            <Tooltip title="设为默认">
+              <Button
+                size="small"
+                icon={<SafetyCertificateOutlined />}
+                onClick={() => handleSetDefault(record.id)}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title="编辑">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleEdit(record)}
+            />
+          </Tooltip>
+          <Tooltip title="删除">
+            <Popconfirm
+              title="确定要删除这个注册表吗？"
+              onConfirm={() => handleDelete(record.id)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                disabled={record.is_default}
+              />
+            </Popconfirm>
+          </Tooltip>
+        </Space>
+      )
+    }
+  ];
+
+  const projectColumns = [
+    {
+      title: '项目名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (text: string, record: DockerRegistryProject) => (
+        <Space>
+          <ProjectOutlined />
+          <strong>{text}</strong>
+          {record.is_default && <Tag color="gold">默认</Tag>}
+        </Space>
+      )
+    },
+    {
+      title: '所属注册表',
+      dataIndex: 'registry_name',
+      key: 'registry_name',
+      render: (text: string) => (
+        <Tag color="blue" icon={<CloudUploadOutlined />}>{text}</Tag>
+      )
+    },
+    {
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
+      render: (text: string) => text || '-'
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (text: string) => new Date(text).toLocaleString()
+    },
+    {
+      title: '操作',
+      key: 'actions',
+      render: (_: any, record: DockerRegistryProject) => (
+        <Space>
+          {!record.is_default && (
+            <Tooltip title="设为默认">
+              <Button
+                size="small"
+                icon={<SafetyCertificateOutlined />}
+                onClick={() => handleSetDefaultProject(record.id, record.registry)}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title="编辑">
+            <Button
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => handleEditProject(record)}
+            />
+          </Tooltip>
+          <Tooltip title="删除">
+            <Popconfirm
+              title="确定要删除这个项目吗？"
+              onConfirm={() => handleDeleteProject(record.id)}
+              okText="确定"
+              cancelText="取消"
+            >
+              <Button
+                size="small"
+                danger
+                icon={<DeleteOutlined />}
+                disabled={record.is_default}
+              />
+            </Popconfirm>
+          </Tooltip>
+        </Space>
+      )
+    }
+  ];
+
+  const activeRegistries = registries.filter(r => r.status === 'active').length;
+  const defaultRegistry = registries.find(r => r.is_default);
+  const totalProjects = projects.length;
+
+  return (
+    <div>
+      <Alert
+        message="Docker 注册表与项目管理"
+        description="管理 Docker 镜像仓库配置和项目，这些配置将用于流水线中的 Docker 步骤。支持多项目管理，可以在流水线步骤中选择具体项目。"
+        type="info"
+        showIcon
+        style={{ marginBottom: 16 }}
+      />
+
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="活跃注册表"
+              value={activeRegistries}
+              suffix={`/ ${registries.length}`}
+              valueStyle={{ color: '#3f8600' }}
+              prefix={<CloudUploadOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="默认注册表"
+              value={defaultRegistry?.name || '未设置'}
+              valueStyle={{ color: '#1890ff' }}
+              prefix={<SafetyCertificateOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="总项目数"
+              value={totalProjects}
+              valueStyle={{ color: '#722ed1' }}
+              prefix={<ProjectOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="支持注册表"
+              value={registries.length}
+              valueStyle={{ color: '#13c2c2' }}
+              prefix={<FolderOutlined />}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Tabs defaultActiveKey="registries">
+        <TabPane 
+          tab={
+            <span>
+              <CloudUploadOutlined />
+              注册表管理
+            </span>
+          } 
+          key="registries"
+        >
+          <Card
+            title="Docker 注册表"
+            extra={
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleAdd}
+              >
+                添加注册表
+              </Button>
+            }
+          >
+            <Table
+              columns={registryColumns}
+              dataSource={registries}
+              rowKey="id"
+              size="small"
+              pagination={false}
+            />
+          </Card>
+        </TabPane>
+
+        <TabPane 
+          tab={
+            <span>
+              <ProjectOutlined />
+              项目管理
+            </span>
+          } 
+          key="projects"
+        >
+          <Card
+            title="注册表项目"
+            extra={
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={handleAddProject}
+              >
+                添加项目
+              </Button>
+            }
+          >
+            <Table
+              columns={projectColumns}
+              dataSource={projects}
+              rowKey="id"
+              size="small"
+              pagination={false}
+            />
+          </Card>
+        </TabPane>
+      </Tabs>
+
+      {/* 注册表配置模态框 */}
+      <Modal
+        title={editingRegistry ? '编辑注册表' : '添加注册表'}
+        open={modalVisible}
+        onOk={handleSubmit}
+        onCancel={() => setModalVisible(false)}
+        width={800}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Tabs defaultActiveKey="basic">
+          <TabPane tab="基本信息" key="basic">
+            <Form
+              form={form}
+              layout="vertical"
+              initialValues={{
+                registry_type: 'private'
+              }}
+            >
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item
+                    label="注册表名称"
+                    name="name"
+                    rules={[{ required: true, message: '请输入注册表名称' }]}
+                  >
+                    <Input placeholder="输入注册表名称" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    label="注册表类型"
+                    name="registry_type"
+                    rules={[{ required: true, message: '请选择注册表类型' }]}
+                  >
+                    <Select placeholder="选择注册表类型">
+                      <Select.Option value="dockerhub">Docker Hub</Select.Option>
+                      <Select.Option value="aws_ecr">AWS ECR</Select.Option>
+                      <Select.Option value="azure_acr">Azure ACR</Select.Option>
+                      <Select.Option value="google_gcr">Google GCR</Select.Option>
+                      <Select.Option value="harbor">Harbor</Select.Option>
+                      <Select.Option value="private">私有仓库</Select.Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Form.Item
+                label="注册表地址"
+                name="url"
+                rules={[{ required: true, message: '请输入注册表地址' }]}
+              >
+                <Input placeholder="https://registry.example.com" />
+              </Form.Item>
+
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item
+                    label="用户名"
+                    name="username"
+                    rules={[{ required: true, message: '请输入用户名' }]}
+                  >
+                    <Input placeholder="输入用户名" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    label="密码"
+                    name="password"
+                    rules={[{ required: !editingRegistry, message: '请输入密码' }]}
+                  >
+                    <Password placeholder="输入密码" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Form.Item label="描述" name="description">
+                <TextArea rows={3} placeholder="注册表描述信息" />
+              </Form.Item>
+            </Form>
+          </TabPane>
+
+          <TabPane tab={
+            <span>
+              <ProjectOutlined />
+              项目管理 ({editingRegistry ? getRegistryProjects(editingRegistry.id).length : 0})
+            </span>
+          } key="projects">
+            {editingRegistry ? (
+              <RegistryProjectManager 
+                registry={editingRegistry} 
+                onProjectsChange={(updatedProjects: DockerRegistryProject[]) => {
+                  // 更新项目列表
+                  const otherProjects = projects.filter(p => p.registry !== editingRegistry.id);
+                  setProjects([...otherProjects, ...updatedProjects]);
+                }}
+              />
+            ) : (
+              <Alert 
+                message="请先保存注册表基本信息" 
+                description="保存注册表后，您可以为该注册表添加和管理项目。"
+                type="info" 
+                showIcon 
+              />
+            )}
+          </TabPane>
+        </Tabs>
+      </Modal>
+
+      {/* 项目配置模态框 */}
+      <Modal
+        title={editingProject ? '编辑项目' : '添加项目'}
+        open={projectModalVisible}
+        onOk={handleProjectSubmit}
+        onCancel={() => setProjectModalVisible(false)}
+        width={500}
+        okText="保存"
+        cancelText="取消"
+      >
+        <Form
+          form={projectForm}
+          layout="vertical"
+        >
+          <Form.Item
+            label="项目名称"
+            name="name"
+            rules={[{ required: true, message: '请输入项目名称' }]}
+          >
+            <Input placeholder="输入项目名称，如：frontend、backend" />
+          </Form.Item>
+
+          <Form.Item
+            label="所属注册表"
+            name="registry"
+            rules={[{ required: true, message: '请选择所属注册表' }]}
+          >
+            <Select placeholder="选择注册表">
+              {registries.map(registry => (
+                <Select.Option key={registry.id} value={registry.id}>
+                  {registry.name} ({getRegistryTypeLabel(registry.registry_type)})
+                </Select.Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          <Form.Item label="项目描述" name="description">
+            <TextArea rows={3} placeholder="项目描述信息" />
+          </Form.Item>
+        </Form>
+      </Modal>
+    </div>
+  );
+};
+
+export default DockerRegistrySettings;

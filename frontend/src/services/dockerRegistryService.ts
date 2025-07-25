@@ -6,7 +6,6 @@ export interface CreateDockerRegistryRequest {
   registry_type: string
   username?: string
   password?: string
-  project_name?: string
   description?: string
   is_default?: boolean
 }
@@ -17,7 +16,6 @@ export interface UpdateDockerRegistryRequest {
   registry_type?: string
   username?: string
   password?: string
-  project_name?: string
   description?: string
   is_default?: boolean
 }
@@ -128,7 +126,7 @@ class DockerRegistryService {
    * 测试注册表连接
    */
   async testRegistry(id: number): Promise<{ success: boolean; message: string }> {
-    const response = await fetch(`${this.baseUrl}/${id}/test_connection/`, {
+    const response = await fetch(`${this.baseUrl}/${id}/test/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

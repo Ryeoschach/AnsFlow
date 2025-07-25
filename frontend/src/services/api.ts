@@ -1132,7 +1132,7 @@ class ApiService {
   }
 
   async testDockerRegistry(id: number): Promise<DockerRegistryTestResponse> {
-    const response = await this.api.post(`/docker/registries/${id}/test_connection/`)
+    const response = await this.api.post(`/docker/registries/${id}/test/`)
     return response.data
   }
 

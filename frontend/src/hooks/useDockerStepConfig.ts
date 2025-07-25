@@ -65,9 +65,7 @@ export const useDockerStepConfig = () => {
     setError(null)
     try {
       const data = await dockerRegistryService.getRegistries()
-      // 处理分页数据格式和直接数组格式
-      const registriesArray = Array.isArray(data) ? data : ((data as any).results || [])
-      setRegistries(registriesArray)
+      setRegistries(data)
     } catch (err) {
       setError(err instanceof Error ? err.message : '获取注册表列表失败')
     } finally {

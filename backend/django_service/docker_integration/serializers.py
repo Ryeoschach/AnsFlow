@@ -3,23 +3,46 @@ Docker集成序列化器
 """
 from rest_framework import serializers
 from .models import (
-    DockerRegistry, DockerImage, DockerImageVersion,
+    DockerRegistry, DockerRegistryProject, DockerImage, DockerImageVersion,
     DockerContainer, DockerContainerStats, DockerCompose
 )
+
+
+class DockerRegistryProjectSerializer(serializers.ModelSerializer):
+    """Docker注册表项目序列化器"""
+    
+    class Meta:
+        model = DockerRegistryProject
+        fields = [
+            'id', 'name', 'description', 'is_default', 'config',
+            'registry', 'created_by', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
+
+    def create(self, validated_data):
+        validated_data['created_by'] = self.context['request'].user
+        return super().create(validated_data)
 
 
 class DockerRegistrySerializer(serializers.ModelSerializer):
     """Docker仓库序列化器"""
     password = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    projects = DockerRegistryProjectSerializer(many=True, read_only=True)
+    available_projects = serializers.SerializerMethodField()
     
     class Meta:
         model = DockerRegistry
         fields = [
-            'id', 'name', 'url', 'registry_type', 'username', 'password', 'project_name', 'description',
-            'status', 'last_check', 'check_message', 'is_default',
+            'id', 'name', 'url', 'registry_type', 'username', 'password', 
+            'project_name', 'description', 'status', 'last_check', 'check_message', 
+            'is_default', 'projects', 'available_projects',
             'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at', 'last_check']
+
+    def get_available_projects(self, obj):
+        """获取可用项目列表"""
+        return obj.get_available_projects()
 
     def create(self, validated_data):
         # 处理密码字段
