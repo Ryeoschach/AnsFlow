@@ -458,24 +458,72 @@ class DockerStepExecutor:
         if not image_name:
             raise ValueError("No Docker image specified for push step")
         
-        # 获取仓库信息
-        registry = step.docker_registry
+        tag = params.get('tag') or params.get('docker_tag') or getattr(step, 'docker_tag', None) or 'latest'
+        
+        # 获取仓库信息 - 优先使用参数中的 registry_id
+        registry = None
+        registry_id = params.get('registry_id')
+        
+        if registry_id:
+            try:
+                from docker_integration.models import DockerRegistry
+                registry = DockerRegistry.objects.get(id=registry_id)
+                logger.info(f"Docker push - 使用参数指定的注册表: {registry.name} (ID: {registry_id})")
+            except DockerRegistry.DoesNotExist:
+                logger.warning(f"Docker push - 未找到registry_id={registry_id}的注册表")
+        
+        # 如果参数中没有 registry_id，则使用步骤关联的注册表
+        if not registry:
+            registry = step.docker_registry
+        
         if registry:
-            # 使用配置的仓库
+            # 使用找到的仓库
             registry_url = registry.url
             username = registry.username
             password = registry.get_decrypted_password()
         else:
-            # 使用步骤配置中的仓库信息
+            # 使用步骤配置中的仓库信息（兼容旧格式）
             registry_url = docker_config.get('registry_url')
             username = docker_config.get('username')
             password = docker_config.get('password')
         
+        # 处理注册表URL，移除协议前缀用于Docker标签
+        registry_host = registry_url
+        if registry_url:
+            # 移除 https:// 或 http:// 前缀
+            if registry_url.startswith('https://'):
+                registry_host = registry_url[8:]
+            elif registry_url.startswith('http://'):
+                registry_host = registry_url[7:]
+        
+        # 处理项目路径
+        project_path = ""
+        project_id = params.get('project_id')
+        if project_id:
+            try:
+                from docker_integration.models import DockerRegistryProject
+                project = DockerRegistryProject.objects.get(id=project_id)
+                project_path = project.name
+                logger.info(f"Docker push - 使用项目路径: {project_path}")
+            except DockerRegistryProject.DoesNotExist:
+                logger.warning(f"Docker push - 未找到project_id={project_id}的项目")
+        
         # 构建完整的镜像名称
-        if registry_url and not image_name.startswith(registry_url):
-            full_image_name = f"{registry_url}/{image_name}"
+        if registry_host and not image_name.startswith(registry_host):
+            if project_path:
+                # Harbor仓库格式：registry_host/project_name/image_name:tag
+                full_image_name = f"{registry_host}/{project_path}/{image_name}:{tag}"
+            else:
+                # 无项目路径：registry_host/image_name:tag
+                full_image_name = f"{registry_host}/{image_name}:{tag}"
         else:
-            full_image_name = image_name
+            # 已经包含完整路径或使用默认仓库
+            if ':' not in image_name:
+                full_image_name = f"{image_name}:{tag}"
+            else:
+                full_image_name = image_name
+        
+        logger.info(f"Docker push - 完整镜像名称: {full_image_name}")
         
         try:
             # 创建 Docker 管理器 - 支持真实执行
@@ -523,10 +571,23 @@ class DockerStepExecutor:
             raise ValueError("No Docker image specified for pull step")
         
         tag = params.get('tag') or params.get('docker_tag') or getattr(step, 'docker_tag', None) or 'latest'
-        full_image_name = f"{image_name}:{tag}"
         
-        # 获取仓库信息
-        registry = getattr(step, 'docker_registry', None)
+        # 获取仓库信息 - 优先使用参数中的 registry_id
+        registry = None
+        registry_id = params.get('registry_id')
+        
+        if registry_id:
+            try:
+                from docker_integration.models import DockerRegistry
+                registry = DockerRegistry.objects.get(id=registry_id)
+                logger.info(f"Docker pull - 使用参数指定的注册表: {registry.name} (ID: {registry_id})")
+            except DockerRegistry.DoesNotExist:
+                logger.warning(f"Docker pull - 未找到registry_id={registry_id}的注册表")
+        
+        # 如果参数中没有 registry_id，则使用步骤关联的注册表
+        if not registry:
+            registry = getattr(step, 'docker_registry', None)
+        
         if registry:
             username = registry.username
             password = registry.get_decrypted_password()
@@ -535,6 +596,41 @@ class DockerStepExecutor:
             username = docker_config.get('username')
             password = docker_config.get('password')
             registry_url = docker_config.get('registry_url')
+        
+        # 处理注册表URL，移除协议前缀用于Docker标签
+        registry_host = registry_url
+        if registry_url:
+            # 移除 https:// 或 http:// 前缀
+            if registry_url.startswith('https://'):
+                registry_host = registry_url[8:]
+            elif registry_url.startswith('http://'):
+                registry_host = registry_url[7:]
+        
+        # 处理项目路径
+        project_path = ""
+        project_id = params.get('project_id')
+        if project_id:
+            try:
+                from docker_integration.models import DockerRegistryProject
+                project = DockerRegistryProject.objects.get(id=project_id)
+                project_path = project.name
+                logger.info(f"Docker pull - 使用项目路径: {project_path}")
+            except DockerRegistryProject.DoesNotExist:
+                logger.warning(f"Docker pull - 未找到project_id={project_id}的项目")
+        
+        # 构建完整的镜像名称
+        if registry_host and not image_name.startswith(registry_host):
+            if project_path:
+                # Harbor仓库格式：registry_host/project_name/image_name:tag
+                full_image_name = f"{registry_host}/{project_path}/{image_name}:{tag}"
+            else:
+                # 无项目路径：registry_host/image_name:tag
+                full_image_name = f"{registry_host}/{image_name}:{tag}"
+        else:
+            # 已经包含完整路径或使用默认仓库
+            full_image_name = f"{image_name}:{tag}"
+        
+        logger.info(f"Docker pull - 完整镜像名称: {full_image_name}")
         
         try:
             # 创建 Docker 管理器 - 支持真实执行

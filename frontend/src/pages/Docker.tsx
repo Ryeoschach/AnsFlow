@@ -271,13 +271,33 @@ const Docker: React.FC = () => {
   // Docker Registry 相关操作
   const handleCreateRegistry = async (values: DockerRegistryFormData) => {
     try {
-      await apiService.createDockerRegistry(values);
-      message.success('仓库创建成功');
+      console.log('🔥 handleCreateRegistry 开始执行');
+      console.log('🔥 selectedItem:', state.selectedItem);
+      console.log('🔥 表单值:', values);
+      
+      if (state.selectedItem) {
+        // 编辑现有仓库
+        console.log('🔥 编辑模式，仓库ID:', state.selectedItem.id);
+        await apiService.updateDockerRegistry(state.selectedItem.id, values);
+        message.success('仓库更新成功');
+      } else {
+        // 创建新仓库
+        console.log('🔥 创建模式');
+        await apiService.createDockerRegistry(values);
+        message.success('仓库创建成功');
+      }
+      
       loadRegistries();
-      setState(prev => ({ ...prev, modals: { ...prev.modals, registry: false } }));
+      setState(prev => ({ 
+        ...prev, 
+        selectedItem: null,  // 清除选中项
+        modals: { ...prev.modals, registry: false } 
+      }));
       registryForm.resetFields();
     } catch (error) {
-      message.error('仓库创建失败');
+      console.error('🔥 仓库操作失败:', error);
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      message.error(state.selectedItem ? `仓库更新失败: ${errorMessage}` : `仓库创建失败: ${errorMessage}`);
     }
   };
 
@@ -293,14 +313,24 @@ const Docker: React.FC = () => {
 
   const handleTestRegistry = async (id: number) => {
     try {
+      console.log('🔥 Docker.tsx handleTestRegistry 开始执行，ID:', id);
       const result = await apiService.testDockerRegistry(id);
-      if (result.status === 'success') {
-        message.success('仓库连接测试成功');
+      console.log('🔥 Docker.tsx 连接测试结果:', result);
+      
+      // 后端返回的格式是 {success: boolean, message: string}
+      if (result.success) {
+        console.log('🔥 Docker.tsx 连接成功');
+        message.success(result.message || '仓库连接测试成功');
+        loadRegistries(); // 重新加载列表以更新状态
       } else {
-        message.error(`仓库连接测试失败: ${result.message}`);
+        console.log('🔥 Docker.tsx 连接失败');
+        message.error(result.message || '仓库连接测试失败');
+        loadRegistries(); // 重新加载列表以更新状态
       }
     } catch (error) {
-      message.error('仓库连接测试失败');
+      console.error('🔥 Docker.tsx 连接测试异常:', error);
+      const errorMessage = error instanceof Error ? error.message : '未知错误';
+      message.error(`仓库连接测试失败: ${errorMessage}`);
     }
   };
 
@@ -1080,7 +1110,14 @@ const Docker: React.FC = () => {
       <Modal
         title={state.selectedItem ? '编辑仓库' : '添加仓库'}
         open={state.modals.registry}
-        onCancel={() => setState(prev => ({ ...prev, modals: { ...prev.modals, registry: false } }))}
+        onCancel={() => {
+          setState(prev => ({ 
+            ...prev, 
+            selectedItem: null,  // 清除选中项
+            modals: { ...prev.modals, registry: false } 
+          }));
+          registryForm.resetFields();  // 重置表单
+        }}
         footer={null}
         width={600}
       >

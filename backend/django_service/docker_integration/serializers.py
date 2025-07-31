@@ -3,22 +3,75 @@ Docker集成序列化器
 """
 from rest_framework import serializers
 from .models import (
-    DockerRegistry, DockerImage, DockerImageVersion,
+    DockerRegistry, DockerRegistryProject, DockerImage, DockerImageVersion,
     DockerContainer, DockerContainerStats, DockerCompose
 )
 
 
 class DockerRegistrySerializer(serializers.ModelSerializer):
     """Docker仓库序列化器"""
+    password = serializers.CharField(write_only=True, required=False, allow_blank=True)
     
     class Meta:
         model = DockerRegistry
         fields = [
-            'id', 'name', 'url', 'registry_type', 'username', 'description',
+            'id', 'name', 'url', 'registry_type', 'username', 'password', 'description',
             'status', 'last_check', 'check_message', 'is_default',
             'created_by', 'created_at', 'updated_at'
         ]
         read_only_fields = ['id', 'created_by', 'created_at', 'updated_at', 'last_check']
+
+    def validate_name(self, value):
+        """验证注册表名称的唯一性"""
+        # 如果是更新操作，排除自身
+        if self.instance:
+            if DockerRegistry.objects.filter(name=value).exclude(id=self.instance.id).exists():
+                raise serializers.ValidationError("注册表名称已存在")
+        else:
+            # 创建操作时检查唯一性
+            if DockerRegistry.objects.filter(name=value).exists():
+                raise serializers.ValidationError("注册表名称已存在")
+        return value
+
+    def create(self, validated_data):
+        password = validated_data.pop('password', '')
+        validated_data['created_by'] = self.context['request'].user
+        
+        # 将密码存储到 auth_config 中
+        if password:
+            validated_data['auth_config'] = {'password': password}
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        password = validated_data.pop('password', None)
+        
+        # 更新密码到 auth_config 中
+        if password is not None:
+            if password:  # 如果提供了新密码
+                instance.auth_config = instance.auth_config or {}
+                instance.auth_config['password'] = password
+            # 如果密码为空字符串，保持原有密码不变
+        
+        return super().update(instance, validated_data)
+
+
+class DockerRegistryProjectSerializer(serializers.ModelSerializer):
+    """Docker注册表项目序列化器"""
+    image_count = serializers.ReadOnlyField()
+    last_updated = serializers.ReadOnlyField()
+    visibility = serializers.ReadOnlyField()
+    tags = serializers.ReadOnlyField()
+    registry_name = serializers.CharField(source='registry.name', read_only=True)
+    
+    class Meta:
+        model = DockerRegistryProject
+        fields = [
+            'id', 'name', 'registry', 'registry_name', 'description', 
+            'is_default', 'config', 'image_count', 'last_updated', 
+            'visibility', 'tags', 'created_by', 'created_at', 'updated_at'
+        ]
+        read_only_fields = ['id', 'created_by', 'created_at', 'updated_at']
 
     def create(self, validated_data):
         validated_data['created_by'] = self.context['request'].user

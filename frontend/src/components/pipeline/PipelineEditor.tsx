@@ -782,8 +782,64 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         originalStep: step,
         cleanParameters: cleanParameters
       })
+    } else if (step.step_type?.startsWith('docker_')) {
+      // Docker步骤特殊处理：从ansible_parameters和独立字段中提取Docker配置
+      const dockerParams = stepParams
+      
+      // 从PipelineStep的独立字段获取Docker配置
+      if (!isAtomicStep(step)) {
+        formValues.docker_image = step.docker_image
+        formValues.docker_tag = step.docker_tag
+        formValues.docker_registry = step.docker_registry || dockerParams.registry_id
+        formValues.docker_config = step.docker_config || dockerParams.docker_config || {}
+      }
+      
+      // 从参数中获取Docker配置（优先级更高）
+      if (dockerParams.image) formValues.docker_image = dockerParams.image
+      if (dockerParams.tag) formValues.docker_tag = dockerParams.tag
+      if (dockerParams.registry_id) formValues.docker_registry = dockerParams.registry_id
+      if (dockerParams.project_id) formValues.docker_project = dockerParams.project_id
+      if (dockerParams.docker_config) formValues.docker_config = dockerParams.docker_config
+      
+      // 处理其他Docker相关参数
+      if (dockerParams.dockerfile_path) formValues.docker_dockerfile = dockerParams.dockerfile_path
+      if (dockerParams.context_path) formValues.docker_context = dockerParams.context_path
+      if (dockerParams.build_args) formValues.docker_build_args = dockerParams.build_args
+      if (dockerParams.ports) formValues.docker_ports = dockerParams.ports
+      if (dockerParams.volumes) formValues.docker_volumes = dockerParams.volumes
+      if (dockerParams.env_vars) formValues.docker_env_vars = dockerParams.env_vars
+      
+      // 清理参数中的Docker字段，避免重复显示
+      const cleanParameters = { ...dockerParams }
+      delete cleanParameters.image
+      delete cleanParameters.tag
+      delete cleanParameters.registry_id
+      delete cleanParameters.project_id
+      delete cleanParameters.docker_config
+      delete cleanParameters.dockerfile_path
+      delete cleanParameters.context_path
+      delete cleanParameters.build_args
+      delete cleanParameters.ports
+      delete cleanParameters.volumes
+      delete cleanParameters.env_vars
+      
+      formValues.parameters = Object.keys(cleanParameters).length > 0 
+        ? JSON.stringify(cleanParameters, null, 2) 
+        : '{}'
+      
+      console.log('Loading docker step:', {
+        stepType: step.step_type,
+        image: formValues.docker_image,
+        tag: formValues.docker_tag,
+        registryId: formValues.docker_registry,
+        projectId: formValues.docker_project,
+        originalStep: step,
+        dockerParams: dockerParams,
+        cleanParameters: cleanParameters,
+        finalFormValues: formValues
+      })
     } else {
-      // 非ansible步骤直接使用原始参数
+      // 非ansible、非docker步骤直接使用原始参数
       formValues.parameters = JSON.stringify(stepParams, null, 2)
     }
 
@@ -850,6 +906,8 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           tag: values.docker_tag || 'latest',
           // 注册表关联
           registry_id: values.docker_registry,
+          // 项目关联
+          ...(values.docker_project && { project_id: values.docker_project }),
           // 其他Docker特定参数
           ...(values.docker_dockerfile && { dockerfile: values.docker_dockerfile }),
           ...(values.docker_context && { context: values.docker_context }),
@@ -1656,7 +1714,7 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         }}
         onCreateDockerRegistry={() => {
           message.info('正在跳转到Docker注册表管理页面...')
-          window.open('/settings?module=docker-registries', '_blank')
+          window.open('/docker', '_blank')
         }}
         onCreateK8sCluster={() => {
           message.info('正在跳转到Kubernetes集群管理页面...')

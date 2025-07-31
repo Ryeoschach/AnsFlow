@@ -28,6 +28,7 @@ import {
 import { DockerRegistry } from '../../types/docker'
 import useDockerStepConfig from '../../hooks/useDockerStepConfig'
 import { useDockerRegistryProjects } from '../../hooks/useDockerRegistryProjects'
+import CreateProjectModal from '../docker/CreateProjectModal'
 
 const { Option } = Select
 const { TextArea } = Input
@@ -62,12 +63,17 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
 
   const {
     projects,
-    getRegistryProjects
+    loading: projectsLoading,
+    getRegistryProjects,
+    refreshProjects
   } = useDockerRegistryProjects()
 
   const [selectedRegistry, setSelectedRegistry] = useState<any>(null)
   const [selectedRegistryProjects, setSelectedRegistryProjects] = useState<any[]>([])
+  const [sourceRegistry, setSourceRegistry] = useState<any>(null)
+  const [sourceRegistryProjects, setSourceRegistryProjects] = useState<any[]>([])
   const [showRegistryModal, setShowRegistryModal] = useState(false)
+  const [showCreateProjectModal, setShowCreateProjectModal] = useState(false)
 
   useEffect(() => {
     // 设置表单初始值
@@ -100,6 +106,7 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
         docker_image: currentValues.docker_image,
         docker_tag: currentValues.docker_tag,
         docker_registry: currentValues.docker_registry,
+        docker_project: currentValues.docker_project,
         docker_config: currentValues.docker_config
       })
       
@@ -110,11 +117,22 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
         
         if (registry) {
           const registryProjects = getRegistryProjects(currentValues.docker_registry)
+          console.log('🔄 获取到的注册表项目:', {
+            registryId: currentValues.docker_registry,
+            projectsCount: registryProjects.length,
+            projects: registryProjects,
+            allProjects: projects
+          })
           setSelectedRegistryProjects(registryProjects)
+          
+          // 如果有项目ID，设置选中的项目
+          if (currentValues.docker_project) {
+            console.log('🔄 设置选中的项目:', currentValues.docker_project)
+          }
         }
       }
     }
-  }, [form, stepType, registries, getRegistryProjects])
+  }, [form, stepType, registries, projects, getRegistryProjects])
 
   useEffect(() => {
     // 监听注册表变化
@@ -152,6 +170,84 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
     if (onRegistryChange) {
       onRegistryChange(registryId)
     }
+  }
+
+  const handleSourceRegistryChange = (registryId: number) => {
+    const registry = Array.isArray(registries) ? registries.find((r: any) => r.id === registryId) : null
+    setSourceRegistry(registry || null)
+    
+    // 获取该注册表的项目列表
+    if (registry) {
+      const registryProjects = getRegistryProjects(registryId)
+      setSourceRegistryProjects(registryProjects)
+    } else {
+      setSourceRegistryProjects([])
+    }
+    
+    // 清空源项目选择
+    form?.setFieldValue('docker_source_project', undefined)
+  }
+
+  const handleCreateProject = () => {
+    if (!selectedRegistry) {
+      message.warning('请先选择注册表')
+      return
+    }
+    setShowCreateProjectModal(true)
+  }
+
+  const handleProjectCreated = (project: any) => {
+    // 刷新项目列表
+    const registryProjects = getRegistryProjects(selectedRegistry.id)
+    setSelectedRegistryProjects([...registryProjects, project])
+    
+    // 设置新创建的项目为选中状态
+    form?.setFieldValue('docker_project', project.id)
+    
+    setShowCreateProjectModal(false)
+    message.success('项目创建成功并已选中')
+  }
+
+  const renderImagePathPreview = () => {
+    const currentValues = form?.getFieldsValue() || {}
+    const imageName = currentValues.docker_image
+    const tag = currentValues.docker_tag || 'latest'
+    const registry = selectedRegistry
+    const project = selectedRegistryProjects.find(p => p.id === currentValues.docker_project)
+    
+    if (!imageName) return null
+
+    let fullPath = ''
+    if (registry) {
+      const registryHost = registry.url.replace(/^https?:\/\//, '')
+      if (project) {
+        fullPath = `${registryHost}/${project.name}/${imageName}:${tag}`
+      } else {
+        if (registry.registry_type === 'dockerhub') {
+          fullPath = `${imageName}:${tag}`
+        } else {
+          fullPath = `${registryHost}/${imageName}:${tag}`
+        }
+      }
+    } else {
+      fullPath = `${imageName}:${tag}`
+    }
+
+    return (
+      <Alert
+        type="info"
+        message="完整镜像路径"
+        description={
+          <Space>
+            <Text code>{fullPath}</Text>
+            <Tooltip title="这是最终生成的完整镜像路径">
+              <InfoCircleOutlined />
+            </Tooltip>
+          </Space>
+        }
+        style={{ marginBottom: 16 }}
+      />
+    )
   }
 
   const handleCreateRegistry = () => {
@@ -544,14 +640,116 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
         <Input placeholder="例如: latest, v1.0.0" />
       </Form.Item>
 
+      {/* 针对docker_pull步骤显示源注册表和目标注册表 */}
+      {stepType === 'docker_pull' && (
+        <>
+          <Divider>源配置</Divider>
+          <Form.Item
+            name="docker_source_registry"
+            label="源注册表"
+            tooltip="选择要从中拉取镜像的注册表（可选）"
+          >
+            <Select 
+              placeholder="选择源注册表（可选）"
+              allowClear
+              showSearch
+              onChange={handleSourceRegistryChange}
+              filterOption={(input, option) =>
+                (option?.children as any)?.props?.children?.[0]?.props?.children?.toLowerCase().includes(input.toLowerCase()) ?? false
+              }
+              dropdownRender={menu => (
+                <div>
+                  {menu}
+                  <Divider style={{ margin: '8px 0' }} />
+                  <Space style={{ padding: '0 8px 4px' }}>
+                    <Button type="text" icon={<PlusOutlined />} onClick={handleCreateRegistry}>
+                      添加新注册表
+                    </Button>
+                  </Space>
+                </div>
+              )}
+            >
+              {Array.isArray(registries) && registries.map((registry: any) => (
+                <Option key={registry.id} value={registry.id}>
+                  <Space>
+                    <span>{registry.name}</span>
+                    {registry.is_default && <Tag color="blue">默认</Tag>}
+                    <Tag color={registry.status === 'active' ? 'green' : 'orange'}>
+                      {registry.status === 'active' ? '可用' : '不可用'}
+                    </Tag>
+                  </Space>
+                </Option>
+              ))}
+            </Select>
+          </Form.Item>
+
+          {/* 源项目选择 */}
+          {sourceRegistry && (
+            <Form.Item
+              name="docker_source_project"
+              label="源项目"
+              tooltip="选择源注册表下的具体项目，不选择则直接使用镜像名"
+            >
+              <Select 
+                placeholder="选择源项目（可选）"
+                allowClear
+                showSearch
+                filterOption={(input, option) =>
+                  (option?.children as any)?.toLowerCase().includes(input.toLowerCase()) ?? false
+                }
+                notFoundContent={
+                  sourceRegistryProjects.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '20px' }}>
+                      <Text type="secondary">该注册表下暂无项目</Text>
+                      <br />
+                      <Button 
+                        type="link" 
+                        size="small"
+                        loading={projectsLoading}
+                        onClick={async () => {
+                          console.log('🔧 刷新源项目列表，注册表ID:', sourceRegistry.id)
+                          try {
+                            await refreshProjects(sourceRegistry.id)
+                            const updatedProjects = getRegistryProjects(sourceRegistry.id)
+                            setSourceRegistryProjects(updatedProjects)
+                            message.success('源项目列表已刷新')
+                          } catch (error) {
+                            message.error('刷新源项目列表失败')
+                            console.error('刷新源项目列表失败:', error)
+                          }
+                        }}
+                      >
+                        刷新项目列表
+                      </Button>
+                    </div>
+                  ) : null
+                }
+              >
+                {sourceRegistryProjects.map((project: any) => (
+                  <Option key={project.id} value={project.id}>
+                    <Space>
+                      <span>{project.name}</span>
+                      {project.is_default && <Tag color="gold">默认</Tag>}
+                      {project.description && <Text type="secondary">- {project.description}</Text>}
+                    </Space>
+                  </Option>
+                ))}
+              </Select>
+            </Form.Item>
+          )}
+
+          <Divider>目标配置</Divider>
+        </>
+      )}
+
       <Form.Item
         name="docker_registry"
-        label={stepType === 'docker_push' ? '目标注册表' : '源注册表'}
+        label={stepType === 'docker_push' ? '目标注册表' : stepType === 'docker_pull' ? '目标注册表' : '注册表'}
         rules={stepType === 'docker_push' ? [{ required: true, message: '请选择目标注册表' }] : []}
-        tooltip={`选择要${stepType === 'docker_push' ? '推送到' : '从中拉取'}的 Docker 注册表${stepType === 'docker_pull' ? '（可选）' : ''}`}
+        tooltip={`选择要${stepType === 'docker_push' ? '推送到' : stepType === 'docker_pull' ? '存储到' : '使用'}的 Docker 注册表${stepType === 'docker_pull' ? '（可选）' : ''}`}
       >
         <Select 
-          placeholder={`选择注册表${stepType === 'docker_pull' ? '（可选）' : ''}`}
+          placeholder={`选择${stepType === 'docker_pull' ? '目标' : ''}注册表${stepType === 'docker_pull' ? '（可选）' : ''}`}
           allowClear
           showSearch
           onChange={handleRegistryChange}
@@ -584,12 +782,12 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
         </Select>
       </Form.Item>
 
-      {/* 项目选择 */}
-      {selectedRegistry && selectedRegistryProjects.length > 0 && (
+      {/* 目标项目选择 */}
+      {selectedRegistry && (
         <Form.Item
           name="docker_project"
-          label="选择项目"
-          tooltip="选择该注册表下的具体项目，不选择则直接使用镜像名"
+          label={stepType === 'docker_pull' ? '目标项目' : '选择项目'}
+          tooltip={`选择该注册表下的具体项目，不选择则直接使用镜像名`}
         >
           <Select 
             placeholder="选择项目（可选）"
@@ -597,6 +795,51 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
             showSearch
             filterOption={(input, option) =>
               (option?.children as any)?.toLowerCase().includes(input.toLowerCase()) ?? false
+            }
+            notFoundContent={
+              selectedRegistryProjects.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '20px' }}>
+                  <Text type="secondary">该注册表下暂无项目</Text>
+                  <br />
+                  <Button 
+                    type="link" 
+                    size="small"
+                    loading={projectsLoading}
+                    onClick={async () => {
+                      console.log('🔧 刷新项目列表，注册表ID:', selectedRegistry.id)
+                      try {
+                        await refreshProjects(selectedRegistry.id)
+                        const updatedProjects = getRegistryProjects(selectedRegistry.id)
+                        setSelectedRegistryProjects(updatedProjects)
+                        message.success('项目列表已刷新')
+                      } catch (error) {
+                        message.error('刷新项目列表失败')
+                        console.error('刷新项目列表失败:', error)
+                      }
+                    }}
+                  >
+                    刷新项目列表
+                  </Button>
+                  <br />
+                  <Button 
+                    type="link" 
+                    size="small"
+                    onClick={handleCreateProject}
+                  >
+                    创建新项目
+                  </Button>
+                </div>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '10px' }}>
+                  <Button 
+                    type="link" 
+                    size="small"
+                    onClick={handleCreateProject}
+                  >
+                    创建新项目
+                  </Button>
+                </div>
+              )
             }
           >
             {selectedRegistryProjects.map((project: any) => (
@@ -611,6 +854,9 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
           </Select>
         </Form.Item>
       )}
+
+      {/* 显示完整镜像路径预览 */}
+      {renderImagePathPreview()}
 
       {renderRegistryInfo()}
 
@@ -767,6 +1013,15 @@ const EnhancedDockerStepConfig: React.FC<EnhancedDockerStepConfigProps> = ({
           )}
         </Form.List>
       </Card>
+
+      {/* 创建项目模态框 */}
+      <CreateProjectModal
+        visible={showCreateProjectModal}
+        onCancel={() => setShowCreateProjectModal(false)}
+        onSuccess={handleProjectCreated}
+        registries={Array.isArray(registries) ? registries : []}
+        preselectedRegistryId={selectedRegistry?.id}
+      />
 
       {/* 创建注册表模态框 */}
       <Modal

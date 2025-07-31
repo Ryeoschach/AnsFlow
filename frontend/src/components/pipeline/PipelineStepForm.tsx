@@ -452,6 +452,19 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
           <EnhancedDockerStepConfig 
             stepType={selectedStepType}
             form={form}
+            initialValues={editingStep ? {
+              docker_image: form.getFieldValue('docker_image'),
+              docker_tag: form.getFieldValue('docker_tag'),
+              docker_registry: form.getFieldValue('docker_registry'),
+              docker_project: form.getFieldValue('docker_project'),
+              docker_config: form.getFieldValue('docker_config'),
+              docker_dockerfile: form.getFieldValue('docker_dockerfile'),
+              docker_context: form.getFieldValue('docker_context'),
+              docker_build_args: form.getFieldValue('docker_build_args'),
+              docker_ports: form.getFieldValue('docker_ports'),
+              docker_volumes: form.getFieldValue('docker_volumes'),
+              docker_env_vars: form.getFieldValue('docker_env_vars')
+            } : undefined}
             onRegistryChange={(registryId) => {
               form?.setFieldValue('docker_registry', registryId)
             }}

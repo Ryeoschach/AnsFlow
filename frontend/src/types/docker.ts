@@ -41,6 +41,24 @@ export interface DockerRegistry extends BaseModel {
   check_message: string;
   is_default: boolean;
   created_by: number;
+  // 新增字段用于项目管理
+  auth_config?: Record<string, any>;
+  project_count?: number;
+}
+
+// Docker注册表项目接口
+export interface DockerRegistryProject extends BaseModel {
+  name: string;
+  registry: number;
+  registry_name?: string;
+  description: string;
+  is_default: boolean;
+  config: Record<string, any>;
+  image_count: number;
+  last_updated: string;
+  visibility: 'public' | 'private';
+  tags: string[];
+  created_by: number;
 }
 
 // Docker仓库列表接口
@@ -285,7 +303,7 @@ export interface DockerImageVersionCreateRequest {
 
 // Docker仓库测试连接响应接口
 export interface DockerRegistryTestResponse {
-  status: 'success' | 'error';
+  success: boolean;  // 后端实际返回的字段
   message: string;
   latency?: number;
 }
@@ -314,6 +332,16 @@ export interface DockerRegistryFormData {
   password?: string;
   description?: string;
   is_default?: boolean;
+}
+
+export interface DockerRegistryProjectFormData {
+  name: string;
+  registry: number;
+  description?: string;
+  is_default?: boolean;
+  visibility?: 'public' | 'private';
+  tags?: string[];
+  config?: Record<string, any>;
 }
 
 export interface DockerImageFormData {

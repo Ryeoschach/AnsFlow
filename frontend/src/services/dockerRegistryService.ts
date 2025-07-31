@@ -43,7 +43,9 @@ class DockerRegistryService {
       throw new Error(`获取注册表列表失败: ${response.statusText}`)
     }
 
-    return response.json()
+    const data = await response.json()
+    // 后端返回分页格式，提取results数组
+    return data.results || data
   }
 
   /**
@@ -126,7 +128,9 @@ class DockerRegistryService {
    * 测试注册表连接
    */
   async testRegistry(id: number): Promise<{ success: boolean; message: string }> {
-    const response = await fetch(`${this.baseUrl}/${id}/test/`, {
+    console.log('dockerRegistryService.testRegistry 开始调用，ID:', id)
+    
+    const response = await fetch(`${this.baseUrl}/${id}/test_connection/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -134,18 +138,32 @@ class DockerRegistryService {
       }
     })
 
+    console.log('HTTP 响应状态:', response.status, response.statusText)
+    console.log('HTTP 响应 OK:', response.ok)
+
     if (!response.ok) {
-      throw new Error(`测试注册表连接失败: ${response.statusText}`)
+      console.log('HTTP 响应不正常，尝试解析错误')
+      // 尝试解析错误响应
+      try {
+        const errorData = await response.json()
+        console.log('解析的错误数据:', errorData)
+        throw new Error(errorData.message || `HTTP ${response.status}: ${response.statusText}`)
+      } catch (parseError) {
+        console.log('解析错误失败:', parseError)
+        throw new Error(`测试注册表连接失败: HTTP ${response.status}`)
+      }
     }
 
-    return response.json()
+    const result = await response.json()
+    console.log('成功解析的响应数据:', result)
+    return result
   }
 
   /**
    * 设置默认注册表
    */
   async setDefaultRegistry(id: number): Promise<DockerRegistry> {
-    const response = await fetch(`${this.baseUrl}/${id}/set-default/`, {
+    const response = await fetch(`${this.baseUrl}/${id}/set_default/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

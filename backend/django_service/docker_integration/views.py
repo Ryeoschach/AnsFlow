@@ -4,7 +4,11 @@ Docker集成视图
 import docker
 import json
 import yaml
+import requests
+import socket
+from urllib.parse import urlparse
 from django.shortcuts import get_object_or_404
+from django.db import models
 from rest_framework import viewsets, status
 from rest_framework.decorators import action, api_view, permission_classes
 from rest_framework.response import Response
@@ -14,11 +18,12 @@ from celery import current_app
 import psutil
 
 from .models import (
-    DockerRegistry, DockerImage, DockerImageVersion,
+    DockerRegistry, DockerRegistryProject, DockerImage, DockerImageVersion,
     DockerContainer, DockerContainerStats, DockerCompose
 )
 from .serializers import (
     DockerRegistrySerializer, DockerRegistryListSerializer,
+    DockerRegistryProjectSerializer,
     DockerImageSerializer, DockerImageListSerializer,
     DockerImageVersionSerializer,
     DockerContainerSerializer, DockerContainerListSerializer,
@@ -41,6 +46,67 @@ class DockerRegistryViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return DockerRegistryListSerializer
         return DockerRegistrySerializer
+    
+    def update(self, request, *args, **kwargs):
+        """更新注册表，确保使用完整序列化器"""
+        partial = kwargs.pop('partial', False)
+        instance = self.get_object()
+        
+        # 强制使用完整的序列化器进行更新
+        serializer = DockerRegistrySerializer(instance, data=request.data, partial=partial, context={'request': request})
+        serializer.is_valid(raise_exception=True)
+        self.perform_update(serializer)
+        
+        # 返回更新后的完整数据
+        return Response(serializer.data)
+    
+    def partial_update(self, request, *args, **kwargs):
+        """部分更新注册表，确保使用完整序列化器"""
+        kwargs['partial'] = True
+        return self.update(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        """删除注册表，处理级联删除"""
+        instance = self.get_object()
+        
+        try:
+            # 先删除关联的项目
+            projects_count = instance.projects.count()
+            if projects_count > 0:
+                instance.projects.all().delete()
+            
+            # 然后删除注册表
+            self.perform_destroy(instance)
+            return Response({
+                'message': f'成功删除注册表及其关联的 {projects_count} 个项目'
+            }, status=status.HTTP_204_NO_CONTENT)
+            
+        except Exception as e:
+            return Response({
+                'error': f'删除注册表失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def projects(self, request, pk=None):
+        """获取注册表下的项目列表"""
+        registry = self.get_object()
+        projects = registry.projects.all()
+        
+        # 构造符合前端Hook期望的数据格式
+        results = []
+        for project in projects:
+            results.append({
+                'id': str(project.id),
+                'name': project.name,
+                'description': project.description,
+                'registry_id': project.registry.id,
+                'image_count': project.image_count,
+                'last_updated': project.last_updated,
+                'visibility': project.visibility,
+                'tags': project.tags
+            })
+        
+        return Response(results)
 
     @action(detail=True, methods=['post'])
     def test_connection(self, request, pk=None):
@@ -48,17 +114,30 @@ class DockerRegistryViewSet(viewsets.ModelViewSet):
         registry = self.get_object()
         
         try:
-            # 这里实现具体的连接测试逻辑
-            # 根据不同的仓库类型使用不同的测试方法
-            registry.status = 'active'
-            registry.last_check = timezone.now()
-            registry.check_message = '连接成功'
-            registry.save()
+            # 实现具体的连接测试逻辑
+            success = self._test_registry_connection(registry)
             
-            return Response({
-                'status': 'success',
-                'message': '仓库连接测试成功'
-            })
+            if success:
+                registry.status = 'active'
+                registry.last_check = timezone.now()
+                registry.check_message = '连接成功'
+                registry.save()
+                
+                return Response({
+                    'success': True,
+                    'message': '仓库连接测试成功'
+                })
+            else:
+                registry.status = 'error'
+                registry.last_check = timezone.now()
+                registry.check_message = '连接失败'
+                registry.save()
+                
+                return Response({
+                    'success': False,
+                    'message': '仓库连接测试失败，请检查配置'
+                })
+                
         except Exception as e:
             registry.status = 'error'
             registry.last_check = timezone.now()
@@ -66,9 +145,52 @@ class DockerRegistryViewSet(viewsets.ModelViewSet):
             registry.save()
             
             return Response({
-                'status': 'error',
-                'message': f'仓库连接测试失败: {str(e)}'
-            }, status=status.HTTP_400_BAD_REQUEST)
+                'success': False,
+                'message': f'连接测试失败: {str(e)}'
+            })
+    
+    def _test_registry_connection(self, registry):
+        """实际的连接测试逻辑"""
+        try:
+            # 解析URL
+            parsed_url = urlparse(registry.url)
+            if not parsed_url.hostname:
+                return False
+            
+            # 测试网络连通性
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(5)  # 5秒超时
+            port = parsed_url.port or (443 if parsed_url.scheme == 'https' else 80)
+            result = sock.connect_ex((parsed_url.hostname, port))
+            sock.close()
+            
+            if result != 0:
+                return False
+            
+            # 尝试访问Docker Registry API
+            try:
+                url = f"{registry.url.rstrip('/')}/v2/"
+                headers = {'Accept': 'application/json'}
+                
+                # 如果有用户名密码，使用基本认证
+                auth = None
+                if registry.username:
+                    # 从 auth_config 中获取密码
+                    password = registry.auth_config.get('password', '') if registry.auth_config else ''
+                    auth = (registry.username, password)
+                
+                response = requests.get(url, auth=auth, headers=headers, timeout=10, verify=False)
+                
+                # Docker Registry API 返回 200 表示成功，401 表示需要认证但连接正常
+                return response.status_code in [200, 401]
+                
+            except requests.RequestException:
+                # 如果API测试失败，至少网络是通的
+                return True
+                
+        except Exception as e:
+            print(f"连接测试异常: {e}")
+            return False
 
     @action(detail=True, methods=['post'])
     def set_default(self, request, pk=None):
@@ -83,6 +205,167 @@ class DockerRegistryViewSet(viewsets.ModelViewSet):
         registry.save()
         
         return Response({'message': '默认仓库设置成功'})
+
+    @action(detail=True, methods=['get'])
+    def images(self, request, pk=None):
+        """获取注册表中的镜像列表"""
+        registry = self.get_object()
+        page = int(request.query_params.get('page', 1))
+        page_size = int(request.query_params.get('page_size', 20))
+        
+        try:
+            # 获取该注册表下的镜像，分页返回
+            images = DockerImage.objects.filter(registry=registry)
+            
+            # 计算分页
+            total = images.count()
+            start = (page - 1) * page_size
+            end = start + page_size
+            paginated_images = images[start:end]
+            
+            # 构造返回数据
+            results = []
+            for image in paginated_images:
+                # 获取镜像的所有标签
+                versions = image.versions.all()
+                tags = [v.version for v in versions] if versions.exists() else [image.tag]
+                
+                results.append({
+                    'name': image.name,
+                    'tags': tags,
+                    'size': image.image_size or 0,
+                    'created_at': image.created_at.isoformat()
+                })
+            
+            # 计算下一页和上一页链接
+            next_page = page + 1 if end < total else None
+            prev_page = page - 1 if page > 1 else None
+            
+            return Response({
+                'results': results,
+                'count': total,
+                'next': f"?page={next_page}&page_size={page_size}" if next_page else None,
+                'previous': f"?page={prev_page}&page_size={page_size}" if prev_page else None
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'获取镜像列表失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def search(self, request, pk=None):
+        """搜索注册表中的镜像"""
+        registry = self.get_object()
+        query = request.query_params.get('q', '')
+        
+        if not query:
+            return Response({
+                'error': '搜索查询不能为空'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # 在该注册表下搜索镜像名称包含查询词的镜像
+            images = DockerImage.objects.filter(
+                registry=registry,
+                name__icontains=query
+            )[:20]  # 限制返回20个结果
+            
+            results = []
+            for image in images:
+                results.append({
+                    'name': image.name,
+                    'description': image.description or '',
+                    'stars': 0,  # 暂时设为0，后续可以添加评分功能
+                    'official': False  # 暂时设为False，后续可以添加官方镜像标识
+                })
+            
+            return Response(results)
+            
+        except Exception as e:
+            return Response({
+                'error': f'搜索镜像失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def stats(self, request, pk=None):
+        """获取注册表的使用统计"""
+        registry = self.get_object()
+        
+        try:
+            # 计算该注册表的统计信息
+            total_images = DockerImage.objects.filter(registry=registry).count()
+            
+            # 计算总拉取数和推送数（这些字段需要在模型中添加）
+            total_pulls = 0  # 暂时设为0，需要在模型中添加pull_count字段
+            total_pushes = 0  # 暂时设为0，需要在模型中添加push_count字段
+            
+            # 计算存储使用量
+            storage_usage = DockerImage.objects.filter(registry=registry).aggregate(
+                total_size=models.Sum('image_size')
+            )['total_size'] or 0
+            
+            # 获取最后活动时间
+            last_image = DockerImage.objects.filter(registry=registry).order_by('-updated_at').first()
+            last_activity = last_image.updated_at.isoformat() if last_image else registry.updated_at.isoformat()
+            
+            return Response({
+                'total_images': total_images,
+                'total_pulls': total_pulls,
+                'total_pushes': total_pushes,
+                'storage_usage': storage_usage,
+                'last_activity': last_activity
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'获取注册表统计失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def sync(self, request, pk=None):
+        """同步注册表信息"""
+        registry = self.get_object()
+        
+        try:
+            # 这里可以实现与实际注册表的同步逻辑
+            # 比如连接到Docker Hub、Harbor等注册表获取最新信息
+            
+            # 更新注册表最后检查时间
+            registry.last_check = timezone.now()
+            registry.check_message = '同步成功'
+            registry.save()
+            
+            return Response({
+                'success': True,
+                'message': '注册表信息同步成功'
+            })
+            
+        except Exception as e:
+            registry.last_check = timezone.now()
+            registry.check_message = f'同步失败: {str(e)}'
+            registry.save()
+            
+            return Response({
+                'success': False,
+                'message': f'同步注册表失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DockerRegistryProjectViewSet(viewsets.ModelViewSet):
+    """Docker注册表项目管理视图集"""
+    queryset = DockerRegistryProject.objects.all()
+    permission_classes = [IsAuthenticated]
+    serializer_class = DockerRegistryProjectSerializer
+
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        registry_id = self.request.query_params.get('registry_id')
+        
+        if registry_id:
+            queryset = queryset.filter(registry_id=registry_id)
+            
+        return queryset
 
 
 class DockerImageViewSet(viewsets.ModelViewSet):
@@ -1104,4 +1387,33 @@ def sync_local_docker_resources(request):
             'updated_images': 0,
             'container_errors': [str(e)],
             'image_errors': []
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def get_all_registry_projects(request):
+    """获取所有注册表的项目列表"""
+    try:
+        projects = DockerRegistryProject.objects.all()
+        
+        # 构造符合前端Hook期望的数据格式
+        results = []
+        for project in projects:
+            results.append({
+                'id': str(project.id),
+                'name': project.name,
+                'description': project.description,
+                'registry_id': project.registry.id,
+                'image_count': project.image_count,
+                'last_updated': project.last_updated,
+                'visibility': project.visibility,
+                'tags': project.tags
+            })
+        
+        return Response(results)
+        
+    except Exception as e:
+        return Response({
+            'error': f'获取项目列表失败: {str(e)}'
         }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)

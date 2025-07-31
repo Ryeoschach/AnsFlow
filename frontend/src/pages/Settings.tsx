@@ -28,11 +28,11 @@ import {
   ToolOutlined,
   GlobalOutlined,
   ClusterOutlined,
-  CloudUploadOutlined
+  DockerOutlined,
+  AppstoreOutlined
 } from '@ant-design/icons'
 import GitCredentialManager from '../components/git/GitCredentialManager'
 import KubernetesSettings from '../components/kubernetes/KubernetesSettings'
-import DockerRegistrySettings from '../components/docker/DockerRegistrySettings'
 import UserManagement from '../components/settings/UserManagement'
 import AuditLogs from '../components/settings/AuditLogs'
 import SystemMonitoring from '../components/settings/SystemMonitoring'
@@ -41,6 +41,7 @@ import TeamManagement from '../components/settings/TeamManagement'
 import GlobalConfiguration from '../components/settings/GlobalConfiguration'
 import NotificationSettingsComponent from '../components/settings/NotificationSettings'
 import SystemBackup from '../components/settings/SystemBackup'
+import DockerRegistries from './settings/DockerRegistries'
 import { usePermissions, Permission } from '../hooks/usePermissions'
 import PermissionGuard from '../components/common/PermissionGuard'
 
@@ -206,10 +207,10 @@ const Settings: React.FC = () => {
     // 集成类
     {
       key: 'docker-registries',
-      title: 'Docker 注册表',
-      description: 'Docker 镜像仓库配置管理',
-      icon: <CloudUploadOutlined />,
-      component: DockerRegistrySettings,
+      title: 'Docker 管理',
+      description: '管理Docker注册表和项目配置',
+      icon: <DockerOutlined />,
+      component: DockerRegistries,
       category: 'integration',
       permission: Permission.INTEGRATION_VIEW
     },

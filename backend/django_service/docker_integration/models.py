@@ -7,6 +7,15 @@ from django.utils import timezone
 import hashlib
 
 
+def decrypt_password(encrypted_password):
+    """解密密码 - 简单的解密实现"""
+    if not encrypted_password:
+        return ''
+    # 这里应该是实际的解密逻辑，暂时直接返回
+    # 在实际项目中，这应该与加密算法对应
+    return encrypted_password
+
+
 class DockerRegistry(models.Model):
     """Docker镜像仓库"""
     REGISTRY_TYPE_CHOICES = [
@@ -66,6 +75,68 @@ class DockerRegistry(models.Model):
 
     def __str__(self):
         return f"{self.name} ({self.registry_type})"
+
+    def get_decrypted_password(self):
+        """获取解密后的密码"""
+        # 从auth_config中获取密码
+        if self.auth_config and 'password' in self.auth_config:
+            return decrypt_password(self.auth_config['password'])
+        return ''
+
+
+class DockerRegistryProject(models.Model):
+    """Docker注册表项目"""
+    name = models.CharField(max_length=100, verbose_name='项目名称')
+    registry = models.ForeignKey(
+        DockerRegistry,
+        on_delete=models.CASCADE,
+        related_name='projects',
+        verbose_name='所属注册表'
+    )
+    description = models.TextField(blank=True, verbose_name='项目描述')
+    is_default = models.BooleanField(default=False, verbose_name='是否为默认项目')
+    config = models.JSONField(default=dict, verbose_name='项目配置')
+    
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        verbose_name='创建者'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'docker_registry_project'
+        verbose_name = 'Docker注册表项目'
+        verbose_name_plural = 'Docker注册表项目'
+        ordering = ['name']
+        unique_together = [('name', 'registry')]
+
+    def __str__(self):
+        return f"{self.registry.name}/{self.name}"
+
+    @property
+    def image_count(self):
+        """获取项目下的镜像数量"""
+        # 这里可以根据项目配置来计算镜像数量
+        # 暂时返回0，后续可以添加具体的逻辑
+        return 0
+
+    @property
+    def last_updated(self):
+        """获取最后更新时间"""
+        return self.updated_at.isoformat()
+
+    @property
+    def visibility(self):
+        """获取项目可见性"""
+        # 可以从配置中读取，暂时返回private
+        return self.config.get('visibility', 'private')
+
+    @property
+    def tags(self):
+        """获取项目标签"""
+        return self.config.get('tags', [])
 
 
 class DockerImage(models.Model):
