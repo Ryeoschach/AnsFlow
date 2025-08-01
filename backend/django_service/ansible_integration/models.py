@@ -65,6 +65,16 @@ class AnsibleInventory(models.Model):
     checksum = models.CharField(max_length=64, blank=True, verbose_name='文件校验和')
     is_validated = models.BooleanField(default=False, verbose_name='是否已验证')
     validation_message = models.TextField(blank=True, verbose_name='验证信息')
+    
+    # 关联的主机（通过中间表）
+    hosts = models.ManyToManyField(
+        'AnsibleHost',
+        through='InventoryHost',
+        verbose_name='关联主机',
+        blank=True,
+        help_text='该清单中包含的主机'
+    )
+    
     created_by = models.ForeignKey(
         User, 
         on_delete=models.CASCADE,
@@ -81,6 +91,46 @@ class AnsibleInventory(models.Model):
 
     def __str__(self):
         return self.name
+
+    def get_associated_hosts_count(self):
+        """获取关联主机数量"""
+        return self.hosts.count()
+
+    def get_active_hosts(self):
+        """获取激活的关联主机"""
+        return self.hosts.filter(
+            inventoryhost__is_active=True
+        ).distinct()
+
+    def add_host(self, host, inventory_name=None, host_variables=None, is_active=True):
+        """添加主机到清单"""
+        from .models import InventoryHost
+        inventory_name = inventory_name or host.hostname
+        host_variables = host_variables or {}
+        
+        inventory_host, created = InventoryHost.objects.get_or_create(
+            inventory=self,
+            host=host,
+            defaults={
+                'inventory_name': inventory_name,
+                'host_variables': host_variables,
+                'is_active': is_active
+            }
+        )
+        return inventory_host, created
+
+    def remove_host(self, host):
+        """从清单中移除主机"""
+        from .models import InventoryHost
+        return InventoryHost.objects.filter(
+            inventory=self,
+            host=host
+        ).delete()
+
+    def sync_hosts_from_content(self):
+        """从inventory内容中同步主机信息"""
+        # TODO: 实现inventory内容解析并同步到Host关联
+        pass
 
 
 class AnsiblePlaybook(models.Model):
@@ -419,6 +469,19 @@ class AnsibleHost(models.Model):
     port = models.IntegerField(default=22, verbose_name='SSH端口')
     username = models.CharField(max_length=100, verbose_name='用户名')
     
+    # 认证凭据
+    credential = models.ForeignKey(
+        'AnsibleCredential',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name='认证凭据'
+    )
+    
+    # 临时认证字段（如果没有设置credential）
+    temp_password = models.TextField(blank=True, verbose_name='临时密码（加密）')
+    temp_ssh_key = models.TextField(blank=True, verbose_name='临时SSH密钥（加密）')
+    
     # 主机组和标签
     groups = models.ManyToManyField(
         'AnsibleHostGroup',
@@ -473,6 +536,58 @@ class AnsibleHost(models.Model):
 
     def __str__(self):
         return f"{self.hostname} ({self.ip_address})"
+    
+    def save(self, *args, **kwargs):
+        """保存时加密临时认证字段"""
+        if self.temp_password:
+            self.temp_password = encrypt_password(self.temp_password)
+        if self.temp_ssh_key:
+            self.temp_ssh_key = encrypt_password(self.temp_ssh_key)
+        super().save(*args, **kwargs)
+    
+    def get_auth_password(self):
+        """获取认证密码"""
+        if self.credential and self.credential.has_password:
+            return self.credential.get_decrypted_password()
+        elif self.temp_password:
+            return decrypt_password(self.temp_password)
+        return ''
+    
+    def get_auth_ssh_key(self):
+        """获取SSH私钥"""
+        if self.credential and self.credential.has_ssh_key:
+            return self.credential.get_decrypted_ssh_key()
+        elif self.temp_ssh_key:
+            return decrypt_password(self.temp_ssh_key)
+        return ''
+    
+    def has_auth_credentials(self):
+        """是否有认证凭据"""
+        return (
+            (self.credential and (self.credential.has_password or self.credential.has_ssh_key)) or
+            bool(self.temp_password) or 
+            bool(self.temp_ssh_key)
+        )
+    
+    def get_auth_method(self):
+        """获取认证方式"""
+        if self.get_auth_ssh_key():
+            return 'ssh_key'
+        elif self.get_auth_password():
+            return 'password'
+        return 'none'
+    
+    def set_temp_password(self, password):
+        """设置临时密码"""
+        if password:
+            self.temp_password = encrypt_password(password)
+            self.save(update_fields=['temp_password'])
+    
+    def set_temp_ssh_key(self, ssh_key):
+        """设置临时SSH密钥"""
+        if ssh_key:
+            self.temp_ssh_key = encrypt_password(ssh_key)
+            self.save(update_fields=['temp_ssh_key'])
 
 
 class AnsibleHostGroup(models.Model):
@@ -529,3 +644,85 @@ class AnsibleHostGroupMembership(models.Model):
 
     def __str__(self):
         return f"{self.host.hostname} -> {self.group.name}"
+
+
+class InventoryHost(models.Model):
+    """Inventory与Host的关联关系"""
+    inventory = models.ForeignKey(
+        AnsibleInventory,
+        on_delete=models.CASCADE,
+        verbose_name='主机清单'
+    )
+    host = models.ForeignKey(
+        AnsibleHost,
+        on_delete=models.CASCADE,
+        verbose_name='主机'
+    )
+    inventory_name = models.CharField(
+        max_length=100, 
+        verbose_name='在清单中的名称',
+        help_text='主机在inventory文件中的名称，可能与hostname不同'
+    )
+    host_variables = models.JSONField(
+        default=dict, 
+        verbose_name='主机级别变量',
+        help_text='在inventory中为该主机定义的变量'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='是否激活',
+        help_text='该主机是否在inventory中激活'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'ansible_inventory_host'
+        verbose_name = 'Inventory主机关联'
+        verbose_name_plural = 'Inventory主机关联'
+        unique_together = ['inventory', 'host']
+        ordering = ['inventory', 'inventory_name']
+
+    def __str__(self):
+        return f"{self.inventory.name} -> {self.inventory_name}({self.host.hostname})"
+
+
+class InventoryGroup(models.Model):
+    """Inventory与主机组的关联关系"""
+    inventory = models.ForeignKey(
+        AnsibleInventory,
+        on_delete=models.CASCADE,
+        verbose_name='主机清单'
+    )
+    group = models.ForeignKey(
+        AnsibleHostGroup,
+        on_delete=models.CASCADE,
+        verbose_name='主机组'
+    )
+    inventory_name = models.CharField(
+        max_length=100, 
+        verbose_name='在清单中的组名',
+        help_text='主机组在inventory文件中的名称，可能与group.name不同'
+    )
+    group_variables = models.JSONField(
+        default=dict, 
+        verbose_name='组级别变量',
+        help_text='在inventory中为该主机组定义的变量'
+    )
+    is_active = models.BooleanField(
+        default=True,
+        verbose_name='是否激活',
+        help_text='该主机组是否在inventory中激活'
+    )
+    created_at = models.DateTimeField(auto_now_add=True, verbose_name='创建时间')
+    updated_at = models.DateTimeField(auto_now=True, verbose_name='更新时间')
+
+    class Meta:
+        db_table = 'ansible_inventory_group'
+        verbose_name = 'Inventory主机组关联'
+        verbose_name_plural = 'Inventory主机组关联'
+        unique_together = ['inventory', 'group']
+        ordering = ['inventory', 'inventory_name']
+
+    def __str__(self):
+        return f"{self.inventory.name} -> {self.inventory_name}({self.group.name})"

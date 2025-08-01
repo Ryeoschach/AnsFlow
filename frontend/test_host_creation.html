@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>主机创建测试</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; padding: 20px; }
+        .container { max-width: 600px; margin: 0 auto; }
+        .step { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .success { background-color: #f6ffed; border-color: #b7eb8f; }
+        .error { background-color: #fff2f0; border-color: #ffccc7; }
+        button { padding: 10px 20px; margin: 5px; background: #1890ff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        button:hover { background: #40a9ff; }
+        .token-display { word-break: break-all; font-family: monospace; background: #f5f5f5; padding: 10px; border-radius: 4px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AnsFlow 主机创建问题修复验证</h1>
+        
+        <div class="step">
+            <h3>步骤 1: 设置认证令牌</h3>
+            <p>首先需要设置有效的认证令牌</p>
+            <button onclick="setAuthToken()">设置认证令牌</button>
+            <div id="tokenStatus"></div>
+        </div>
+
+        <div class="step">
+            <h3>步骤 2: 验证令牌有效性</h3>
+            <p>测试令牌是否可以访问 API</p>
+            <button onclick="testToken()">测试令牌</button>
+            <div id="testResult"></div>
+        </div>
+
+        <div class="step">
+            <h3>步骤 3: 创建测试主机</h3>
+            <p>使用有效令牌创建主机</p>
+            <button onclick="createTestHost()">创建测试主机</button>
+            <div id="createResult"></div>
+        </div>
+
+        <div class="step">
+            <h3>步骤 4: 前往主机管理页面</h3>
+            <p>前往 AnsFlow 主机管理页面测试界面功能</p>
+            <button onclick="window.open('http://127.0.0.1:5173/ansible', '_blank')">打开主机管理页面</button>
+        </div>
+
+        <div class="step">
+            <h3>问题修复说明</h3>
+            <ul>
+                <li><strong>主要问题</strong>: 
+                    <ol>
+                        <li>IP地址字段输入了主机名而不是IP地址</li>
+                        <li>前端缺少有效的认证令牌</li>
+                        <li>表单默认值设置不正确</li>
+                    </ol>
+                </li>
+                <li><strong>修复内容</strong>: 
+                    <ol>
+                        <li>添加了IP地址格式验证（支持IPv4和IPv6）</li>
+                        <li>改为动态获取JWT令牌而不是使用固定值</li>
+                        <li>修复了表单默认值设置问题</li>
+                        <li>改善了错误提示信息</li>
+                    </ol>
+                </li>
+                <li><strong>使用提示</strong>: 
+                    <ul>
+                        <li>主机名: 输入服务器的名称，如 "web-server-01"</li>
+                        <li>IP地址: 必须输入有效的IP地址，如 "192.168.1.100"</li>
+                        <li>SSH端口: 默认为22，可根据实际情况修改</li>
+                        <li>用户名: SSH登录用户名，如 "ubuntu" 或 "root"</li>
+                    </ul>
+                </li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        // 动态令牌管理，不使用固定值
+
+        async function setAuthToken() {
+            try {
+                // 动态获取新的JWT token
+                const response = await fetch('/api/v1/auth/token/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ 
+                        username: 'admin', 
+                        password: 'admin123' 
+                    }),
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    localStorage.setItem('authToken', data.access);
+                    localStorage.setItem('refresh_token', data.refresh);
+                    
+                    // 解析 token 信息
+                    const payload = JSON.parse(atob(data.access.split('.')[1]));
+                    const expTime = new Date(payload.exp * 1000);
+                    
+                    document.getElementById('tokenStatus').innerHTML = 
+                        '<div class="success">✅ 认证令牌获取并设置成功</div>' +
+                        '<div>过期时间: ' + expTime.toLocaleString() + '</div>' +
+                        '<div class="token-display">Token: ' + data.access.substring(0, 50) + '...</div>';
+                } else {
+                    const errorData = await response.json();
+                    document.getElementById('tokenStatus').innerHTML = 
+                        '<div class="error">❌ 获取令牌失败: HTTP ' + response.status + '</div>' +
+                        '<div>' + JSON.stringify(errorData) + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('tokenStatus').innerHTML = 
+                    '<div class="error">❌ 获取令牌异常: ' + error.message + '</div>';
+            }
+        }
+
+        async function testToken() {
+            const token = localStorage.getItem('authToken');
+            
+            if (!token) {
+                document.getElementById('testResult').innerHTML = 
+                    '<div class="error">❌ 没有找到认证令牌，请先设置</div>';
+                return;
+            }
+            
+            try {
+                // 检查令牌是否过期
+                const payload = JSON.parse(atob(token.split('.')[1]));
+                const expTime = new Date(payload.exp * 1000);
+                const now = new Date();
+                
+                if (now > expTime) {
+                    document.getElementById('testResult').innerHTML = 
+                        '<div class="error">⏰ 令牌已过期，请重新获取</div>';
+                    return;
+                }
+                
+                const response = await fetch('/api/v1/ansible/hosts/', {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('testResult').innerHTML = 
+                        '<div class="success">✅ 令牌验证成功！API 可正常访问</div>' +
+                        '<div>当前主机数量: ' + (data.length || data.results?.length || 0) + '</div>' +
+                        '<div>令牌有效期至: ' + expTime.toLocaleString() + '</div>';
+                } else {
+                    document.getElementById('testResult').innerHTML = 
+                        '<div class="error">❌ 令牌验证失败: HTTP ' + response.status + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('testResult').innerHTML = 
+                    '<div class="error">❌ 测试失败: ' + error.message + '</div>';
+            }
+        }
+
+        async function createTestHost() {
+            const token = localStorage.getItem('authToken');
+            
+            if (!token) {
+                document.getElementById('createResult').innerHTML = 
+                    '<div class="error">❌ 请先设置认证令牌</div>';
+                return;
+            }
+            
+            try {
+                const hostData = {
+                    hostname: 'test-host-' + Date.now(),
+                    ip_address: '192.168.1.' + Math.floor(Math.random() * 200 + 50), // 有效的IP地址
+                    port: 22,
+                    username: 'ubuntu',
+                    connection_type: 'ssh',
+                    become_method: 'sudo'
+                };
+
+                const response = await fetch('/api/v1/ansible/hosts/', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(hostData)
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    document.getElementById('createResult').innerHTML = 
+                        '<div class="success">✅ 测试主机创建成功！</div>' +
+                        '<div>主机名: ' + data.hostname + '</div>' +
+                        '<div>IP地址: ' + data.ip_address + '</div>' +
+                        '<div>SSH端口: ' + data.port + '</div>' +
+                        '<div>用户名: ' + data.username + '</div>' +
+                        '<div>主机ID: ' + data.id + '</div>';
+                } else {
+                    const errorData = await response.json();
+                    document.getElementById('createResult').innerHTML = 
+                        '<div class="error">❌ 创建失败: HTTP ' + response.status + '</div>' +
+                        '<div>错误详情: ' + JSON.stringify(errorData, null, 2) + '</div>';
+                }
+            } catch (error) {
+                document.getElementById('createResult').innerHTML = 
+                    '<div class="error">❌ 创建失败: ' + error.message + '</div>';
+            }
+        }
+
+        // 页面加载时检查当前认证状态
+        window.onload = function() {
+            const existingToken = localStorage.getItem('authToken');
+            if (existingToken) {
+                document.getElementById('tokenStatus').innerHTML = 
+                    '<div class="success">✅ 已存在认证令牌</div>';
+            } else {
+                document.getElementById('tokenStatus').innerHTML = 
+                    '<div class="error">❌ 未设置认证令牌</div>';
+            }
+        };
+    </script>
+</body>
+</html>

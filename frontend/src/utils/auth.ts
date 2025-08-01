@@ -1,5 +1,12 @@
 // JWT认证工具函数
 export const authUtils = {
+  // 设置测试token（开发环境用）
+  setTestToken(): void {
+    const testToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0b2tlbl90eXBlIjoiYWNjZXNzIiwiZXhwIjoxNzU0MDQwNTI3LCJpYXQiOjE3NTQwMzY5MjcsImp0aSI6IjBjNWNmZTU2OWQyYzQwY2FhN2Q0OGFhNzdhMzI4YThiIiwidXNlcl9pZCI6MX0.2pPqNwP0ASIhX0_o7E0zSNFh9cycJpvURQh22VvaatM";
+    localStorage.setItem('authToken', testToken);
+    console.log('测试身份验证 token 已设置');
+  },
+
   // 登录并存储token
   async login(username: string, password: string): Promise<boolean> {
     try {

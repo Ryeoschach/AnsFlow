@@ -31,9 +31,20 @@ import {
   StopOutlined,
   ReloadOutlined,
   HistoryOutlined,
-  UploadOutlined
+  UploadOutlined,
+  UserOutlined,
+  SyncOutlined
 } from '@ant-design/icons';
 import { apiService } from '../services/api';
+import { authUtils } from '../utils/auth';
+import { InventoryDataSyncFixer } from '../utils/inventoryDataSyncFixer';
+import ConnectionTestModal from '../components/ConnectionTestModal';
+import HostFactsModal from '../components/HostFactsModal';
+import InventoryHostModal from '../components/InventoryHostModal';
+import ExecutionLogsModal from '../components/ExecutionLogsModal';
+import HostGroupModal from '../components/HostGroupModal';
+import InventoryGroupModal from '../components/InventoryGroupModal';
+import InventoryDynamicGeneratorModal from '../components/InventoryDynamicGeneratorModal';
 import type { 
   AnsibleStats, 
   AnsibleInventory, 
@@ -44,7 +55,8 @@ import type {
   AnsibleHostGroup,
   AnsibleInventoryVersion,
   AnsiblePlaybookVersion,
-  FileUploadResponse
+  FileUploadResponse,
+  ConnectionTestRequest
 } from '../types';
 
 const { TabPane } = Tabs;
@@ -61,11 +73,23 @@ const Ansible: React.FC = () => {
   const [hostGroups, setHostGroups] = useState<AnsibleHostGroup[]>([]);
   const [loading, setLoading] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
+  const [connectionTestVisible, setConnectionTestVisible] = useState(false);
+  const [factsModalVisible, setFactsModalVisible] = useState(false);
+  const [selectedHost, setSelectedHost] = useState<AnsibleHost | null>(null);
   const [modalType, setModalType] = useState<'inventory' | 'playbook' | 'credential' | 'execute' | 'host' | 'hostgroup' | 'upload' | 'versions'>('inventory');
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [tempAuthData, setTempAuthData] = useState<ConnectionTestRequest | null>(null);
   const [versionsVisible, setVersionsVisible] = useState(false);
   const [versionsList, setVersionsList] = useState<any[]>([]);
   const [versionType, setVersionType] = useState<'inventory' | 'playbook'>('inventory');
+  const [inventoryHostModalVisible, setInventoryHostModalVisible] = useState(false);
+  const [selectedInventory, setSelectedInventory] = useState<AnsibleInventory | null>(null);
+  const [executionLogsModalVisible, setExecutionLogsModalVisible] = useState(false);
+  const [selectedExecution, setSelectedExecution] = useState<AnsibleExecutionList | null>(null);
+  const [hostGroupModalVisible, setHostGroupModalVisible] = useState(false);
+  const [selectedHostGroup, setSelectedHostGroup] = useState<AnsibleHostGroup | null>(null);
+  const [inventoryGroupModalVisible, setInventoryGroupModalVisible] = useState(false);
+  const [inventoryDynamicModalVisible, setInventoryDynamicModalVisible] = useState(false);
   const [form] = Form.useForm();
 
   // 获取统计数据
@@ -166,6 +190,28 @@ const Ansible: React.FC = () => {
     fetchHostGroups();
   }, []);
 
+  // 加载演示数据
+  const handleLoadDemoData = async () => {
+    try {
+      setLoading(true);
+      // 这里可以调用后端API来加载演示数据
+      // 目前我们直接刷新数据
+      await Promise.all([
+        fetchInventories(),
+        fetchPlaybooks(),
+        fetchCredentials(),
+        fetchExecutions(),
+        fetchHosts(),
+        fetchHostGroups()
+      ]);
+      message.success('演示数据加载成功！请查看各个标签页的内容。');
+    } catch (error) {
+      message.error('加载演示数据失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // 处理创建/编辑
   const handleModalOk = async () => {
     try {
@@ -225,7 +271,15 @@ const Ansible: React.FC = () => {
             fetchCredentials();
             break;
           case 'host':
-            await apiService.createAnsibleHost(values);
+            // 如果有临时认证数据，将其包含在主机创建请求中
+            const hostData = tempAuthData ? {
+              ...values,
+              temp_password: tempAuthData.password,
+              temp_ssh_key: tempAuthData.ssh_private_key
+            } : values;
+            await apiService.createAnsibleHost(hostData);
+            // 清除临时认证数据
+            setTempAuthData(null);
             fetchHosts();
             break;
           case 'hostgroup':
@@ -244,7 +298,28 @@ const Ansible: React.FC = () => {
     }
   };
 
-  // 处理删除
+  // 修复清单统计数据
+  const handleFixInventoryStats = async (inventoryId: number) => {
+    try {
+      setLoading(true);
+      const success = await InventoryDataSyncFixer.forceRefreshInventoryStats(inventoryId);
+      
+      if (success) {
+        message.success('统计数据已同步');
+        fetchInventories(); // 重新获取清单列表
+      } else {
+        message.warning('检测到统计数据不一致，正在尝试修复...');
+        // 强制刷新一次
+        setTimeout(() => {
+          fetchInventories();
+        }, 1000);
+      }
+    } catch (error) {
+      message.error('修复统计数据失败');
+    } finally {
+      setLoading(false);
+    }
+  };
   const handleDelete = async (id: number, type: 'inventory' | 'playbook' | 'credential' | 'host' | 'hostgroup') => {
     try {
       switch (type) {
@@ -323,14 +398,43 @@ const Ansible: React.FC = () => {
     try {
       const result = await apiService.gatherHostFacts(hostId);
       if (result.success) {
-        message.success(`主机 ${result.hostname} Facts收集成功`);
+        message.success('主机 Facts 收集成功');
       } else {
-        message.error(`主机 ${result.hostname} Facts收集失败: ${result.message}`);
+        message.error(`主机 Facts 收集失败: ${result.message}`);
       }
       fetchHosts(); // 刷新主机信息
     } catch (error) {
       message.error('收集Facts失败');
     }
+  };
+
+  // 查看主机Facts详情
+  const handleViewFacts = (host: AnsibleHost) => {
+    setSelectedHost(host);
+    setFactsModalVisible(true);
+  };
+
+  // 连接测试成功后的处理
+  const handleConnectionTestSuccess = (testData: ConnectionTestRequest) => {
+    // 保存连接测试的认证信息以便主机创建时使用
+    setTempAuthData(testData);
+    
+    // 将测试数据填充到主机创建表单中
+    setModalType('host');
+    setModalVisible(true);
+    setConnectionTestVisible(false);
+    
+    // 预填充表单数据
+    form.setFieldsValue({
+      hostname: `host-${testData.ip_address.replace(/\./g, '-')}`,
+      ip_address: testData.ip_address,
+      port: testData.port,
+      username: testData.username,
+      connection_type: testData.connection_type,
+      // 认证信息将在创建时从tempAuthData中获取
+    });
+    
+    message.success('连接测试成功！已为您预填充主机信息，点击确定即可创建主机。');
   };
 
   // 文件上传处理
@@ -422,6 +526,10 @@ const Ansible: React.FC = () => {
       case 'running': return 'blue';
       case 'pending': return 'orange';
       case 'cancelled': return 'gray';
+      // 主机状态颜色
+      case 'active': return 'green';
+      case 'inactive': return 'orange';
+      case 'unknown': return 'gray';
       default: return 'default';
     }
   };
@@ -446,6 +554,30 @@ const Ansible: React.FC = () => {
       render: (format: string) => <Tag>{format.toUpperCase()}</Tag>
     },
     {
+      title: '关联资源',
+      key: 'resources_info',
+      render: (record: AnsibleInventory) => (
+        <Space wrap>
+          <Tag color="blue">
+            {record.hosts_count || 0} 个主机
+          </Tag>
+          {record.active_hosts_count !== undefined && (
+            <Tag color="green">
+              {record.active_hosts_count} 个激活
+            </Tag>
+          )}
+          <Tag color="purple">
+            {record.groups_count || 0} 个主机组
+          </Tag>
+          {record.active_groups_count !== undefined && (
+            <Tag color="cyan">
+              {record.active_groups_count} 个激活组
+            </Tag>
+          )}
+        </Space>
+      )
+    },
+    {
       title: '创建者',
       dataIndex: 'created_by_username',
       key: 'created_by_username',
@@ -461,6 +593,51 @@ const Ansible: React.FC = () => {
       key: 'actions',
       render: (record: AnsibleInventory) => (
         <Space>
+          <Tooltip title="管理主机">
+            <Button 
+              size="small" 
+              type="default"
+              onClick={() => {
+                setSelectedInventory(record);
+                setInventoryHostModalVisible(true);
+              }}
+            >
+              主机
+            </Button>
+          </Tooltip>
+          <Tooltip title="管理主机组">
+            <Button 
+              size="small" 
+              type="default"
+              onClick={() => {
+                setSelectedInventory(record);
+                setInventoryGroupModalVisible(true);
+              }}
+            >
+              主机组
+            </Button>
+          </Tooltip>
+          <Tooltip title="动态管理">
+            <Button 
+              size="small" 
+              type="primary"
+              onClick={() => {
+                setSelectedInventory(record);
+                setInventoryDynamicModalVisible(true);
+              }}
+            >
+              动态管理
+            </Button>
+          </Tooltip>
+          <Tooltip title="修复统计数据">
+            <Button 
+              size="small" 
+              icon={<SyncOutlined />}
+              onClick={() => handleFixInventoryStats(record.id)}
+            >
+              同步
+            </Button>
+          </Tooltip>
           <Tooltip title="编辑">
             <Button 
               size="small" 
@@ -683,8 +860,8 @@ const Ansible: React.FC = () => {
               size="small" 
               icon={<EyeOutlined />}
               onClick={() => {
-                // TODO: 显示日志详情
-                message.info('日志查看功能开发中');
+                setSelectedExecution(record);
+                setExecutionLogsModalVisible(true);
               }}
             />
           </Tooltip>
@@ -722,6 +899,51 @@ const Ansible: React.FC = () => {
       title: '用户名',
       dataIndex: 'username',
       key: 'username',
+    },
+    {
+      title: '认证方式',
+      dataIndex: 'credential',
+      key: 'credential',
+      render: (credentialId: number | null, record: AnsibleHost) => {
+        if (credentialId) {
+          const credential = credentials.find(c => c.id === credentialId);
+          return credential ? (
+            <Tag color="blue">{credential.name}</Tag>
+          ) : (
+            <Tag color="orange">凭据未找到</Tag>
+          );
+        } else if (record.temp_password || record.temp_ssh_key) {
+          return <Tag color="gray">临时认证</Tag>;
+        } else {
+          return <Tag color="red">未配置</Tag>;
+        }
+      }
+    },
+    {
+      title: '所属组',
+      dataIndex: 'groups',
+      key: 'groups',
+      render: (groups: AnsibleHostGroup[]) => (
+        <Space wrap>
+          {groups && groups.length > 0 ? (
+            groups.map(group => (
+              <Tag 
+                key={group.id} 
+                color="purple"
+                style={{ cursor: 'pointer' }}
+                onClick={() => {
+                  setSelectedHostGroup(group);
+                  setHostGroupModalVisible(true);
+                }}
+              >
+                {group.name}
+              </Tag>
+            ))
+          ) : (
+            <Tag color="default">未分组</Tag>
+          )}
+        </Space>
+      )
     },
     {
       title: '状态',
@@ -764,6 +986,17 @@ const Ansible: React.FC = () => {
               icon={<EyeOutlined />}
               onClick={() => handleGatherFacts(record.id)}
             />
+          </Tooltip>
+          <Tooltip title="查看Facts详情">
+            <Button 
+              size="small" 
+              type="primary"
+              ghost
+              onClick={() => handleViewFacts(record)}
+              disabled={!record.ansible_facts || Object.keys(record.ansible_facts).length === 0}
+            >
+              详情
+            </Button>
           </Tooltip>
           <Tooltip title="编辑">
             <Button 
@@ -826,6 +1059,19 @@ const Ansible: React.FC = () => {
       key: 'actions',
       render: (record: AnsibleHostGroup) => (
         <Space>
+          <Tooltip title="管理主机">
+            <Button 
+              size="small" 
+              type="primary"
+              icon={<UserOutlined />}
+              onClick={() => {
+                setSelectedHostGroup(record);
+                setHostGroupModalVisible(true);
+              }}
+            >
+              主机
+            </Button>
+          </Tooltip>
           <Tooltip title="编辑">
             <Button 
               size="small" 
@@ -848,7 +1094,28 @@ const Ansible: React.FC = () => {
 
   return (
     <div style={{ padding: '24px' }}>
-      <Title level={2}>Ansible 自动化部署</Title>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+        <Title level={2}>Ansible 自动化部署</Title>
+        <Space>
+          <Button 
+            type="dashed" 
+            onClick={() => {
+              authUtils.setTestToken();
+              message.success('测试身份验证已设置');
+            }}
+          >
+            设置测试身份验证
+          </Button>
+          <Button 
+            type="dashed" 
+            icon={<PlayCircleOutlined />}
+            onClick={handleLoadDemoData}
+            loading={loading}
+          >
+            加载演示数据
+          </Button>
+        </Space>
+      </div>
 
       {/* 统计卡片 */}
       {stats && (
@@ -1063,9 +1330,21 @@ const Ansible: React.FC = () => {
                     setModalVisible(true);
                     setEditingItem(null);
                     form.resetFields();
+                    // 设置主机默认值
+                    form.setFieldsValue({
+                      port: 22,
+                      connection_type: 'ssh',
+                      become_method: 'sudo'
+                    });
                   }}
                 >
                   新建主机
+                </Button>
+                <Button 
+                  icon={<CheckCircleOutlined />}
+                  onClick={() => setConnectionTestVisible(true)}
+                >
+                  连接测试
                 </Button>
                 <Button 
                   icon={<ReloadOutlined />}
@@ -1228,26 +1507,44 @@ const Ansible: React.FC = () => {
               <Form.Item name="ip_address" label="IP地址" rules={[{ required: true, type: 'string' }]}>
                 <Input placeholder="请输入IP地址" />
               </Form.Item>
-              <Form.Item name="port" label="SSH端口" rules={[{ required: true }]}>
-                <Input type="number" placeholder="22" defaultValue={22} />
+              <Form.Item name="port" label="SSH端口" rules={[{ required: true, message: '请输入SSH端口' }]}>
+                <Input type="number" placeholder="22" />
               </Form.Item>
               <Form.Item name="username" label="用户名" rules={[{ required: true }]}>
                 <Input placeholder="请输入用户名" />
               </Form.Item>
               <Form.Item name="connection_type" label="连接类型">
-                <Select placeholder="请选择连接类型" defaultValue="ssh">
+                <Select placeholder="请选择连接类型">
                   <Select.Option value="ssh">SSH</Select.Option>
                   <Select.Option value="winrm">WinRM</Select.Option>
                   <Select.Option value="local">本地</Select.Option>
                 </Select>
               </Form.Item>
               <Form.Item name="become_method" label="提权方式">
-                <Select placeholder="请选择提权方式" defaultValue="sudo">
+                <Select placeholder="请选择提权方式">
                   <Select.Option value="sudo">sudo</Select.Option>
                   <Select.Option value="su">su</Select.Option>
                   <Select.Option value="pbrun">pbrun</Select.Option>
                   <Select.Option value="pfexec">pfexec</Select.Option>
                 </Select>
+              </Form.Item>
+              <Form.Item name="credential" label="认证凭据">
+                <Select placeholder="请选择已有凭据或留空手动输入认证信息" allowClear>
+                  {credentials.map(cred => (
+                    <Select.Option key={cred.id} value={cred.id}>
+                      {cred.name} ({cred.credential_type_display})
+                    </Select.Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+                如果选择了认证凭据，将使用凭据中的认证信息；如果未选择，请在下方手动输入认证信息
+              </Text>
+              <Form.Item name="temp_password" label="临时密码（仅当未选择凭据时使用）">
+                <Input.Password placeholder="请输入密码" />
+              </Form.Item>
+              <Form.Item name="temp_ssh_key" label="临时SSH私钥（仅当未选择凭据时使用）">
+                <TextArea rows={4} placeholder="请输入SSH私钥内容" />
               </Form.Item>
               <Form.Item name="tags" label="主机标签">
                 <TextArea 
@@ -1477,6 +1774,88 @@ const Ansible: React.FC = () => {
           pagination={{ pageSize: 10 }}
         />
       </Modal>
+
+      {/* 连接测试模态框 */}
+      <ConnectionTestModal
+        visible={connectionTestVisible}
+        onCancel={() => setConnectionTestVisible(false)}
+        onSuccess={handleConnectionTestSuccess}
+      />
+
+      {/* 主机Facts详情模态框 */}
+      <HostFactsModal
+        visible={factsModalVisible}
+        host={selectedHost}
+        onCancel={() => {
+          setFactsModalVisible(false);
+          setSelectedHost(null);
+        }}
+      />
+
+      {/* 主机管理弹窗 */}
+      <InventoryHostModal
+        visible={inventoryHostModalVisible}
+        inventory={selectedInventory}
+        onCancel={() => {
+          setInventoryHostModalVisible(false);
+          setSelectedInventory(null);
+        }}
+        onRefresh={() => {
+          fetchInventories(); // 刷新主机清单列表
+        }}
+      />
+
+      {/* 执行日志弹窗 */}
+      <ExecutionLogsModal
+        visible={executionLogsModalVisible}
+        execution={selectedExecution}
+        onCancel={() => {
+          setExecutionLogsModalVisible(false);
+          setSelectedExecution(null);
+        }}
+      />
+
+      {/* 主机组管理弹窗 */}
+      <HostGroupModal
+        visible={hostGroupModalVisible}
+        hostGroup={selectedHostGroup}
+        onCancel={() => {
+          setHostGroupModalVisible(false);
+          setSelectedHostGroup(null);
+        }}
+        onRefresh={() => {
+          fetchHostGroups(); // 刷新主机组列表
+          fetchHosts(); // 刷新主机列表以更新组关联信息
+        }}
+      />
+
+      {/* 清单主机组管理弹窗 */}
+      <InventoryGroupModal
+        visible={inventoryGroupModalVisible}
+        inventory={selectedInventory}
+        onCancel={() => {
+          setInventoryGroupModalVisible(false);
+          setSelectedInventory(null);
+        }}
+        onRefresh={() => {
+          fetchInventories(); // 刷新清单列表以更新计数
+        }}
+      />
+
+      {/* 清单动态管理弹窗 */}
+      <InventoryDynamicGeneratorModal
+        visible={inventoryDynamicModalVisible}
+        inventory={selectedInventory}
+        onClose={() => {
+          setInventoryDynamicModalVisible(false);
+          setSelectedInventory(null);
+        }}
+        onSuccess={() => {
+          fetchInventories(); // 刷新清单列表以更新计数
+          fetchHosts(); // 刷新主机列表
+          fetchHostGroups(); // 刷新主机组列表
+        }}
+      />
     </div>
   );
 };

@@ -10,6 +10,10 @@ export interface AnsibleInventory {
   created_by_username: string;
   created_at: string;
   updated_at: string;
+  hosts_count?: number;
+  active_hosts_count?: number;
+  groups_count?: number;
+  active_groups_count?: number;
 }
 
 export interface AnsiblePlaybook {
@@ -125,6 +129,9 @@ export interface AnsibleHost {
   username: string;
   connection_type: string;
   become_method: string;
+  credential?: number | null;  // 关联的认证凭据ID
+  temp_password?: string;      // 临时密码
+  temp_ssh_key?: string;       // 临时SSH密钥
   status: 'active' | 'inactive' | 'failed' | 'unknown';
   status_display: string;
   last_check: string | null;
@@ -160,6 +167,7 @@ export interface AnsibleHostGroupMembership {
   id: number;
   host: AnsibleHost;
   group: AnsibleHostGroup;
+  variables: Record<string, any>;
   created_at: string;
 }
 
@@ -209,15 +217,56 @@ export interface HostConnectivityResult {
 }
 
 export interface HostFactsResult {
-  host_id: number;
-  hostname: string;
   success: boolean;
   facts?: Record<string, any>;
-  message?: string;
+  message: string;
+}
+
+export interface ConnectionTestRequest {
+  ip_address: string;
+  username: string;
+  port?: number;
+  connection_type?: string;
+  password?: string;
+  ssh_private_key?: string;
+}
+
+export interface ConnectionTestResult {
+  success: boolean;
+  message: string;
+  details?: {
+    return_code: number;
+    stdout: string;
+    stderr: string;
+    command: string;
+  };
 }
 
 export interface BatchHostOperation {
   action: 'check_connectivity' | 'gather_facts' | 'add_to_group' | 'remove_from_group';
   host_ids: number[];
   group_id?: number;
+}
+
+export interface InventoryGroup {
+  id: number;
+  inventory: number;
+  group: number;          // 兼容性字段
+  group_id: number;       // 后端实际返回的字段
+  group_name: string;
+  group_description: string;
+  inventory_name: string;
+  group_variables: Record<string, any>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+  hosts_count?: number;
+}
+
+export interface InventoryGroupBatch {
+  inventory_id: number;
+  group_ids: number[];
+  inventory_names?: string[];
+  group_variables?: Record<string, any>[];
+  is_active?: boolean;
 }

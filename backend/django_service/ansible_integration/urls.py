@@ -13,6 +13,8 @@ router.register(r'credentials', views.AnsibleCredentialViewSet, basename='creden
 router.register(r'executions', views.AnsibleExecutionViewSet, basename='ansible-execution')
 router.register(r'hosts', views.AnsibleHostViewSet, basename='ansible-host')
 router.register(r'host-groups', views.AnsibleHostGroupViewSet, basename='ansible-host-group')
+router.register(r'inventory-hosts', views.InventoryHostViewSet, basename='inventory-host')
+router.register(r'inventory-groups', views.InventoryGroupViewSet, basename='inventory-group')
 
 app_name = 'ansible_integration'
 

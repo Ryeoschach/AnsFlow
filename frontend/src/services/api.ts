@@ -9,8 +9,10 @@ import {
   ValidationResult, ExecutePlaybookRequest, ExecutePlaybookResponse,
   ExecutionLogsResponse, AnsibleStats, AnsibleExecutionList, AnsibleExecution,
   AnsibleHost, AnsibleHostGroup, AnsibleHostGroupMembership,
+  InventoryGroup, InventoryGroupBatch,
   AnsibleInventoryVersion, AnsiblePlaybookVersion,
   FileUploadRequest, FileUploadResponse, HostConnectivityResult, HostFactsResult, BatchHostOperation,
+  ConnectionTestRequest, ConnectionTestResult,
   ConditionEvaluationResult, ApprovalConfig, ApprovalRequest, ParallelGroup,
   // Settings 相关类型
   AuditLog, SystemAlert, GlobalConfig, UserProfile, BackupRecord, SystemMonitoringData,
@@ -556,6 +558,45 @@ class ApiService {
     return response.data
   }
 
+  // Inventory-Host 关联管理
+  async getInventoryHosts(inventoryId: number): Promise<any[]> {
+    const response = await this.api.get(`/ansible/inventories/${inventoryId}/hosts/`)
+    return response.data
+  }
+
+  async addHostsToInventory(inventoryId: number, data: {
+    host_ids: number[],
+    inventory_names?: string[],
+    host_variables?: any[],
+    is_active?: boolean
+  }): Promise<any> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/add_hosts/`, data)
+    return response.data
+  }
+
+  async removeHostsFromInventory(inventoryId: number, hostIds: number[]): Promise<any> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/remove_hosts/`, {
+      host_ids: hostIds
+    })
+    return response.data
+  }
+
+  async generateDynamicInventory(inventoryId: number, formatType?: string): Promise<{
+    content: string,
+    format_type: string,
+    hosts_count: number
+  }> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/generate_dynamic_inventory/`, {
+      format_type: formatType
+    })
+    return response.data
+  }
+
+  async syncInventoryHostsFromContent(inventoryId: number): Promise<any> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/sync_hosts_from_content/`)
+    return response.data
+  }
+
   // Playbooks
   async getAnsiblePlaybooks(params?: any): Promise<AnsiblePlaybook[]> {
     const response = await this.api.get('/ansible/playbooks/', { params })
@@ -1016,6 +1057,11 @@ class ApiService {
     return response.data
   }
 
+  async testConnection(data: ConnectionTestRequest): Promise<ConnectionTestResult> {
+    const response = await this.api.post('/ansible/hosts/test_connection/', data)
+    return response.data
+  }
+
   async batchHostOperation(data: BatchHostOperation): Promise<any> {
     const response = await this.api.post('/ansible/hosts/batch_operation/', data)
     return response.data
@@ -1052,6 +1098,74 @@ class ApiService {
 
   async removeHostFromGroup(groupId: number, hostId: number): Promise<void> {
     await this.api.post(`/ansible/host-groups/${groupId}/remove_host/`, { host_id: hostId })
+  }
+
+  // 批量操作方法
+  async addHostsToGroup(groupId: number, data: { host_ids: number[] }): Promise<void> {
+    await this.api.post(`/ansible/host-groups/${groupId}/add_hosts/`, data)
+  }
+
+  async removeHostsFromGroup(groupId: number, data: { host_ids: number[] }): Promise<void> {
+    await this.api.post(`/ansible/host-groups/${groupId}/remove_hosts/`, data)
+  }
+
+  async getHostGroupHosts(groupId: number): Promise<AnsibleHost[]> {
+    const response = await this.api.get(`/ansible/host-groups/${groupId}/hosts/`)
+    return response.data
+  }
+
+  async getHostGroupMembership(groupId: number, hostId: number): Promise<AnsibleHostGroupMembership> {
+    const response = await this.api.get(`/ansible/host-groups/${groupId}/hosts/${hostId}/`)
+    return response.data
+  }
+
+  async updateHostGroupMembership(groupId: number, hostId: number, data: { variables: Record<string, any> }): Promise<void> {
+    await this.api.put(`/ansible/host-groups/${groupId}/hosts/${hostId}/`, data)
+  }
+
+  // Inventory Groups Management
+  async getInventoryGroups(inventoryId: number): Promise<InventoryGroup[]> {
+    const response = await this.api.get(`/ansible/inventories/${inventoryId}/groups/`)
+    return response.data
+  }
+
+  async addGroupsToInventory(inventoryId: number, data: { group_ids: number[] }): Promise<{ message: string; added_count: number }> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/add_groups/`, data)
+    return response.data
+  }
+
+  async removeGroupsFromInventory(inventoryId: number, data: { group_ids: number[] }): Promise<{ message: string; removed_count: number }> {
+    const response = await this.api.post(`/ansible/inventories/${inventoryId}/remove_groups/`, data)
+    return response.data
+  }
+
+  // Generate dynamic inventory
+  async generateInventory(inventoryId: number): Promise<{
+    content: string;
+    format_type: string;
+    hosts_count: number;
+    groups_count: number;
+    summary: string;
+  }> {
+    const response = await this.api.get(`/ansible/inventories/${inventoryId}/generate_inventory/`)
+    return response.data
+  }
+
+  async batchAddInventoryGroups(data: InventoryGroupBatch): Promise<{ message: string; added_count: number }> {
+    const response = await this.api.post('/ansible/inventory-groups/batch_add/', data)
+    return response.data
+  }
+
+  async batchRemoveInventoryGroups(inventoryId: number, groupIds: number[]): Promise<{ message: string; removed_count: number }> {
+    const response = await this.api.post('/ansible/inventory-groups/batch_remove/', {
+      inventory_id: inventoryId,
+      group_ids: groupIds
+    })
+    return response.data
+  }
+
+  async updateInventoryGroup(inventoryGroupId: number, data: { group_variables: Record<string, any> }): Promise<void> {
+    await this.api.put(`/ansible/inventory-groups/${inventoryGroupId}/`, data)
   }
 
   // File Upload

@@ -449,3 +449,6 @@ SIMPLE_JWT = {
 
 # URL配置
 APPEND_SLASH = False  # 禁用自动添加斜杠，避免POST请求重定向问题
+
+# 加密配置
+ENCRYPTION_KEY = env('ENCRYPTION_KEY', default='K8x6P7_q5mZtTrI1xvU2oN4YzW9eV3jA0lDcE8nRfQg=')

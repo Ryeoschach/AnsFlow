@@ -14,7 +14,8 @@ import {
   FolderOutlined,
   BarChartOutlined,
   ApiOutlined,
-  ContainerOutlined
+  ContainerOutlined,
+  BugOutlined
 } from '@ant-design/icons'
 import { useNavigate, useLocation } from 'react-router-dom'
 import { useAuthStore } from '../../stores/auth'
@@ -96,6 +97,11 @@ const MainLayout: React.FC<MainLayoutProps> = ({ children }) => {
       key: '/settings',
       icon: <SettingOutlined />,
       label: '设置',
+    },
+    {
+      key: '/debug',
+      icon: <BugOutlined />,
+      label: '调试工具',
     },
   ]
 

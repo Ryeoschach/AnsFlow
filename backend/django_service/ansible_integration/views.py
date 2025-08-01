@@ -14,11 +14,15 @@ from django.core.files.storage import default_storage
 from django.core.files.base import ContentFile
 from rest_framework.parsers import MultiPartParser, FormParser
 
-from .models import AnsibleInventory, AnsiblePlaybook, AnsibleCredential, AnsibleExecution
+from .models import (
+    AnsibleInventory, AnsiblePlaybook, AnsibleCredential, AnsibleExecution,
+    AnsibleHost, AnsibleHostGroup, InventoryHost, InventoryGroup
+)
 from .serializers import (
     AnsibleInventorySerializer, AnsiblePlaybookSerializer, 
     AnsibleCredentialSerializer, AnsibleExecutionSerializer,
-    AnsibleExecutionListSerializer, AnsibleStatsSerializer
+    AnsibleExecutionListSerializer, AnsibleStatsSerializer,
+    InventoryGroupSerializer, InventoryGroupBatchSerializer
 )
 from .tasks import execute_ansible_playbook
 
@@ -220,6 +224,531 @@ class AnsibleInventoryViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({
                 'error': f'版本恢复失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def hosts(self, request, pk=None):
+        """获取清单关联的主机"""
+        from .models import InventoryHost
+        from .serializers import InventoryHostSerializer
+        
+        inventory = self.get_object()
+        inventory_hosts = InventoryHost.objects.filter(inventory=inventory).select_related('host')
+        
+        # 是否只显示激活的主机
+        is_active = request.query_params.get('is_active')
+        if is_active is not None:
+            inventory_hosts = inventory_hosts.filter(is_active=is_active.lower() == 'true')
+        
+        serializer = InventoryHostSerializer(inventory_hosts, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['get'])
+    def generate_inventory(self, request, pk=None):
+        """生成动态清单内容，包含主机和主机组"""
+        from .models import InventoryHost, InventoryGroup, AnsibleHostGroupMembership
+        
+        inventory = self.get_object()
+        # 获取清单中的主机
+        inventory_hosts = InventoryHost.objects.filter(
+            inventory=inventory, 
+            is_active=True
+        ).select_related('host')
+        
+        # 获取清单中的主机组
+        inventory_groups = InventoryGroup.objects.filter(
+            inventory=inventory,
+            is_active=True
+        ).select_related('group')
+        
+        # 生成INI格式的清单
+        if inventory.format_type == 'ini':
+            lines = []
+            
+            # 添加单独的主机（不属于任何主机组的）
+            ungrouped_hosts = []
+            for ih in inventory_hosts:
+                # 检查主机是否属于清单中的任何主机组
+                host_in_group = False
+                for ig in inventory_groups:
+                    if AnsibleHostGroupMembership.objects.filter(
+                        host=ih.host, 
+                        group=ig.group
+                    ).exists():
+                        host_in_group = True
+                        break
+                
+                if not host_in_group:
+                    host_line = f"{ih.inventory_name} ansible_host={ih.host.ip_address}"
+                    if ih.host.port != 22:
+                        host_line += f" ansible_port={ih.host.port}"
+                    if ih.host.username:
+                        host_line += f" ansible_user={ih.host.username}"
+                    
+                    # 添加主机变量
+                    if ih.host_variables:
+                        for key, value in ih.host_variables.items():
+                            host_line += f" {key}={value}"
+                    
+                    ungrouped_hosts.append(host_line)
+            
+            # 如果有未分组的主机，添加[ungrouped]组
+            if ungrouped_hosts:
+                lines.append('[ungrouped]')
+                lines.extend(ungrouped_hosts)
+                lines.append('')
+            
+            # 添加主机组
+            for ig in inventory_groups:
+                group = ig.group
+                lines.append(f'[{ig.inventory_name}]')
+                
+                # 获取组内的主机（通过membership关系）
+                memberships = AnsibleHostGroupMembership.objects.filter(
+                    group=group
+                ).select_related('host')
+                
+                for membership in memberships:
+                    host = membership.host
+                    # 检查该主机是否也在清单中
+                    try:
+                        ih = InventoryHost.objects.get(inventory=inventory, host=host, is_active=True)
+                        host_line = f"{ih.inventory_name} ansible_host={host.ip_address}"
+                        if host.port != 22:
+                            host_line += f" ansible_port={host.port}"
+                        if host.username:
+                            host_line += f" ansible_user={host.username}"
+                        
+                        # 添加主机变量（合并清单变量和组成员变量）
+                        combined_vars = {}
+                        if ih.host_variables:
+                            combined_vars.update(ih.host_variables)
+                        if membership.variables:
+                            combined_vars.update(membership.variables)
+                        
+                        for key, value in combined_vars.items():
+                            host_line += f" {key}={value}"
+                        
+                        lines.append(host_line)
+                    except InventoryHost.DoesNotExist:
+                        continue
+                
+                # 添加组变量
+                if ig.group_variables:
+                    lines.append('')
+                    lines.append(f'[{ig.inventory_name}:vars]')
+                    for key, value in ig.group_variables.items():
+                        lines.append(f'{key}={value}')
+                
+                lines.append('')
+            
+            dynamic_content = '\n'.join(lines).strip()
+            
+        else:
+            # YAML格式
+            inventory_data = {'all': {'hosts': {}, 'children': {}}}
+            
+            # 添加单独的主机
+            for ih in inventory_hosts:
+                # 检查主机是否属于清单中的任何主机组
+                host_in_group = False
+                for ig in inventory_groups:
+                    if AnsibleHostGroupMembership.objects.filter(
+                        host=ih.host, 
+                        group=ig.group
+                    ).exists():
+                        host_in_group = True
+                        break
+                
+                if not host_in_group:
+                    host_vars = {
+                        'ansible_host': ih.host.ip_address,
+                        'ansible_user': ih.host.username or 'root',
+                    }
+                    if ih.host.port != 22:
+                        host_vars['ansible_port'] = ih.host.port
+                    
+                    # 合并主机变量
+                    if ih.host_variables:
+                        host_vars.update(ih.host_variables)
+                    
+                    inventory_data['all']['hosts'][ih.inventory_name] = host_vars
+            
+            # 添加主机组
+            for ig in inventory_groups:
+                group_data = {'hosts': {}, 'vars': {}}
+                
+                # 获取组内的主机（通过membership关系）
+                memberships = AnsibleHostGroupMembership.objects.filter(
+                    group=ig.group
+                ).select_related('host')
+                
+                for membership in memberships:
+                    host = membership.host
+                    try:
+                        ih = InventoryHost.objects.get(inventory=inventory, host=host, is_active=True)
+                        host_vars = {
+                            'ansible_host': host.ip_address,
+                            'ansible_user': host.username or 'root',
+                        }
+                        if host.port != 22:
+                            host_vars['ansible_port'] = host.port
+                        
+                        # 合并主机变量（清单变量 + 组成员变量）
+                        if ih.host_variables:
+                            host_vars.update(ih.host_variables)
+                        if membership.variables:
+                            host_vars.update(membership.variables)
+                        
+                        group_data['hosts'][ih.inventory_name] = host_vars
+                    except InventoryHost.DoesNotExist:
+                        continue
+                
+                # 添加组变量
+                if ig.group_variables:
+                    group_data['vars'].update(ig.group_variables)
+                
+                # 清理空的vars
+                if not group_data['vars']:
+                    del group_data['vars']
+                
+                inventory_data['all']['children'][ig.inventory_name] = group_data
+            
+            # 转换为简单YAML格式字符串（避免依赖PyYAML）
+            def dict_to_yaml(data, indent=0):
+                yaml_str = ""
+                prefix = "  " * indent
+                for key, value in data.items():
+                    yaml_str += f"{prefix}{key}:\n"
+                    if isinstance(value, dict):
+                        yaml_str += dict_to_yaml(value, indent + 1)
+                    else:
+                        yaml_str += f"{prefix}  {value}\n"
+                return yaml_str
+            
+            dynamic_content = dict_to_yaml(inventory_data)
+        
+        total_hosts = inventory_hosts.count()
+        total_groups = inventory_groups.count()
+        
+        return Response({
+            'content': dynamic_content,
+            'format_type': inventory.format_type,
+            'hosts_count': total_hosts,
+            'groups_count': total_groups,
+            'summary': f'包含 {total_hosts} 个主机和 {total_groups} 个主机组'
+        })
+
+    @action(detail=True, methods=['post'])
+    def add_hosts(self, request, pk=None):
+        """为清单添加主机"""
+        from .models import AnsibleHost, InventoryHost
+        
+        inventory = self.get_object()
+        host_ids = request.data.get('host_ids', [])
+        inventory_names = request.data.get('inventory_names', [])
+        host_variables = request.data.get('host_variables', [])
+        is_active = request.data.get('is_active', True)
+        
+        if not host_ids:
+            return Response({
+                'error': '请提供host_ids'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            hosts = AnsibleHost.objects.filter(id__in=host_ids)
+            
+            added_count = 0
+            errors = []
+            
+            for i, host in enumerate(hosts):
+                try:
+                    # 获取对应的inventory_name和host_variables
+                    inventory_name = inventory_names[i] if i < len(inventory_names) else host.hostname
+                    variables = host_variables[i] if i < len(host_variables) else {}
+                    
+                    _, created = InventoryHost.objects.get_or_create(
+                        inventory=inventory,
+                        host=host,
+                        defaults={
+                            'inventory_name': inventory_name,
+                            'host_variables': variables,
+                            'is_active': is_active
+                        }
+                    )
+                    if created:
+                        added_count += 1
+                    else:
+                        errors.append(f'主机 {host.hostname} 已存在于清单中')
+                except Exception as e:
+                    errors.append(f'添加主机 {host.hostname} 失败: {str(e)}')
+            
+            return Response({
+                'message': f'成功添加 {added_count} 个主机到清单',
+                'added_count': added_count,
+                'errors': errors
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'批量添加失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def remove_hosts(self, request, pk=None):
+        """从清单中移除主机"""
+        from .models import InventoryHost
+        
+        inventory = self.get_object()
+        host_ids = request.data.get('host_ids', [])
+        
+        if not host_ids:
+            return Response({
+                'error': '请提供host_ids'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            removed_count = InventoryHost.objects.filter(
+                inventory=inventory,
+                host_id__in=host_ids
+            ).delete()[0]
+            
+            return Response({
+                'message': f'成功从清单中移除 {removed_count} 个主机',
+                'removed_count': removed_count
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'批量移除失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def generate_dynamic_inventory(self, request, pk=None):
+        """生成动态主机清单"""
+        from .models import InventoryHost
+        
+        inventory = self.get_object()
+        format_type = request.data.get('format_type', inventory.format_type or 'ini')
+        
+        try:
+            # 获取清单关联的主机
+            inventory_hosts = InventoryHost.objects.filter(
+                inventory=inventory,
+                is_active=True
+            ).select_related('host')
+            
+            if not inventory_hosts.exists():
+                return Response({
+                    'error': '清单中没有关联的主机'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            content = ""
+            hosts_count = inventory_hosts.count()
+            
+            if format_type.lower() == 'yaml':
+                # 生成YAML格式的清单
+                inventory_data = {}
+                
+                # 按组织结构生成
+                for inv_host in inventory_hosts:
+                    host = inv_host.host
+                    group_name = inv_host.inventory_name or 'ungrouped'
+                    
+                    if group_name not in inventory_data:
+                        inventory_data[group_name] = {
+                            'hosts': {}
+                        }
+                    
+                    # 构建主机信息
+                    host_info = {
+                        'ansible_host': host.ip_address,
+                        'ansible_port': host.port or 22,
+                        'ansible_user': host.username,
+                    }
+                    
+                    # 添加连接类型
+                    if host.connection_type:
+                        host_info['ansible_connection'] = host.connection_type
+                    
+                    # 添加提权方式
+                    if host.become_method:
+                        host_info['ansible_become_method'] = host.become_method
+                    
+                    # 合并主机变量
+                    if inv_host.host_variables:
+                        host_info.update(inv_host.host_variables)
+                    
+                    inventory_data[group_name]['hosts'][host.hostname] = host_info
+                
+                # 简单的YAML输出
+                content = ""
+                for group_name, group_data in inventory_data.items():
+                    content += f"{group_name}:\n"
+                    if 'hosts' in group_data:
+                        content += "  hosts:\n"
+                        for host_name, host_vars in group_data['hosts'].items():
+                            content += f"    {host_name}:\n"
+                            for key, value in host_vars.items():
+                                content += f"      {key}: {value}\n"
+                
+            else:
+                # 生成INI格式的清单
+                groups = {}
+                
+                # 按组织结构分组
+                for inv_host in inventory_hosts:
+                    host = inv_host.host
+                    group_name = inv_host.inventory_name or 'ungrouped'
+                    
+                    if group_name not in groups:
+                        groups[group_name] = []
+                    
+                    # 构建主机行
+                    host_line = f"{host.hostname} ansible_host={host.ip_address}"
+                    
+                    if host.port and host.port != 22:
+                        host_line += f" ansible_port={host.port}"
+                    
+                    if host.username:
+                        host_line += f" ansible_user={host.username}"
+                    
+                    if host.connection_type:
+                        host_line += f" ansible_connection={host.connection_type}"
+                    
+                    if host.become_method:
+                        host_line += f" ansible_become_method={host.become_method}"
+                    
+                    # 添加主机变量
+                    if inv_host.host_variables:
+                        for key, value in inv_host.host_variables.items():
+                            host_line += f" {key}={value}"
+                    
+                    groups[group_name].append(host_line)
+                
+                # 生成INI内容
+                content_lines = []
+                for group_name, hosts in groups.items():
+                    content_lines.append(f"[{group_name}]")
+                    content_lines.extend(hosts)
+                    content_lines.append("")  # 空行分隔组
+                
+                content = "\n".join(content_lines).strip()
+            
+            return Response({
+                'content': content,
+                'format_type': format_type,
+                'hosts_count': hosts_count,
+                'message': f'成功生成包含 {hosts_count} 个主机的动态清单'
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'生成动态清单失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'])
+    def groups(self, request, pk=None):
+        """获取清单中的主机组列表"""
+        inventory = self.get_object()
+        groups = InventoryGroup.objects.filter(inventory=inventory).select_related('group')
+        
+        data = []
+        for inv_group in groups:
+            data.append({
+                'id': inv_group.id,
+                'group_id': inv_group.group.id,
+                'group_name': inv_group.group.name,
+                'group_description': inv_group.group.description,
+                'inventory_name': inv_group.inventory_name,
+                'group_variables': inv_group.group_variables,
+                'is_active': inv_group.is_active,
+                'hosts_count': inv_group.group.ansiblehostgroupmembership_set.count(),
+                'created_at': inv_group.created_at
+            })
+        
+        return Response(data)
+
+    @action(detail=True, methods=['post'])
+    def add_groups(self, request, pk=None):
+        """批量添加主机组到清单"""
+        inventory = self.get_object()
+        group_ids = request.data.get('group_ids', [])
+        
+        if not group_ids:
+            return Response({
+                'error': '请提供主机组ID列表'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            added_count = 0
+            for group_id in group_ids:
+                try:
+                    group = AnsibleHostGroup.objects.get(id=group_id)
+                    inventory_group, created = InventoryGroup.objects.get_or_create(
+                        inventory=inventory,
+                        group=group,
+                        defaults={
+                            'inventory_name': group.name,
+                            'group_variables': {},
+                            'is_active': True
+                        }
+                    )
+                    if created:
+                        added_count += 1
+                except AnsibleHostGroup.DoesNotExist:
+                    continue
+            
+            return Response({
+                'message': f'成功添加 {added_count} 个主机组到清单',
+                'added_count': added_count
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'添加主机组失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def remove_groups(self, request, pk=None):
+        """批量从清单中移除主机组"""
+        inventory = self.get_object()
+        group_ids = request.data.get('group_ids', [])
+        
+        if not group_ids:
+            return Response({
+                'error': '请提供主机组ID列表'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # 删除InventoryGroup关联记录
+            removed_count = InventoryGroup.objects.filter(
+                inventory=inventory,
+                group_id__in=group_ids
+            ).delete()[0]
+            
+            # 强制刷新inventory对象以确保统计数据更新
+            inventory.refresh_from_db()
+            
+            # 手动计算最新的统计数据
+            current_groups_count = InventoryGroup.objects.filter(inventory=inventory).count()
+            current_active_groups_count = InventoryGroup.objects.filter(
+                inventory=inventory, 
+                is_active=True
+            ).count()
+            
+            return Response({
+                'message': f'成功从清单中移除 {removed_count} 个主机组',
+                'removed_count': removed_count,
+                'current_stats': {
+                    'groups_count': current_groups_count,
+                    'active_groups_count': current_active_groups_count
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'移除主机组失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
 
 
@@ -807,9 +1336,12 @@ class ExecutePlaybookView(APIView):
                 'status': 'pending'
             }
             
-            execution_serializer = AnsibleExecutionSerializer(data=execution_data)
+            execution_serializer = AnsibleExecutionSerializer(
+                data=execution_data,
+                context={'request': request}
+            )
             execution_serializer.is_valid(raise_exception=True)
-            execution = execution_serializer.save(created_by=request.user)
+            execution = execution_serializer.save()
             
             # 启动执行任务
             try:
@@ -1027,18 +1559,82 @@ class AnsibleHostViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def check_connectivity(self, request, pk=None):
-        """检查主机连通性"""
+        """检查主机连通性 - 支持多种认证方式"""
         host = self.get_object()
         
         try:
-            # 使用ansible命令检查连通性
-            result = subprocess.run([
-                'ansible', f'{host.ip_address}',
-                '-m', 'ping',
-                '-u', host.username,
-                '-p', str(host.port),
-                '--timeout=10'
-            ], capture_output=True, text=True, timeout=15)
+            import tempfile
+            import os
+            
+            # 获取认证方式
+            auth_method = host.get_auth_method()
+            
+            if auth_method == 'none':
+                return Response({
+                    'success': False,
+                    'message': '未配置认证凭据，请先配置SSH密钥或密码'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 创建临时inventory文件
+            inventory_content = f"{host.ip_address} ansible_user={host.username} ansible_port={host.port} ansible_connection={host.connection_type}"
+            
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.ini') as f:
+                f.write("[targets]\n")
+                f.write(inventory_content + "\n")
+                inventory_file = f.name
+            
+            # 准备临时文件路径
+            temp_files = []
+            
+            try:
+                # 构建ansible命令参数
+                ansible_cmd = [
+                    'ansible', 'targets',
+                    '-i', inventory_file,
+                    '-m', 'ping',
+                    '--timeout=20',
+                    '--ssh-common-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+                ]
+                
+                # 根据认证方式添加相应参数
+                if auth_method == 'ssh_key':
+                    # 使用SSH密钥认证
+                    ssh_key = host.get_auth_ssh_key()
+                    if ssh_key:
+                        # 确保SSH密钥以换行符结尾
+                        if not ssh_key.endswith('\n'):
+                            ssh_key += '\n'
+                        
+                        # 创建临时密钥文件
+                        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
+                            key_file.write(ssh_key)
+                            key_file_path = key_file.name
+                        
+                        # 设置密钥文件权限
+                        os.chmod(key_file_path, 0o600)
+                        temp_files.append(key_file_path)
+                        
+                        ansible_cmd.extend(['--private-key', key_file_path])
+                
+                elif auth_method == 'password':
+                    # 使用密码认证
+                    password = host.get_auth_password()
+                    if password:
+                        # 使用sshpass进行密码认证
+                        ansible_cmd = ['sshpass', '-p', password] + ansible_cmd
+                
+                # 执行ansible命令检查连通性
+                result = subprocess.run(
+                    ansible_cmd, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=25
+                )
+            finally:
+                # 删除所有临时文件
+                for temp_file in temp_files + [inventory_file]:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
             
             if result.returncode == 0:
                 host.status = 'active'
@@ -1052,6 +1648,7 @@ class AnsibleHostViewSet(viewsets.ModelViewSet):
             
             return Response({
                 'success': result.returncode == 0,
+                'hostname': host.hostname,
                 'status': host.status,
                 'message': host.check_message,
                 'checked_at': host.last_check
@@ -1065,6 +1662,7 @@ class AnsibleHostViewSet(viewsets.ModelViewSet):
             
             return Response({
                 'success': False,
+                'hostname': host.hostname,
                 'status': 'failed',
                 'message': '连接超时',
                 'checked_at': host.last_check
@@ -1072,70 +1670,285 @@ class AnsibleHostViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({
                 'success': False,
+                'hostname': host.hostname,
                 'message': f'连接检查失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def test_connection(self, request):
+        """测试主机连接 - 无需创建主机记录"""
+        try:
+            # 获取测试参数
+            data = request.data
+            required_fields = ['ip_address', 'username']
+            
+            for field in required_fields:
+                if field not in data:
+                    return Response({
+                        'success': False,
+                        'message': f'缺少必填字段: {field}'
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            ip_address = data['ip_address']
+            username = data['username']
+            port = data.get('port', 22)
+            connection_type = data.get('connection_type', 'ssh')
+            
+            # 认证信息
+            password = data.get('password', '')
+            ssh_private_key = data.get('ssh_private_key', '')
+            
+            if not password and not ssh_private_key:
+                return Response({
+                    'success': False,
+                    'message': '请提供密码或SSH私钥进行认证'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            import tempfile
+            import os
+            
+            # 创建临时inventory文件
+            inventory_content = f"{ip_address} ansible_user={username} ansible_port={port} ansible_connection={connection_type}"
+            
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.ini') as f:
+                f.write("[targets]\n")
+                f.write(inventory_content + "\n")
+                inventory_file = f.name
+            
+            temp_files = [inventory_file]
+            
+            try:
+                # 构建ansible命令
+                ansible_cmd = [
+                    'ansible', 'targets',
+                    '-i', inventory_file,
+                    '-m', 'ping',
+                    '--timeout=10',
+                    '--ssh-common-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=10'
+                ]
+                
+                # 根据认证方式添加参数
+                if ssh_private_key:
+                    # SSH密钥认证
+                    with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
+                        key_file.write(ssh_private_key)
+                        key_file_path = key_file.name
+                    
+                    os.chmod(key_file_path, 0o600)
+                    temp_files.append(key_file_path)
+                    ansible_cmd.extend(['--private-key', key_file_path])
+                    
+                elif password:
+                    # 密码认证
+                    with tempfile.NamedTemporaryFile(mode='w', delete=False) as pass_file:
+                        pass_file.write(password)
+                        pass_file_path = pass_file.name
+                    
+                    temp_files.append(pass_file_path)
+                    ansible_cmd.extend(['--connection-password-file', pass_file_path])
+                
+                # 执行测试
+                result = subprocess.run(
+                    ansible_cmd,
+                    capture_output=True,
+                    text=True,
+                    timeout=20
+                )
+                
+                success = result.returncode == 0
+                
+                if success:
+                    message = '连接测试成功！可以正常访问目标主机。'
+                else:
+                    # 分析错误信息
+                    error_output = result.stderr.lower()
+                    if 'permission denied' in error_output:
+                        message = '认证失败：用户名、密码或密钥不正确'
+                    elif 'connection timed out' in error_output or 'timeout' in error_output:
+                        message = '连接超时：请检查网络连通性和防火墙设置'
+                    elif 'connection refused' in error_output:
+                        message = 'SSH连接被拒绝：请检查SSH服务是否运行和端口是否正确'
+                    elif 'host key verification failed' in error_output:
+                        message = '主机密钥验证失败：这通常不应该发生（已禁用检查）'
+                    else:
+                        message = f'连接失败：{result.stderr or result.stdout}'
+                
+                return Response({
+                    'success': success,
+                    'message': message,
+                    'details': {
+                        'return_code': result.returncode,
+                        'stdout': result.stdout,
+                        'stderr': result.stderr,
+                        'command': ' '.join(ansible_cmd[:-2] + ['--private-key', '***'] if '--private-key' in ansible_cmd else ansible_cmd)
+                    }
+                })
+                
+            finally:
+                # 清理临时文件
+                for temp_file in temp_files:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                        
+        except subprocess.TimeoutExpired:
+            return Response({
+                'success': False,
+                'message': '连接测试超时，请检查网络连接和目标主机状态'
+            }, status=status.HTTP_408_REQUEST_TIMEOUT)
+        except Exception as e:
+            return Response({
+                'success': False,
+                'message': f'连接测试失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
 
     @action(detail=True, methods=['post'])
     def gather_facts(self, request, pk=None):
-        """收集主机信息"""
+        """收集主机信息 - 支持多种认证方式"""
         host = self.get_object()
         
         try:
-            # 使用ansible setup模块收集信息
-            result = subprocess.run([
-                'ansible', f'{host.ip_address}',
-                '-m', 'setup',
-                '-u', host.username,
-                '-p', str(host.port),
-                '--timeout=30'
-            ], capture_output=True, text=True, timeout=35)
+            import tempfile
+            import os
             
-            if result.returncode == 0:
-                import json
-                # 解析ansible facts
-                facts_output = result.stdout
-                # 提取JSON部分（ansible输出格式）
-                try:
-                    facts_start = facts_output.find('{')
-                    facts_json = facts_output[facts_start:]
-                    facts = json.loads(facts_json)
-                    
-                    ansible_facts = facts.get('ansible_facts', {})
-                    
-                    # 更新主机信息
-                    host.os_family = ansible_facts.get('ansible_os_family', '')
-                    host.os_distribution = ansible_facts.get('ansible_distribution', '')
-                    host.os_version = ansible_facts.get('ansible_distribution_version', '')
-                    host.ansible_facts = ansible_facts
-                    host.status = 'active'
-                    host.last_check = timezone.now()
-                    host.save()
-                    
-                    return Response({
-                        'success': True,
-                        'facts': ansible_facts,
-                        'message': '主机信息收集成功'
-                    })
-                    
-                except json.JSONDecodeError:
-                    return Response({
-                        'success': False,
-                        'message': 'Facts数据解析失败'
-                    }, status=status.HTTP_400_BAD_REQUEST)
-            else:
+            # 获取认证方式
+            auth_method = host.get_auth_method()
+            
+            if auth_method == 'none':
                 return Response({
                     'success': False,
-                    'message': result.stderr or result.stdout
+                    'message': '未配置认证凭据，请先配置SSH密钥或密码'
                 }, status=status.HTTP_400_BAD_REQUEST)
+            
+            # 创建临时inventory文件
+            inventory_content = f"{host.ip_address} ansible_user={host.username} ansible_port={host.port} ansible_connection={host.connection_type}"
+            
+            with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.ini') as f:
+                f.write("[targets]\n")
+                f.write(inventory_content + "\n")
+                inventory_file = f.name
+            
+            # 准备临时文件路径
+            temp_files = []
+            
+            try:
+                # 构建ansible命令参数
+                ansible_cmd = [
+                    'ansible', 'targets',
+                    '-i', inventory_file,
+                    '-m', 'setup',
+                    '--timeout=30',
+                    '--ssh-common-args=-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+                ]
                 
+                # 根据认证方式添加相应参数
+                if auth_method == 'ssh_key':
+                    # 使用SSH密钥认证
+                    ssh_key = host.get_auth_ssh_key()
+                    if ssh_key:
+                        # 确保SSH密钥以换行符结尾
+                        if not ssh_key.endswith('\n'):
+                            ssh_key += '\n'
+                        
+                        # 创建临时密钥文件
+                        with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.pem') as key_file:
+                            key_file.write(ssh_key)
+                            key_file_path = key_file.name
+                        
+                        # 设置密钥文件权限
+                        os.chmod(key_file_path, 0o600)
+                        temp_files.append(key_file_path)
+                        
+                        ansible_cmd.extend(['--private-key', key_file_path])
+                
+                elif auth_method == 'password':
+                    # 使用密码认证
+                    password = host.get_auth_password()
+                    if password:
+                        # 使用sshpass进行密码认证
+                        ansible_cmd = ['sshpass', '-p', password] + ansible_cmd
+                
+                # 执行ansible命令收集Facts
+                result = subprocess.run(
+                    ansible_cmd, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=35
+                )
+                
+                if result.returncode == 0:
+                    import json
+                    # 解析ansible facts
+                    facts_output = result.stdout
+                    # 提取JSON部分（ansible输出格式）
+                    try:
+                        facts_start = facts_output.find('{')
+                        facts_json = facts_output[facts_start:]
+                        facts = json.loads(facts_json)
+                        
+                        ansible_facts = facts.get('ansible_facts', {})
+                        
+                        # 更新主机信息
+                        host.os_family = ansible_facts.get('ansible_os_family', '')
+                        host.os_distribution = ansible_facts.get('ansible_distribution', '')
+                        host.os_version = ansible_facts.get('ansible_distribution_version', '')
+                        host.ansible_facts = ansible_facts
+                        host.status = 'active'
+                        host.last_check = timezone.now()
+                        host.save()
+                        
+                        return Response({
+                            'success': True,
+                            'hostname': host.hostname,
+                            'facts': ansible_facts,
+                            'message': '主机信息收集成功'
+                        })
+                        
+                    except json.JSONDecodeError:
+                        return Response({
+                            'success': False,
+                            'hostname': host.hostname,
+                            'message': 'Facts数据解析失败',
+                            'details': {
+                                'stdout': result.stdout,
+                                'stderr': result.stderr
+                            }
+                        }, status=status.HTTP_400_BAD_REQUEST)
+                else:
+                    return Response({
+                        'success': False,
+                        'hostname': host.hostname,
+                        'message': 'Facts收集失败',
+                        'details': {
+                            'return_code': result.returncode,
+                            'stdout': result.stdout,
+                            'stderr': result.stderr,
+                            'command': ' '.join(ansible_cmd)
+                        }
+                    }, status=status.HTTP_400_BAD_REQUEST)
+            
+            finally:
+                # 清理临时文件
+                try:
+                    os.unlink(inventory_file)
+                except:
+                    pass
+                
+                for temp_file in temp_files:
+                    try:
+                        os.unlink(temp_file)
+                    except:
+                        pass
+                        
         except subprocess.TimeoutExpired:
             return Response({
                 'success': False,
+                'hostname': host.hostname,
                 'message': 'Facts收集超时'
             }, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({
                 'success': False,
+                'hostname': host.hostname,
                 'message': f'Facts收集失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)
 
@@ -1275,4 +2088,285 @@ class AnsibleHostGroupViewSet(viewsets.ModelViewSet):
         except Exception as e:
             return Response({
                 'error': f'移除主机失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['get'], url_path='hosts/(?P<host_id>[^/.]+)')
+    def get_host_membership(self, request, pk=None, host_id=None):
+        """获取主机在组中的成员关系信息"""
+        group = self.get_object()
+        
+        try:
+            from .models import AnsibleHostGroupMembership
+            membership = AnsibleHostGroupMembership.objects.get(
+                group=group,
+                host_id=host_id
+            )
+            
+            return Response({
+                'id': membership.id,
+                'host_id': membership.host.id,
+                'group_id': membership.group.id,
+                'variables': membership.variables,
+                'created_at': membership.created_at
+            })
+            
+        except AnsibleHostGroupMembership.DoesNotExist:
+            return Response({
+                'error': '主机不在此组中'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+    @action(detail=True, methods=['put'], url_path='hosts/(?P<host_id>[^/.]+)')
+    def update_host_membership(self, request, pk=None, host_id=None):
+        """更新主机在组中的成员关系信息"""
+        group = self.get_object()
+        
+        try:
+            from .models import AnsibleHostGroupMembership
+            membership = AnsibleHostGroupMembership.objects.get(
+                group=group,
+                host_id=host_id
+            )
+            
+            variables = request.data.get('variables', {})
+            membership.variables = variables
+            membership.save()
+            
+            return Response({
+                'message': '主机变量更新成功',
+                'variables': membership.variables
+            })
+            
+        except AnsibleHostGroupMembership.DoesNotExist:
+            return Response({
+                'error': '主机不在此组中'
+            }, status=status.HTTP_404_NOT_FOUND)
+
+
+class InventoryHostViewSet(viewsets.ModelViewSet):
+    """Inventory与Host关联管理视图集"""
+    permission_classes = [IsAuthenticated]
+    
+    def get_serializer_class(self):
+        from .serializers import InventoryHostSerializer, InventoryHostCreateSerializer
+        if self.action == 'create':
+            return InventoryHostCreateSerializer
+        return InventoryHostSerializer
+    
+    def get_queryset(self):
+        from .models import InventoryHost
+        queryset = InventoryHost.objects.select_related('inventory', 'host')
+        
+        # 根据inventory过滤
+        inventory_id = self.request.query_params.get('inventory_id')
+        if inventory_id:
+            queryset = queryset.filter(inventory_id=inventory_id)
+        
+        # 根据host过滤
+        host_id = self.request.query_params.get('host_id')
+        if host_id:
+            queryset = queryset.filter(host_id=host_id)
+            
+        # 激活状态过滤
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+        
+        return queryset.order_by('inventory__name', 'inventory_name')
+
+    @action(detail=False, methods=['post'])
+    def batch_add(self, request):
+        """批量添加主机到清单"""
+        from .models import AnsibleInventory, AnsibleHost, InventoryHost
+        
+        inventory_id = request.data.get('inventory_id')
+        host_ids = request.data.get('host_ids', [])
+        
+        if not inventory_id or not host_ids:
+            return Response({
+                'error': '请提供inventory_id和host_ids'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            inventory = AnsibleInventory.objects.get(id=inventory_id)
+            hosts = AnsibleHost.objects.filter(id__in=host_ids)
+            
+            added_count = 0
+            errors = []
+            
+            for host in hosts:
+                try:
+                    _, created = InventoryHost.objects.get_or_create(
+                        inventory=inventory,
+                        host=host,
+                        defaults={
+                            'inventory_name': host.hostname,
+                            'host_variables': {},
+                            'is_active': True
+                        }
+                    )
+                    if created:
+                        added_count += 1
+                    else:
+                        errors.append(f'主机 {host.hostname} 已存在于清单中')
+                except Exception as e:
+                    errors.append(f'添加主机 {host.hostname} 失败: {str(e)}')
+            
+            return Response({
+                'message': f'成功添加 {added_count} 个主机到清单',
+                'added_count': added_count,
+                'errors': errors
+            })
+            
+        except AnsibleInventory.DoesNotExist:
+            return Response({
+                'error': '指定的清单不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'批量添加失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def batch_remove(self, request):
+        """批量移除主机关联"""
+        from .models import InventoryHost
+        
+        inventory_id = request.data.get('inventory_id')
+        host_ids = request.data.get('host_ids', [])
+        
+        if not inventory_id or not host_ids:
+            return Response({
+                'error': '请提供inventory_id和host_ids'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            removed_count = InventoryHost.objects.filter(
+                inventory_id=inventory_id,
+                host_id__in=host_ids
+            ).delete()[0]
+            
+            return Response({
+                'message': f'成功移除 {removed_count} 个主机关联',
+                'removed_count': removed_count
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'批量移除失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+
+class InventoryGroupViewSet(viewsets.ModelViewSet):
+    """Inventory主机组关联视图集"""
+    serializer_class = InventoryGroupSerializer
+    permission_classes = [IsAuthenticated]
+    
+    def get_queryset(self):
+        queryset = InventoryGroup.objects.all().select_related('inventory', 'group')
+        
+        # 过滤条件
+        inventory_id = self.request.query_params.get('inventory_id')
+        if inventory_id:
+            queryset = queryset.filter(inventory_id=inventory_id)
+            
+        group_id = self.request.query_params.get('group_id')
+        if group_id:
+            queryset = queryset.filter(group_id=group_id)
+            
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            queryset = queryset.filter(is_active=is_active.lower() == 'true')
+            
+        return queryset.order_by('inventory__name', 'inventory_name')
+
+    @action(detail=False, methods=['post'])
+    def batch_add(self, request):
+        """批量添加主机组到清单"""
+        serializer = InventoryGroupBatchSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+        
+        data = serializer.validated_data
+        inventory_id = data['inventory_id']
+        group_ids = data['group_ids']
+        inventory_names = data.get('inventory_names', [])
+        group_variables = data.get('group_variables', [])
+        is_active = data.get('is_active', True)
+        
+        try:
+            inventory = AnsibleInventory.objects.get(id=inventory_id)
+            added_count = 0
+            
+            for i, group_id in enumerate(group_ids):
+                try:
+                    group = AnsibleHostGroup.objects.get(id=group_id)
+                    inventory_name = inventory_names[i] if i < len(inventory_names) else group.name
+                    variables = group_variables[i] if i < len(group_variables) else {}
+                    
+                    inventory_group, created = InventoryGroup.objects.get_or_create(
+                        inventory=inventory,
+                        group=group,
+                        defaults={
+                            'inventory_name': inventory_name,
+                            'group_variables': variables,
+                            'is_active': is_active
+                        }
+                    )
+                    
+                    if created:
+                        added_count += 1
+                    else:
+                        # 如果已存在，更新信息
+                        inventory_group.inventory_name = inventory_name
+                        inventory_group.group_variables = variables
+                        inventory_group.is_active = is_active
+                        inventory_group.save()
+                        
+                except AnsibleHostGroup.DoesNotExist:
+                    continue
+            
+            return Response({
+                'message': f'成功处理 {added_count} 个主机组关联',
+                'added_count': added_count
+            })
+            
+        except AnsibleInventory.DoesNotExist:
+            return Response({
+                'error': '主机清单不存在'
+            }, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            return Response({
+                'error': f'批量添加失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=False, methods=['post'])
+    def batch_remove(self, request):
+        """批量移除主机组关联"""
+        inventory_id = request.data.get('inventory_id')
+        group_ids = request.data.get('group_ids', [])
+        
+        if not inventory_id:
+            return Response({
+                'error': '请提供inventory_id'
+            }, status=status.HTTP_400_BAD_REQUEST)
+            
+        if not group_ids:
+            return Response({
+                'error': '请提供group_ids列表'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            removed_count = InventoryGroup.objects.filter(
+                inventory_id=inventory_id,
+                group_id__in=group_ids
+            ).delete()[0]
+            
+            return Response({
+                'message': f'成功移除 {removed_count} 个主机组关联',
+                'removed_count': removed_count
+            })
+            
+        except Exception as e:
+            return Response({
+                'error': f'批量移除失败: {str(e)}'
             }, status=status.HTTP_400_BAD_REQUEST)

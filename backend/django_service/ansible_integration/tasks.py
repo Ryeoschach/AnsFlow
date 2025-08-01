@@ -35,40 +35,96 @@ def execute_ansible_playbook(execution_id):
         
         logger.info(f"开始执行Ansible playbook: {execution.playbook.name}")
         
-        # TODO: 实现真正的Ansible执行逻辑
-        # 这里先使用模拟执行
-        import time
-        import random
+        # 实现真正的Ansible执行逻辑
+        playbook_path = None
+        inventory_path = None
         
-        # 模拟执行过程
-        time.sleep(random.uniform(2, 5))
-        
-        # 模拟执行结果
-        success = random.choice([True, True, True, False])  # 75%成功率
-        
-        if success:
-            execution.status = 'success'
-            execution.stdout = """
-PLAY [all] *********************************************************************
-
-TASK [Gathering Facts] *********************************************************
-ok: [localhost]
-
-TASK [Debug message] ***********************************************************
-ok: [localhost] => {
-    "msg": "Hello from Ansible!"
-}
-
-PLAY RECAP *********************************************************************
-localhost                  : ok=2    changed=0    unreachable=0    failed=0
-"""
-            execution.return_code = 0
-        else:
+        try:
+            # 创建临时文件保存playbook内容
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yml', delete=False) as temp_playbook:
+                temp_playbook.write(execution.playbook.content)
+                playbook_path = temp_playbook.name
+            
+            # 创建临时文件保存inventory内容
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as temp_inventory:
+                temp_inventory.write(execution.inventory.content)
+                inventory_path = temp_inventory.name
+            
+            # 构建ansible-playbook命令
+            cmd = [
+                'ansible-playbook',
+                playbook_path,
+                '-i', inventory_path,
+                '-v'  # 详细输出
+            ]
+            
+            # 如果有凭据配置，添加相关参数
+            if execution.credential:
+                credential = execution.credential
+                if credential.credential_type == 'ssh_key' and credential.ssh_private_key:
+                    # 创建临时SSH密钥文件
+                    with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as temp_key:
+                        temp_key.write(credential.ssh_private_key)
+                        key_path = temp_key.name
+                    
+                    # 设置密钥文件权限
+                    os.chmod(key_path, 0o600)
+                    cmd.extend(['--private-key', key_path])
+                
+                if credential.username:
+                    cmd.extend(['-u', credential.username])
+            
+            # 执行ansible-playbook命令
+            logger.info(f"执行命令: {' '.join(cmd)}")
+            
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,  # 5分钟超时
+                cwd=tempfile.gettempdir()
+            )
+            
+            # 保存执行结果
+            execution.stdout = result.stdout
+            execution.stderr = result.stderr
+            execution.return_code = result.returncode
+            
+            if result.returncode == 0:
+                execution.status = 'success'
+                logger.info(f"Ansible playbook执行成功: {execution.playbook.name}")
+            else:
+                execution.status = 'failed'
+                logger.error(f"Ansible playbook执行失败: {execution.playbook.name}, 返回码: {result.returncode}")
+                logger.error(f"错误输出: {result.stderr}")
+            
+        except subprocess.TimeoutExpired:
             execution.status = 'failed'
-            execution.stderr = """
-ERROR! the playbook could not be found
-"""
-            execution.return_code = 1
+            execution.stderr = "执行超时（超过5分钟）"
+            execution.return_code = -1
+            logger.error(f"Ansible playbook执行超时: {execution.playbook.name}")
+            
+        except Exception as e:
+            execution.status = 'failed'  
+            execution.stderr = f"执行异常: {str(e)}"
+            execution.return_code = -1
+            logger.error(f"Ansible playbook执行异常: {execution.playbook.name}, 错误: {str(e)}")
+            
+        finally:
+            # 清理临时文件
+            for path in [playbook_path, inventory_path]:
+                if path and os.path.exists(path):
+                    try:
+                        os.unlink(path)
+                    except:
+                        pass
+            
+            # 清理可能的临时密钥文件
+            if 'key_path' in locals() and os.path.exists(key_path):
+                try:
+                    os.unlink(key_path)
+                except:
+                    pass
         
         execution.completed_at = timezone.now()
         execution.save()
