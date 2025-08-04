@@ -591,8 +591,10 @@ const Ansible: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
+      width: 320,
+      fixed: 'right' as const,
       render: (record: AnsibleInventory) => (
-        <Space>
+        <Space wrap size="small" style={{ maxWidth: 300 }}>
           <Tooltip title="管理主机">
             <Button 
               size="small" 
@@ -707,8 +709,10 @@ const Ansible: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
+      width: 200,
+      fixed: 'right' as const,
       render: (record: AnsiblePlaybook) => (
-        <Space>
+        <Space wrap size="small">
           <Tooltip title="执行">
             <Button 
               size="small" 
@@ -781,8 +785,10 @@ const Ansible: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
+      width: 120,
+      fixed: 'right' as const,
       render: (record: AnsibleCredential) => (
-        <Space>
+        <Space size="small">
           <Tooltip title="编辑">
             <Button 
               size="small" 
@@ -853,8 +859,10 @@ const Ansible: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
+      width: 120,
+      fixed: 'right' as const,
       render: (record: AnsibleExecutionList) => (
-        <Space>
+        <Space size="small">
           <Tooltip title="查看日志">
             <Button 
               size="small" 
@@ -971,8 +979,10 @@ const Ansible: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
+      width: 260,
+      fixed: 'right' as const,
       render: (record: AnsibleHost) => (
-        <Space>
+        <Space wrap size="small">
           <Tooltip title="检查连通性">
             <Button 
               size="small" 
@@ -1057,8 +1067,10 @@ const Ansible: React.FC = () => {
     {
       title: '操作',
       key: 'actions',
+      width: 200,
+      fixed: 'right' as const,
       render: (record: AnsibleHostGroup) => (
-        <Space>
+        <Space wrap size="small">
           <Tooltip title="管理主机">
             <Button 
               size="small" 
@@ -1196,6 +1208,7 @@ const Ansible: React.FC = () => {
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 1000 }}
             />
           </TabPane>
 
@@ -1240,6 +1253,7 @@ const Ansible: React.FC = () => {
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 1000 }}
             />
           </TabPane>
 
@@ -1284,6 +1298,7 @@ const Ansible: React.FC = () => {
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 1200 }}
             />
           </TabPane>
 
@@ -1316,6 +1331,7 @@ const Ansible: React.FC = () => {
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 800 }}
             />
           </TabPane>
 
@@ -1360,6 +1376,7 @@ const Ansible: React.FC = () => {
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 1200 }}
             />
           </TabPane>
 
@@ -1392,6 +1409,7 @@ const Ansible: React.FC = () => {
               rowKey="id"
               loading={loading}
               pagination={{ pageSize: 10 }}
+              scroll={{ x: 1000 }}
             />
           </TabPane>
         </Tabs>

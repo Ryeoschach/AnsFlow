@@ -289,38 +289,57 @@ class UnifiedCICDEngine:
             return result
         
         else:
-            # 没有并行组，使用原有的同步执行器
-            logger.info(f"No parallel groups found, using sync executor for {len(pipeline_steps)} steps")
+            # 没有并行组，也使用并行执行服务来确保失败中断功能
+            logger.info(f"No parallel groups found, using parallel execution service for {len(pipeline_steps)} steps with failure interruption")
             
-            sync_executor = SyncPipelineExecutor()
+            # 导入并行执行服务
+            from pipelines.services.parallel_execution import parallel_execution_service
             
-            # 准备工具配置（用于本地执行）
-            tool_config = {}
-            if execution.cicd_tool:
-                tool_config = {
-                    'tool_type': execution.cicd_tool.tool_type,
-                    'base_url': execution.cicd_tool.base_url,
-                    'project_id': execution.cicd_tool.project_id,
-                    'config': execution.cicd_tool.config
-                }
+            # 根据步骤类型选择合适的执行方法
+            if pipeline_steps:
+                # 有PipelineStep，使用新的执行方法
+                logger.info("Using PipelineStep execution method with failure interruption")
+                execution_plan = parallel_execution_service.analyze_pipeline_step_execution_plan(execution.pipeline)
+                result = parallel_execution_service.execute_pipeline_step_with_parallel_support(
+                    execution.pipeline,
+                    execution,
+                    execution_plan
+                )
+            else:
+                # 只有AtomicStep，使用AtomicStep执行方法
+                logger.info("Using AtomicStep execution method with failure interruption")
+                execution_plan = parallel_execution_service.analyze_pipeline_execution_plan(execution.pipeline)
+                
+                # 创建一个临时的PipelineRun对象来兼容接口
+                class TempPipelineRun:
+                    def __init__(self, pipeline_execution):
+                        self.pipeline_execution = pipeline_execution
+                        self.pipeline = pipeline_execution.pipeline
+                        self.parameters = pipeline_execution.parameters
+                        self.triggered_by = pipeline_execution.triggered_by
+                        self.trigger_data = pipeline_execution.trigger_data
+                
+                temp_run = TempPipelineRun(execution)
+                result = parallel_execution_service.execute_pipeline_with_parallel_support(
+                    execution.pipeline,
+                    temp_run,
+                    execution_plan
+                )
             
-            # 执行流水线
-            result = sync_executor.execute_pipeline(
-                execution_id=execution.id,
-                tool_config=tool_config,
-                parameters=execution.parameters
-            )
+            # 更新执行状态
+            if result.get('success', False):
+                execution.status = 'success'
+                execution.completed_at = timezone.now()
+                execution.logs = f"Sequential execution with failure interruption completed successfully: {result.get('message', '')}"
+            else:
+                execution.status = 'failed'
+                execution.completed_at = timezone.now()
+                execution.logs = f"Sequential execution with failure interruption failed: {result.get('message', '')}"
             
-            # 检查结果类型并处理
-            if result is None:
-                logger.warning(f"Pipeline execution returned None for execution {execution.id}")
-                result = {'success': False, 'error_message': 'Execution returned None'}
-            elif not isinstance(result, dict):
-                logger.error(f"Pipeline execution returned unexpected type: {type(result)} - {result}")
-                result = {'success': False, 'error_message': f'Unexpected result type: {type(result)}'}
+            execution.save()
             
             success = result.get('success', False)
-            logger.info(f"Local pipeline execution completed: {execution.id} - {'success' if success else 'failed'}")
+            logger.info(f"Local pipeline execution with failure interruption completed: {execution.id} - {'success' if success else 'failed'}")
             return result
     
     def _perform_remote_execution(self, execution: PipelineExecution):

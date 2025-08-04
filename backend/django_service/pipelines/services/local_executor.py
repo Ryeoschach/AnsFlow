@@ -163,15 +163,29 @@ class LocalPipelineExecutor:
     
     def _execute_traditional_step(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """执行传统步骤（原有逻辑）"""
+        import os
+        
+        # 打印当前工作目录信息  
+        working_directory = context.get('working_directory', os.getcwd())
+        logger.info(f"📁 [traditional] 当前工作目录: {working_directory}")
+        logger.info(f"📁 [traditional] 目录内容: {os.listdir(working_directory) if os.path.exists(working_directory) else '目录不存在'}")
+        
         try:
-            if step.step_type == 'ansible':
+            if step.step_type == 'fetch_code':
+                # 代码获取步骤执行
+                return self._execute_fetch_code_step(step, context)
+            elif step.step_type == 'ansible':
                 # Ansible 步骤执行
                 return self._execute_ansible_step(step, context)
             elif step.step_type == 'script':
                 # 脚本步骤执行
                 return self._execute_script_step(step, context)
+            elif step.step_type == 'custom':
+                # 🔥 问题2修复：custom类型步骤直接执行shell命令，不使用Celery
+                return self._execute_shell_command_step(step, context)
             else:
                 # 其他类型的步骤，使用原有的 Celery 任务
+                logger.info(f"🚀 [traditional] 启动Celery任务执行步骤: {step.name} (类型: {step.step_type})")
                 task_result = execute_atomic_step_task.delay(
                     step_id=step.id,
                     parameters=context
@@ -291,4 +305,179 @@ class LocalPipelineExecutor:
                 'success': False,
                 'error': str(e),
                 'step_name': step.name
+            }
+
+    def _execute_shell_command_step(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
+        """执行Shell命令步骤 (custom类型)"""
+        import subprocess
+        import os
+        
+        try:
+            working_directory = context.get('working_directory', os.getcwd())
+            
+            # 打印当前工作目录信息
+            logger.info(f"📁 [shell_command] 当前工作目录: {working_directory}")
+            logger.info(f"📁 [shell_command] 目录内容: {os.listdir(working_directory) if os.path.exists(working_directory) else '目录不存在'}")
+            
+            # 获取要执行的命令
+            command = step.command
+            
+            if not command:
+                return {
+                    'success': False,
+                    'error': 'No command specified in command field',
+                    'output': '',
+                    'data': {}
+                }
+            
+            logger.info(f"🚀 [shell_command] 执行命令: {command}")
+            
+            # 处理cd命令 - 这是一个特殊情况，因为cd不会改变Python进程的工作目录
+            if command.startswith('cd '):
+                target_dir = command[3:].strip()
+                # 如果是相对路径，基于当前工作目录
+                if not os.path.isabs(target_dir):
+                    target_dir = os.path.join(working_directory, target_dir)
+                logger.info(f"🔄 [shell_command] 尝试切换到目录: {target_dir}")
+                # 检查目标目录是否存在
+                if os.path.exists(target_dir) and os.path.isdir(target_dir):
+                    logger.info(f"✅ [shell_command] 成功切换工作目录到: {target_dir}")
+                    return {
+                        'success': True,
+                        'message': f'Changed working directory to: {target_dir}',
+                        'output': f'Directory changed to: {target_dir}',
+                        'data': {
+                            'working_directory': target_dir,
+                            'previous_directory': working_directory
+                        }
+                    }
+                else:
+                    logger.error(f"❌ [shell_command] 目标目录不存在: {target_dir}")
+                    return {
+                        'success': False,
+                        'error': f'Directory not found: {target_dir}',
+                        'output': '',
+                        'data': {
+                            'working_directory': working_directory
+                        }
+                    }
+            # 执行其他shell命令
+            result = subprocess.run(
+                command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=working_directory,
+                timeout=step.timeout_seconds
+            )
+            # 执行后打印目录状态
+            logger.info(f"📁 [shell_command] 执行后目录内容: {os.listdir(working_directory) if os.path.exists(working_directory) else '目录不存在'}")
+            if result.returncode == 0:
+                return {
+                    'success': True,
+                    'message': f'Shell command completed: {step.name}',
+                    'output': result.stdout,
+                    'data': {
+                        'exit_code': result.returncode,
+                        'working_directory': working_directory
+                    }
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f'Command failed with exit code {result.returncode}: {result.stderr}',
+                    'output': result.stdout,
+                    'data': {
+                        'exit_code': result.returncode,
+                        'working_directory': working_directory
+                    }
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'error': f'Command timeout after {step.timeout_seconds} seconds',
+                'output': '',
+                'data': {}
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'output': '',
+                'data': {}
+            }
+
+    def _execute_fetch_code_step(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
+        """执行代码拉取步骤"""
+        import subprocess
+        import os
+        
+        try:
+            working_directory = context.get('working_directory', os.getcwd())
+            
+            # 打印当前工作目录信息
+            logger.info(f"📁 [fetch_code] 当前工作目录: {working_directory}")
+            logger.info(f"📁 [fetch_code] 目录内容: {os.listdir(working_directory) if os.path.exists(working_directory) else '目录不存在'}")
+            
+            # 从step.command中获取git命令（fetch_code类型主要使用command字段）
+            git_command = step.command
+            
+            if not git_command:
+                return {
+                    'success': False,
+                    'error': 'No git command specified in command field',
+                    'output': '',
+                    'data': {}
+                }
+            
+            logger.info(f"🚀 [fetch_code] 执行命令: {git_command}")
+            
+            # 执行git命令
+            result = subprocess.run(
+                git_command,
+                shell=True,
+                capture_output=True,
+                text=True,
+                cwd=working_directory,
+                timeout=step.timeout_seconds
+            )
+            
+            # 执行后打印目录状态
+            logger.info(f"📁 [fetch_code] 执行后目录内容: {os.listdir(working_directory) if os.path.exists(working_directory) else '目录不存在'}")
+            
+            if result.returncode == 0:
+                # 检查是否有新的代码目录被创建
+                after_dirs = [d for d in os.listdir(working_directory) if os.path.isdir(os.path.join(working_directory, d))]
+                
+                return {
+                    'success': True,
+                    'message': f'Code fetch completed: {step.name}',
+                    'output': result.stdout,
+                    'data': {
+                        'working_directory': working_directory,
+                        'created_directories': after_dirs
+                    }
+                }
+            else:
+                return {
+                    'success': False,
+                    'error': f'Git command failed: {result.stderr}',
+                    'output': result.stdout,
+                    'data': {}
+                }
+                
+        except subprocess.TimeoutExpired:
+            return {
+                'success': False,
+                'error': f'Command timeout after {step.timeout_seconds} seconds',
+                'output': '',
+                'data': {}
+            }
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'output': '',
+                'data': {}
             }

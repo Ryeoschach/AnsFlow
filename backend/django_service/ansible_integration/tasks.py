@@ -61,15 +61,26 @@ def execute_ansible_playbook(execution_id):
             # 如果有凭据配置，添加相关参数
             if execution.credential:
                 credential = execution.credential
-                if credential.credential_type == 'ssh_key' and credential.ssh_private_key:
-                    # 创建临时SSH密钥文件
-                    with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as temp_key:
-                        temp_key.write(credential.ssh_private_key)
-                        key_path = temp_key.name
-                    
-                    # 设置密钥文件权限
-                    os.chmod(key_path, 0o600)
-                    cmd.extend(['--private-key', key_path])
+                if credential.credential_type == 'ssh_key' and credential.has_ssh_key:
+                    # 获取解密后的SSH私钥
+                    decrypted_ssh_key = credential.get_decrypted_ssh_key()
+                    if decrypted_ssh_key:
+                        # 确保SSH密钥以换行符结尾，并且格式正确
+                        if not decrypted_ssh_key.endswith('\n'):
+                            decrypted_ssh_key += '\n'
+                        
+                        # 创建临时SSH密钥文件
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as temp_key:
+                            temp_key.write(decrypted_ssh_key)
+                            key_path = temp_key.name
+                        
+                        # 设置密钥文件权限
+                        os.chmod(key_path, 0o600)
+                        cmd.extend(['--private-key', key_path])
+                        
+                        logger.info(f"使用SSH密钥认证，密钥文件: {key_path}")
+                    else:
+                        logger.warning("SSH密钥解密失败或为空")
                 
                 if credential.username:
                     cmd.extend(['-u', credential.username])

@@ -39,13 +39,17 @@ class PipelineWorkspaceManager:
             workspace_name = f"{safe_pipeline_name}_{execution_id}"
             workspace_path = os.path.join(self.base_dir, workspace_name)
             
-            # 如果目录已存在，先删除
+            # 如果目录已存在，检查是否为空
             if os.path.exists(workspace_path):
-                logger.warning(f"Workspace already exists, removing: {workspace_path}")
-                shutil.rmtree(workspace_path)
-            
-            # 创建工作目录
-            os.makedirs(workspace_path, exist_ok=True)
+                # 检查目录是否为空
+                if os.listdir(workspace_path):
+                    logger.info(f"Workspace already exists and has content, reusing: {workspace_path}")
+                else:
+                    logger.info(f"Workspace already exists but is empty, reusing: {workspace_path}")
+            else:
+                # 创建工作目录
+                os.makedirs(workspace_path, exist_ok=True)
+                logger.info(f"Created new workspace: {workspace_path}")
             
             # 记录工作目录
             workspace_key = f"{execution_id}"

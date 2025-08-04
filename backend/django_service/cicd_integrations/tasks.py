@@ -643,8 +643,11 @@ def execute_pipeline_task(self, pipeline_id: int, run_id: int, trigger_data: Dic
         # 执行流水线的原子步骤
         success_count = 0
         total_steps = pipeline.atomic_steps.count()
+        failed_step_name = None
         
-        for step in pipeline.atomic_steps.order_by('order'):
+        pipeline_steps = list(pipeline.atomic_steps.order_by('order'))
+        
+        for index, step in enumerate(pipeline_steps):
             try:
                 logger.info(f"Executing step: {step.name} ({step.step_type})")
                 
@@ -656,11 +659,27 @@ def execute_pipeline_task(self, pipeline_id: int, run_id: int, trigger_data: Dic
                     logger.info(f"Step {step.name} completed successfully")
                 else:
                     logger.error(f"Step {step.name} failed: {step_result.get('message')}")
+                    failed_step_name = step.name
+                    
+                    # 取消后续步骤并设置状态
+                    remaining_steps = pipeline_steps[index + 1:]
+                    if remaining_steps:
+                        _cancel_remaining_pipeline_steps(remaining_steps, pipeline_run, failed_step_name)
+                        logger.info(f"Cancelled {len(remaining_steps)} remaining steps due to failure in '{failed_step_name}'")
+                    
                     # 如果步骤失败，停止执行
                     break
                     
             except Exception as e:
                 logger.error(f"Step {step.name} execution error: {e}")
+                failed_step_name = step.name
+                
+                # 取消后续步骤并设置状态
+                remaining_steps = pipeline_steps[index + 1:]
+                if remaining_steps:
+                    _cancel_remaining_pipeline_steps(remaining_steps, pipeline_run, failed_step_name)
+                    logger.info(f"Cancelled {len(remaining_steps)} remaining steps due to error in '{failed_step_name}'")
+                
                 break
         
         # 更新最终状态
@@ -693,6 +712,31 @@ def execute_pipeline_task(self, pipeline_id: int, run_id: int, trigger_data: Dic
             pass
         
         raise self.retry(exc=e)
+
+
+def _cancel_remaining_pipeline_steps(remaining_steps: List[Any], pipeline_run, failed_step_name: str):
+    """
+    取消剩余的流水线步骤，设置取消状态和提示消息
+    
+    Args:
+        remaining_steps: 剩余待执行的步骤列表
+        pipeline_run: 流水线运行实例
+        failed_step_name: 失败步骤的名称
+    """
+    from cicd_integrations.models import StepExecution
+    
+    for step in remaining_steps:
+        # 创建步骤执行记录，状态为取消
+        step_execution = StepExecution.objects.create(
+            pipeline_execution=pipeline_run,
+            atomic_step=step,
+            status='cancelled',
+            order=step.order,
+            error_message=f"前面有失败的步骤（{failed_step_name}），后面步骤取消执行",
+            completed_at=timezone.now()
+        )
+        
+        logger.info(f"Step '{step.name}' cancelled due to previous failure in '{failed_step_name}'")
 
 
 @shared_task(bind=True, retry_kwargs={'max_retries': 3, 'countdown': 60})

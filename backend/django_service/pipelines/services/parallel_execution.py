@@ -143,13 +143,32 @@ class ParallelExecutionService:
             # 创建流水线执行记录
             pipeline_execution = self._create_pipeline_execution(pipeline, pipeline_run)
             
-            # 按阶段执行
+            # 🔥 修复：在最开始创建一次工作空间，整个流水线共享
+            from cicd_integrations.executors.execution_context import ExecutionContext
+            
+            execution_context = ExecutionContext(
+                execution_id=pipeline_execution.id,
+                pipeline_name=pipeline_execution.pipeline.name,
+                trigger_type='manual'
+            )
+            
+            # 共享的工作目录状态 - 可以被步骤更新
+            shared_workspace_state = {
+                'working_directory': execution_context.get_workspace_path(),
+                'execution_id': pipeline_execution.id,
+                'pipeline_name': pipeline_execution.pipeline.name
+            }
+            
+            logger.info(f"🏠 创建共享工作空间: {shared_workspace_state['working_directory']}")
+            
+            # 按阶段执行，传递共享的工作空间状态
             for stage in execution_plan['stages']:
                 stage_result = self._execute_stage(
                     stage, 
                     pipeline, 
                     pipeline_execution, 
-                    execution_plan
+                    execution_plan,
+                    shared_workspace_state  # 传递共享状态
                 )
                 
                 if not stage_result['success']:
@@ -159,6 +178,11 @@ class ParallelExecutionService:
                         'message': f"Pipeline failed at stage {stage['stage_number']}: {stage_result['message']}",
                         'failed_stage': stage['stage_number']
                     }
+                
+                # 🔥 修复：如果阶段更新了工作目录，更新共享状态
+                if stage_result.get('updated_workspace_state'):
+                    shared_workspace_state.update(stage_result['updated_workspace_state'])
+                    logger.info(f"🔄 更新共享工作目录: {shared_workspace_state['working_directory']}")
             
             # 所有阶段完成
             pipeline_execution.status = 'success'
@@ -187,7 +211,8 @@ class ParallelExecutionService:
                       stage: Dict[str, Any], 
                       pipeline: Pipeline, 
                       pipeline_execution,
-                      execution_plan: Dict[str, Any]) -> Dict[str, Any]:
+                      execution_plan: Dict[str, Any],
+                      shared_workspace_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         执行单个阶段（可能包含并行步骤）
         """
@@ -201,9 +226,9 @@ class ParallelExecutionService:
             group_info = stage.get('group_info', {})
             logger.info(f"  - 并行组ID: {group_info.get('id', 'N/A')}")
             logger.info(f"  - 同步策略: {group_info.get('sync_policy', 'wait_all')}")
-            return self._execute_parallel_stage(stage, pipeline, pipeline_execution)
+            return self._execute_parallel_stage(stage, pipeline, pipeline_execution, shared_workspace_state)
         else:
-            return self._execute_sequential_stage(stage, pipeline, pipeline_execution)
+            return self._execute_sequential_stage(stage, pipeline, pipeline_execution, shared_workspace_state)
     
     def _execute_parallel_stage(self, 
                                stage: Dict[str, Any], 
@@ -291,9 +316,19 @@ class ParallelExecutionService:
                         # 根据同步策略决定是否提前退出
                         if sync_policy == 'fail_fast' and failed_count > 0:
                             logger.info("Fail-fast策略触发，取消剩余任务")
+                            # 取消所有未完成的步骤
+                            self._cancel_parallel_remaining_steps(
+                                step_executions, completed_count + failed_count, 
+                                f"并行组中有步骤失败，策略为fail_fast"
+                            )
                             break
                         elif sync_policy == 'wait_any' and completed_count > 0:
                             logger.info("Wait-any策略满足，取消剩余任务")
+                            # 取消所有未完成的步骤
+                            self._cancel_parallel_remaining_steps(
+                                step_executions, completed_count + failed_count,
+                                f"并行组中已有步骤完成，策略为wait_any"
+                            )
                             break
                             
                     except Exception as e:
@@ -468,12 +503,15 @@ class ParallelExecutionService:
                                  pipeline: Pipeline, 
                                  pipeline_execution) -> Dict[str, Any]:
         """
-        执行顺序阶段
+        执行顺序阶段 - 支持失败中断功能
         """
         steps = stage['items']
         logger.info(f"Executing sequential stage with {len(steps)} steps")
         
-        for step in steps:
+        failed_step_index = -1
+        failed_step_name = None
+        
+        for index, step in enumerate(steps):
             step_execution = StepExecution.objects.create(
                 pipeline_execution=pipeline_execution,
                 atomic_step=step,
@@ -492,10 +530,18 @@ class ParallelExecutionService:
                     step_execution.completed_at = timezone.now()
                     step_execution.save()
                     
+                    # 记录失败的步骤信息
+                    failed_step_index = index
+                    failed_step_name = step.name
+                    
+                    # 取消后续步骤并设置状态
+                    self._cancel_remaining_steps(steps[index + 1:], pipeline_execution, step.name)
+                    
                     return {
                         'success': False,
                         'message': f'Step {step.name} failed: {result.get("error", "Unknown error")}',
-                        'failed_step': step.name
+                        'failed_step': step.name,
+                        'cancelled_steps': len(steps) - index - 1
                     }
                 
                 step_execution.completed_at = timezone.now()
@@ -508,16 +554,74 @@ class ParallelExecutionService:
                 step_execution.completed_at = timezone.now()
                 step_execution.save()
                 
+                # 记录失败的步骤信息
+                failed_step_index = index
+                failed_step_name = step.name
+                
+                # 取消后续步骤并设置状态
+                self._cancel_remaining_steps(steps[index + 1:], pipeline_execution, step.name)
+                
                 return {
                     'success': False,
                     'message': f'Step {step.name} failed: {str(e)}',
-                    'failed_step': step.name
+                    'failed_step': step.name,
+                    'cancelled_steps': len(steps) - index - 1
                 }
         
         return {
             'success': True,
             'message': f'Sequential stage completed with {len(steps)} steps'
         }
+    
+    def _cancel_remaining_steps(self, remaining_steps: List[Any], pipeline_execution, failed_step_name: str):
+        """
+        取消剩余步骤执行，设置取消状态和提示消息
+        
+        Args:
+            remaining_steps: 剩余待执行的步骤列表
+            pipeline_execution: 流水线执行实例
+            failed_step_name: 失败步骤的名称
+        """
+        if not remaining_steps:
+            return
+            
+        logger.info(f"Cancelling {len(remaining_steps)} remaining steps due to failure in step '{failed_step_name}'")
+        
+        for step in remaining_steps:
+            step_execution = StepExecution.objects.create(
+                pipeline_execution=pipeline_execution,
+                atomic_step=step,
+                status='cancelled',
+                order=step.order,
+                error_message=f"前面有失败的步骤（{failed_step_name}），后面步骤取消执行",
+                completed_at=timezone.now()
+            )
+            
+            logger.info(f"Step '{step.name}' cancelled due to previous failure in '{failed_step_name}'")
+    
+    def _cancel_parallel_remaining_steps(self, step_executions: List[Any], completed_index: int, reason: str):
+        """
+        取消并行组中剩余的步骤执行
+        
+        Args:
+            step_executions: 步骤执行实例列表
+            completed_index: 已完成步骤的索引
+            reason: 取消原因
+        """
+        cancelled_count = 0
+        
+        for i, step_execution in enumerate(step_executions):
+            if i >= completed_index and step_execution.status in ['pending', 'running']:
+                step_execution.status = 'cancelled'
+                step_execution.error_message = f"前面有失败的步骤，后面步骤取消执行: {reason}"
+                step_execution.completed_at = timezone.now()
+                step_execution.save()
+                cancelled_count += 1
+                
+                logger.info(f"Parallel step '{step_execution.atomic_step.name}' cancelled: {reason}")
+        
+        if cancelled_count > 0:
+            logger.info(f"Cancelled {cancelled_count} parallel steps due to: {reason}")
     
     def _execute_step_local(self, step_execution) -> Dict[str, Any]:
         """
@@ -1595,13 +1699,32 @@ class ParallelExecutionService:
         logger.info(f"Starting PipelineStep execution for pipeline {pipeline.id} with parallel support")
         
         try:
+            # 🔥 创建共享工作空间状态（为PipelineStep执行）
+            from cicd_integrations.executors.execution_context import ExecutionContext
+            
+            execution_context = ExecutionContext(
+                execution_id=pipeline_run.id,
+                pipeline_name=pipeline.name,
+                trigger_type='manual'
+            )
+            
+            # 共享的工作目录状态
+            shared_workspace_state = {
+                'working_directory': execution_context.get_workspace_path(),
+                'execution_id': pipeline_run.id,
+                'pipeline_name': pipeline.name
+            }
+            
+            logger.info(f"🏠 创建PipelineStep共享工作空间: {shared_workspace_state['working_directory']}")
+            
             # 按阶段执行
             for stage in execution_plan['stages']:
                 stage_result = self._execute_pipeline_step_stage(
                     stage, 
                     pipeline, 
                     pipeline_run, 
-                    execution_plan
+                    execution_plan,
+                    shared_workspace_state  # 传递共享状态
                 )
                 
                 if not stage_result['success']:
@@ -1630,7 +1753,8 @@ class ParallelExecutionService:
                                     stage: Dict[str, Any], 
                                     pipeline: Pipeline, 
                                     pipeline_run,
-                                    execution_plan: Dict[str, Any]) -> Dict[str, Any]:
+                                    execution_plan: Dict[str, Any],
+                                    shared_workspace_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         执行单个PipelineStep阶段（可能包含并行步骤）
         """
@@ -1642,12 +1766,12 @@ class ParallelExecutionService:
         
         if is_parallel:
             # 并行执行
-            return self._execute_parallel_pipeline_steps(steps, stage.get('group_info', {}), pipeline_run)
+            return self._execute_parallel_pipeline_steps(steps, stage.get('group_info', {}), pipeline_run, shared_workspace_state)
         else:
             # 串行执行
-            return self._execute_sequential_pipeline_steps(steps, pipeline_run)
+            return self._execute_sequential_pipeline_steps(steps, pipeline_run, shared_workspace_state)
 
-    def _execute_parallel_pipeline_steps(self, steps: List, group_info: Dict[str, Any], pipeline_execution) -> Dict[str, Any]:
+    def _execute_parallel_pipeline_steps(self, steps: List, group_info: Dict[str, Any], pipeline_execution, shared_workspace_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         并行执行多个PipelineStep
         """
@@ -1681,38 +1805,46 @@ class ParallelExecutionService:
                 step.started_at = timezone.now()
                 step.save()
                 
-                # 执行命令
-                if step.command:
-                    process = subprocess.run(
-                        step.command, 
-                        shell=True, 
-                        capture_output=True, 
-                        text=True,
-                        timeout=step.timeout_seconds
-                    )
-                    
-                    if process.returncode == 0:
-                        step.status = 'success'
-                        step.output_log = process.stdout
-                        step_execution.status = 'success'
-                        step_execution.logs = process.stdout
-                        step_execution.output = {'returncode': 0, 'stdout': process.stdout}
-                        logger.info(f"PipelineStep {step.name} 执行完成，结果: 成功")
-                    else:
-                        step.status = 'failed'
-                        step.error_log = process.stderr
-                        step_execution.status = 'failed'
-                        step_execution.logs = process.stderr
-                        step_execution.error_message = process.stderr
-                        step_execution.output = {'returncode': process.returncode, 'stderr': process.stderr}
-                        logger.error(f"PipelineStep {step.name} 执行失败: {process.stderr}")
-                else:
+                # 创建执行上下文获取工作目录
+                from cicd_integrations.executors.execution_context import ExecutionContext
+                
+                execution_context = ExecutionContext(
+                    execution_id=pipeline_execution.id,
+                    pipeline_name=pipeline_execution.pipeline.name,
+                    trigger_type='manual'
+                )
+                
+                working_directory = execution_context.get_workspace_path()
+                logger.info(f"PipelineStep {step.name} 工作目录: {working_directory}")
+                
+                # 使用LocalPipelineExecutor执行步骤，支持各种step_type
+                context = {
+                    'working_directory': working_directory,
+                    'execution_id': pipeline_execution.id,
+                    'pipeline_name': pipeline_execution.pipeline.name
+                }
+                
+                # 执行步骤 - 支持fetch_code、docker_build、docker_push等各种类型
+                from pipelines.services.local_executor import LocalPipelineExecutor
+                local_executor = LocalPipelineExecutor()
+                result = local_executor.execute_step(step, context)
+                
+                # 根据执行结果更新步骤状态
+                if result.get('success', False):
                     step.status = 'success'
-                    step.output_log = "No command to execute"
+                    step.output_log = result.get('output', '')
                     step_execution.status = 'success'
-                    step_execution.logs = "No command to execute"
-                    step_execution.output = {'message': 'No command to execute'}
-                    logger.info(f"PipelineStep {step.name} 没有命令，直接完成")
+                    step_execution.logs = result.get('output', '')
+                    step_execution.output = result.get('data', {})
+                    logger.info(f"PipelineStep {step.name} 执行完成，结果: 成功")
+                else:
+                    step.status = 'failed'
+                    step.error_log = result.get('error', 'Unknown error')
+                    step_execution.status = 'failed'
+                    step_execution.logs = result.get('error', 'Unknown error')
+                    step_execution.error_message = result.get('error', 'Unknown error')
+                    step_execution.output = result.get('data', {})
+                    logger.error(f"PipelineStep {step.name} 执行失败: {result.get('error', 'Unknown error')}")
                 
                 step.completed_at = timezone.now()
                 step.save()
@@ -1788,7 +1920,7 @@ class ParallelExecutionService:
             'sync_policy': sync_policy
         }
 
-    def _execute_sequential_pipeline_steps(self, steps: List, pipeline_execution) -> Dict[str, Any]:
+    def _execute_sequential_pipeline_steps(self, steps: List, pipeline_execution, shared_workspace_state: Dict[str, Any]) -> Dict[str, Any]:
         """
         串行执行多个PipelineStep
         """
@@ -1796,13 +1928,16 @@ class ParallelExecutionService:
         
         logger.info(f"Executing sequential stage with {len(steps)} steps")
         
+        # 🔥 修复：使用共享的工作目录状态，而不是重新创建ExecutionContext
+        current_working_directory = shared_workspace_state['working_directory']
+        logger.info(f"🏠 使用共享工作目录: {current_working_directory}")
+        
         for step in steps:
             logger.info(f"开始本地执行PipelineStep: {step.name}")
-            
+            # 问题1修复：在执行开始就打印工作目录
+            logger.info(f"�🚀 === {step.name} === 工作目录: {current_working_directory}")
             try:
-                # 创建StepExecution记录
                 from cicd_integrations.models import StepExecution
-                
                 step_execution = StepExecution.objects.create(
                     pipeline_execution=pipeline_execution,
                     pipeline_step=step,
@@ -1810,84 +1945,73 @@ class ParallelExecutionService:
                     order=step.order,
                     started_at=timezone.now()
                 )
-                
-                # 更新步骤状态
                 step.status = 'running'
                 step.started_at = timezone.now()
                 step.save()
-                
-                # 执行命令
-                if step.command:
-                    process = subprocess.run(
-                        step.command, 
-                        shell=True, 
-                        capture_output=True, 
-                        text=True,
-                        timeout=step.timeout_seconds
-                    )
-                    
-                    if process.returncode == 0:
-                        step.status = 'success'
-                        step.output_log = process.stdout
-                        step_execution.status = 'success'
-                        step_execution.logs = process.stdout
-                        step_execution.output = {'returncode': 0, 'stdout': process.stdout}
-                        logger.info(f"PipelineStep {step.name} 执行完成，结果: 成功")
-                    else:
-                        step.status = 'failed'
-                        step.error_log = process.stderr
-                        step_execution.status = 'failed'
-                        step_execution.logs = process.stderr
-                        step_execution.error_message = process.stderr
-                        step_execution.output = {'returncode': process.returncode, 'stderr': process.stderr}
-                        logger.error(f"PipelineStep {step.name} 执行失败: {process.stderr}")
-                        
-                        step.completed_at = timezone.now()
-                        step.save()
-                        
-                        step_execution.completed_at = timezone.now()
-                        step_execution.save()
-                        
-                        return {
-                            'success': False,
-                            'message': f'PipelineStep {step.name} failed',
-                            'error': process.stderr
-                        }
-                else:
+                context = {
+                    'working_directory': current_working_directory,
+                    'execution_id': pipeline_execution.id,
+                    'pipeline_name': pipeline_execution.pipeline.name
+                }
+                from pipelines.services.local_executor import LocalPipelineExecutor
+                local_executor = LocalPipelineExecutor()
+                result = local_executor.execute_step(step, context)
+                if result.get('data', {}).get('working_directory'):
+                    new_working_directory = result['data']['working_directory']
+                    if new_working_directory != current_working_directory:
+                        logger.info(f"🔄 工作目录已更新: {current_working_directory} -> {new_working_directory}")
+                        current_working_directory = new_working_directory
+                if result.get('success', False):
                     step.status = 'success'
-                    step.output_log = "No command to execute"
+                    step.output_log = result.get('output', '')
                     step_execution.status = 'success'
-                    step_execution.logs = "No command to execute"
-                    step_execution.output = {'message': 'No command to execute'}
-                    logger.info(f"PipelineStep {step.name} 没有命令，直接完成")
-                
+                    step_execution.logs = result.get('output', '')
+                    step_execution.output = result.get('data', {})
+                    logger.info(f"PipelineStep {step.name} 执行完成，结果: 成功")
+                else:
+                    step.status = 'failed'
+                    step.error_log = result.get('error', 'Unknown error')
+                    step_execution.status = 'failed'
+                    step_execution.logs = result.get('error', 'Unknown error')
+                    step_execution.error_message = result.get('error', 'Unknown error')
+                    step_execution.output = result.get('data', {})
+                    logger.error(f"PipelineStep {step.name} 执行失败: {result.get('error', 'Unknown error')}")
+                    step.completed_at = timezone.now()
+                    step.save()
+                    step_execution.completed_at = timezone.now()
+                    step_execution.save()
+                    # 阶段失败前同步目录
+                    shared_workspace_state['working_directory'] = current_working_directory
+                    return {
+                        'success': False,
+                        'message': f'PipelineStep {step.name} failed',
+                        'error': result.get('error', 'Unknown error')
+                    }
                 step.completed_at = timezone.now()
                 step.save()
-                
                 step_execution.completed_at = timezone.now()
                 step_execution.save()
-                
             except Exception as e:
                 logger.error(f"PipelineStep {step.name} 执行异常: {e}")
                 step.status = 'failed'
                 step.error_log = str(e)
                 step.completed_at = timezone.now()
                 step.save()
-                
-                # 更新StepExecution记录
                 if 'step_execution' in locals():
                     step_execution.status = 'failed'
                     step_execution.error_message = str(e)
                     step_execution.logs = str(e)
                     step_execution.completed_at = timezone.now()
                     step_execution.save()
-                
+                # 阶段异常前同步目录
+                shared_workspace_state['working_directory'] = current_working_directory
                 return {
                     'success': False,
                     'message': f'PipelineStep {step.name} failed with exception',
                     'error': str(e)
                 }
-        
+        # 阶段正常结束后同步目录
+        shared_workspace_state['working_directory'] = current_working_directory
         return {
             'success': True,
             'message': 'Sequential execution completed successfully'

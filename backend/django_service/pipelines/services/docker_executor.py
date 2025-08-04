@@ -533,9 +533,13 @@ class DockerStepExecutor:
             if username and password:
                 docker_manager.login_registry(registry_url, username, password)
             
+            # 构建本地镜像名称（包含标签）
+            local_image_name = f"{image_name}:{tag}" if ':' not in image_name else image_name
+            
             # 标记镜像
-            if full_image_name != image_name:
-                docker_manager.tag_image(image_name, full_image_name)
+            if full_image_name != local_image_name:
+                logger.info(f"Docker push - 标记镜像: {local_image_name} -> {full_image_name}")
+                docker_manager.tag_image(local_image_name, full_image_name)
             
             # 推送镜像
             result = docker_manager.push_image(full_image_name)

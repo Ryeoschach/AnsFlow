@@ -552,7 +552,9 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
                               border: '1px solid #d9d9d9'
                             }}>
                               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                                <span style={{ fontWeight: 'bold' }}>{parallelStep.name}</span>
+                                <span style={{ fontWeight: 'bold' }}>
+                                  {parallelStep.step_name || parallelStep.atomic_step_name || parallelStep.pipeline_step_name || parallelStep.name || `步骤${parallelStep.order}`}
+                                </span>
                                 {getStatusTag(parallelStep.status)}
                               </div>
                               {parallelStep.execution_time && (
@@ -728,7 +730,15 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
     // 首先尝试从实时WebSocket获取日志（只有在有真实日志数据时才使用）
     if (logs.length > 0 && logs.some(log => log.message && log.message.trim() !== '')) {
       const displayLogs = logs.slice(-50) // 显示最新50条
-      
+
+      // 构造 stepId->stepName 映射（兼容 stepStates 结构）
+      const stepIdNameMap = new Map<number, string>()
+      if (stepStates && typeof stepStates.forEach === 'function') {
+        stepStates.forEach((s, k) => {
+          stepIdNameMap.set(s.stepId, s.stepName)
+        })
+      }
+
       return (
         <div>
           <div style={{ 
@@ -752,7 +762,7 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
               ● 在线
             </span>
           </div>
-          
+
           <div 
             ref={logContainerRef}
             onScroll={handleLogScroll}
@@ -767,53 +777,67 @@ const ExecutionDetail: React.FC<ExecutionDetailProps> = () => {
               position: 'relative'
             }}
           >
-            {displayLogs.map((log, index) => (
-              <div key={log.id} style={{ 
-                marginBottom: 8, 
-                fontFamily: 'Monaco, Consolas, monospace', 
-                fontSize: 12,
-                padding: '4px 8px',
-                background: log.level === 'error' ? '#fff2f0' : 
-                           log.level === 'warning' ? '#fffbe6' : '#fff',
-                border: '1px solid',
-                borderColor: log.level === 'error' ? '#ffccc7' :
-                            log.level === 'warning' ? '#ffe58f' : '#f0f0f0',
-                borderRadius: 3,
-                borderLeft: '4px solid',
-                borderLeftColor: log.level === 'error' ? '#ff4d4f' :
-                                log.level === 'warning' ? '#fa8c16' : '#52c41a'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
-                  <span style={{ 
-                    color: '#666', 
-                    fontSize: 11,
-                    minWidth: 80
-                  }}>
-                    [{new Date(log.timestamp).toLocaleTimeString()}]
-                  </span>
-                  {log.stepName && (
-                    <Tag color="blue" style={{ marginLeft: 8, fontSize: '10px' }}>
-                      {log.stepName}
-                    </Tag>
-                  )}
-                  <Tag 
-                    color={log.level === 'error' ? 'red' : log.level === 'warning' ? 'orange' : 'default'}
-                    style={{ marginLeft: 4, fontSize: '10px' }}
-                  >
-                    {log.level.toUpperCase()}
-                  </Tag>
-                </div>
-                <div style={{ 
-                  color: log.level === 'error' ? '#ff4d4f' : 
-                         log.level === 'warning' ? '#fa8c16' : '#000',
-                  lineHeight: 1.4
+            {displayLogs.map((log, index) => {
+              // 尝试从 stepStates 里查找业务名称
+              let displayStepName = log.stepName
+              // 解析 stepId
+              let stepId = undefined
+              if (log.stepName && /^步骤 ?(\d+)$/.test(log.stepName)) {
+                stepId = parseInt(log.stepName.replace(/[^\d]/g, ''))
+              }
+              if (stepId && stepIdNameMap.has(stepId)) {
+                displayStepName = stepIdNameMap.get(stepId)
+              }
+              // 兜底
+              displayStepName = displayStepName || log.stepName || ''
+              return (
+                <div key={log.id} style={{ 
+                  marginBottom: 8, 
+                  fontFamily: 'Monaco, Consolas, monospace', 
+                  fontSize: 12,
+                  padding: '4px 8px',
+                  background: log.level === 'error' ? '#fff2f0' : 
+                             log.level === 'warning' ? '#fffbe6' : '#fff',
+                  border: '1px solid',
+                  borderColor: log.level === 'error' ? '#ffccc7' :
+                              log.level === 'warning' ? '#ffe58f' : '#f0f0f0',
+                  borderRadius: 3,
+                  borderLeft: '4px solid',
+                  borderLeftColor: log.level === 'error' ? '#ff4d4f' :
+                                  log.level === 'warning' ? '#fa8c16' : '#52c41a'
                 }}>
-                  {log.message}
+                  <div style={{ display: 'flex', alignItems: 'center', marginBottom: 2 }}>
+                    <span style={{ 
+                      color: '#666', 
+                      fontSize: 11,
+                      minWidth: 80
+                    }}>
+                      [{new Date(log.timestamp).toLocaleTimeString()}]
+                    </span>
+                    {displayStepName && (
+                      <Tag color="blue" style={{ marginLeft: 8, fontSize: '10px' }}>
+                        {displayStepName}
+                      </Tag>
+                    )}
+                    <Tag 
+                      color={log.level === 'error' ? 'red' : log.level === 'warning' ? 'orange' : 'default'}
+                      style={{ marginLeft: 4, fontSize: '10px' }}
+                    >
+                      {log.level.toUpperCase()}
+                    </Tag>
+                  </div>
+                  <div style={{ 
+                    color: log.level === 'error' ? '#ff4d4f' : 
+                           log.level === 'warning' ? '#fa8c16' : '#000',
+                    lineHeight: 1.4
+                  }}>
+                    {log.message}
+                  </div>
                 </div>
-              </div>
-            ))}
+              )
+            })}
           </div>
-          
+
           <div style={{ 
             textAlign: 'center', 
             marginTop: 8, 
