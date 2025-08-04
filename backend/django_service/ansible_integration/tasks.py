@@ -9,6 +9,7 @@ import tempfile
 import os
 import hashlib
 import yaml
+from common.execution_logger import ExecutionLogger
 
 logger = logging.getLogger(__name__)
 
@@ -29,15 +30,17 @@ def execute_ansible_playbook(execution_id):
         from .models import AnsibleExecution
         
         execution = AnsibleExecution.objects.get(id=execution_id)
-        execution.status = 'running'
-        execution.started_at = timezone.now()
-        execution.save()
         
-        logger.info(f"开始执行Ansible playbook: {execution.playbook.name}")
+        # 使用执行日志模块开始执行
+        ExecutionLogger.start_execution(
+            execution, 
+            f"开始执行Ansible playbook: {execution.playbook.name}"
+        )
         
         # 实现真正的Ansible执行逻辑
         playbook_path = None
         inventory_path = None
+        key_path = None
         
         try:
             # 创建临时文件保存playbook内容
@@ -78,15 +81,22 @@ def execute_ansible_playbook(execution_id):
                         os.chmod(key_path, 0o600)
                         cmd.extend(['--private-key', key_path])
                         
-                        logger.info(f"使用SSH密钥认证，密钥文件: {key_path}")
+                        ExecutionLogger.log_execution_info(
+                            execution, 
+                            f"使用SSH密钥认证，密钥文件: {key_path}"
+                        )
                     else:
-                        logger.warning("SSH密钥解密失败或为空")
+                        ExecutionLogger.log_execution_info(
+                            execution, 
+                            "SSH密钥解密失败或为空", 
+                            level='warning'
+                        )
                 
                 if credential.username:
                     cmd.extend(['-u', credential.username])
             
             # 执行ansible-playbook命令
-            logger.info(f"执行命令: {' '.join(cmd)}")
+            ExecutionLogger.log_execution_info(execution, f"执行命令: {' '.join(cmd)}")
             
             result = subprocess.run(
                 cmd,
@@ -96,51 +106,50 @@ def execute_ansible_playbook(execution_id):
                 cwd=tempfile.gettempdir()
             )
             
-            # 保存执行结果
-            execution.stdout = result.stdout
-            execution.stderr = result.stderr
-            execution.return_code = result.returncode
-            
+            # 使用执行日志模块记录结果
             if result.returncode == 0:
-                execution.status = 'success'
-                logger.info(f"Ansible playbook执行成功: {execution.playbook.name}")
+                ExecutionLogger.complete_execution(
+                    execution,
+                    result=result,
+                    status='success',
+                    log_message=f"Ansible playbook执行成功: {execution.playbook.name}"
+                )
             else:
-                execution.status = 'failed'
-                logger.error(f"Ansible playbook执行失败: {execution.playbook.name}, 返回码: {result.returncode}")
-                logger.error(f"错误输出: {result.stderr}")
+                ExecutionLogger.complete_execution(
+                    execution,
+                    result=result,
+                    status='failed',
+                    log_message=f"Ansible playbook执行失败: {execution.playbook.name}, 返回码: {result.returncode}"
+                )
             
         except subprocess.TimeoutExpired:
-            execution.status = 'failed'
-            execution.stderr = "执行超时（超过5分钟）"
-            execution.return_code = -1
-            logger.error(f"Ansible playbook执行超时: {execution.playbook.name}")
+            ExecutionLogger.timeout_execution(
+                execution,
+                timeout_message="执行超时（超过5分钟）",
+                timeout_seconds=300,
+                log_message=f"Ansible playbook执行超时: {execution.playbook.name}"
+            )
             
         except Exception as e:
-            execution.status = 'failed'  
-            execution.stderr = f"执行异常: {str(e)}"
-            execution.return_code = -1
-            logger.error(f"Ansible playbook执行异常: {execution.playbook.name}, 错误: {str(e)}")
+            ExecutionLogger.fail_execution(
+                execution,
+                error_message=f"执行异常: {str(e)}",
+                log_message=f"Ansible playbook执行异常: {execution.playbook.name}, 错误: {str(e)}"
+            )
             
         finally:
             # 清理临时文件
-            for path in [playbook_path, inventory_path]:
+            for path in [playbook_path, inventory_path, key_path]:
                 if path and os.path.exists(path):
                     try:
                         os.unlink(path)
                     except:
                         pass
-            
-            # 清理可能的临时密钥文件
-            if 'key_path' in locals() and os.path.exists(key_path):
-                try:
-                    os.unlink(key_path)
-                except:
-                    pass
         
-        execution.completed_at = timezone.now()
-        execution.save()
-        
-        logger.info(f"Ansible playbook执行完成: {execution.playbook.name}, 状态: {execution.status}")
+        ExecutionLogger.log_execution_info(
+            execution, 
+            f"Ansible playbook执行完成: {execution.playbook.name}, 状态: {execution.status}"
+        )
         
         # TODO: 发送WebSocket通知
         # send_websocket_message(f'ansible_execution_{execution_id}', {
@@ -153,17 +162,18 @@ def execute_ansible_playbook(execution_id):
         return {
             'execution_id': execution_id,
             'status': execution.status,
-            'return_code': execution.return_code
+            'return_code': getattr(execution, 'return_code', None)
         }
         
     except Exception as e:
         logger.error(f"Ansible playbook执行失败: {str(e)}")
         
         try:
-            execution.status = 'failed'
-            execution.stderr = str(e)
-            execution.completed_at = timezone.now()
-            execution.save()
+            ExecutionLogger.fail_execution(
+                execution,
+                error_message=str(e),
+                log_message=f"Ansible playbook执行失败: {str(e)}"
+            )
         except:
             pass
         
@@ -296,7 +306,10 @@ def check_host_connectivity(host_id):
         
         host = AnsibleHost.objects.get(id=host_id)
         
-        logger.info(f"开始检查主机连通性: {host.hostname} ({host.ip_address})")
+        ExecutionLogger.log_execution_info(
+            host, 
+            f"开始检查主机连通性: {host.hostname} ({host.ip_address})"
+        )
         
         # 使用ansible ping模块检查连通性
         result = subprocess.run([
@@ -319,7 +332,10 @@ def check_host_connectivity(host_id):
         host.last_check = timezone.now()
         host.save()
         
-        logger.info(f"主机连通性检查完成: {host.hostname}, 状态: {host.status}")
+        ExecutionLogger.log_execution_info(
+            host, 
+            f"主机连通性检查完成: {host.hostname}, 状态: {host.status}"
+        )
         
         return {
             'host_id': host_id,
@@ -330,7 +346,11 @@ def check_host_connectivity(host_id):
         }
         
     except subprocess.TimeoutExpired:
-        logger.error(f"主机连通性检查超时: host_id={host_id}")
+        ExecutionLogger.log_execution_info(
+            host, 
+            f"主机连通性检查超时: host_id={host_id}", 
+            level='error'
+        )
         try:
             host.status = 'failed'
             host.check_message = '连接超时'
@@ -344,7 +364,11 @@ def check_host_connectivity(host_id):
             'message': '连接超时'
         }
     except Exception as e:
-        logger.error(f"主机连通性检查失败: {str(e)}")
+        ExecutionLogger.log_execution_info(
+            host, 
+            f"主机连通性检查失败: {str(e)}", 
+            level='error'
+        )
         return {
             'host_id': host_id,
             'success': False,

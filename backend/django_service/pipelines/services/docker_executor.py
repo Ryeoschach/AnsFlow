@@ -11,6 +11,7 @@ import subprocess
 from typing import Dict, Any, Optional
 from django.utils import timezone
 from docker_integration.models import DockerRegistry
+from common.execution_logger import ExecutionLogger
 
 logger = logging.getLogger(__name__)
 

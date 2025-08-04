@@ -8,6 +8,7 @@ import time
 import json
 import statistics
 import hashlib
+from common.execution_logger import ExecutionLogger
 import gc
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Any, Optional, Tuple
@@ -185,9 +186,11 @@ class ParallelExecutionService:
                     logger.info(f"🔄 更新共享工作目录: {shared_workspace_state['working_directory']}")
             
             # 所有阶段完成
-            pipeline_execution.status = 'success'
-            pipeline_execution.completed_at = timezone.now()
-            pipeline_execution.save()
+            ExecutionLogger.complete_execution(
+                pipeline_execution,
+                status='success',
+                log_message='Pipeline completed successfully'
+            )
             
             return {
                 'success': True,
@@ -198,9 +201,11 @@ class ParallelExecutionService:
         except Exception as e:
             logger.error(f"Pipeline execution failed: {e}")
             if 'pipeline_execution' in locals():
-                pipeline_execution.status = 'failed'
-                pipeline_execution.completed_at = timezone.now()
-                pipeline_execution.save()
+                ExecutionLogger.fail_execution(
+                    pipeline_execution,
+                    error_message=f'Pipeline execution failed: {str(e)}',
+                    log_message=f"Pipeline execution failed: {e}"
+                )
             
             return {
                 'success': False,
