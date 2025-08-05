@@ -12,6 +12,7 @@ from cicd_integrations.models import AtomicStep
 from ..tasks import execute_atomic_step_task
 from .docker_executor import DockerStepExecutor
 from .kubernetes_executor import KubernetesStepExecutor
+from common.execution_logger import ExecutionLogger
 
 logger = logging.getLogger(__name__)
 
@@ -209,14 +210,128 @@ class LocalPipelineExecutor:
     
     def _execute_ansible_step(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """执行 Ansible 步骤"""
-        # 这里应该调用 Ansible 集成模块
-        # 暂时返回模拟结果
-        return {
-            'success': True,
-            'message': f'Ansible step {step.name} completed (simulated)',
-            'output': f'Ansible playbook executed successfully',
-            'data': {'ansible_result': 'success'}
-        }
+        try:
+            from ansible_integration.models import AnsibleExecution
+            from ansible_integration.tasks import execute_ansible_playbook
+            
+            logger.info(f"开始执行Ansible步骤: {step.name}")
+            
+            # 从步骤参数中获取ansible配置
+            ansible_parameters = getattr(step, 'ansible_parameters', {}) or {}
+            ansible_playbook = getattr(step, 'ansible_playbook', None)
+            ansible_inventory = getattr(step, 'ansible_inventory', None) 
+            ansible_credential = getattr(step, 'ansible_credential', None)
+            
+            # 记录步骤配置信息
+            logger.info(f"Ansible步骤配置: playbook={ansible_playbook}, inventory={ansible_inventory}, credential={ansible_credential}")
+            logger.info(f"Ansible参数: {ansible_parameters}")
+            
+            # 如果没有直接字段，尝试从parameters中获取ID
+            if not ansible_playbook and ansible_parameters.get('playbook_id'):
+                from ansible_integration.models import AnsiblePlaybook
+                try:
+                    ansible_playbook = AnsiblePlaybook.objects.get(id=ansible_parameters['playbook_id'])
+                    logger.info(f"通过playbook_id {ansible_parameters['playbook_id']} 找到playbook: {ansible_playbook.name}")
+                except AnsiblePlaybook.DoesNotExist:
+                    logger.error(f"Ansible Playbook ID {ansible_parameters['playbook_id']} 不存在")
+                    
+            if not ansible_inventory and ansible_parameters.get('inventory_id'):
+                from ansible_integration.models import AnsibleInventory
+                try:
+                    ansible_inventory = AnsibleInventory.objects.get(id=ansible_parameters['inventory_id'])
+                    logger.info(f"通过inventory_id {ansible_parameters['inventory_id']} 找到inventory: {ansible_inventory.name}")
+                except AnsibleInventory.DoesNotExist:
+                    logger.error(f"Ansible Inventory ID {ansible_parameters['inventory_id']} 不存在")
+                    
+            if not ansible_credential and ansible_parameters.get('credential_id'):
+                from ansible_integration.models import AnsibleCredential
+                try:
+                    ansible_credential = AnsibleCredential.objects.get(id=ansible_parameters['credential_id'])
+                    logger.info(f"通过credential_id {ansible_parameters['credential_id']} 找到credential: {ansible_credential.name}")
+                except AnsibleCredential.DoesNotExist:
+                    logger.error(f"Ansible Credential ID {ansible_parameters['credential_id']} 不存在")
+            
+            if not ansible_playbook or not ansible_inventory:
+                error_msg = f"Ansible步骤 {step.name} 缺少必要配置: playbook={ansible_playbook}, inventory={ansible_inventory}"
+                logger.error(error_msg)
+                return {
+                    'success': False,
+                    'message': error_msg,
+                    'output': '',
+                    'error': error_msg
+                }
+            
+            # 创建AnsibleExecution记录
+            execution = AnsibleExecution.objects.create(
+                playbook=ansible_playbook,
+                inventory=ansible_inventory,
+                credential=ansible_credential,
+                parameters=ansible_parameters,
+                status='pending',
+                created_by_id=1  # TODO: 从context中获取用户ID
+            )
+            
+            logger.info(f"创建AnsibleExecution记录: {execution.id}")
+            logger.info(f"  - Playbook: {ansible_playbook.name}")
+            logger.info(f"  - Inventory: {ansible_inventory.name}")
+            logger.info(f"  - Credential: {ansible_credential.name if ansible_credential else 'None'}")
+            
+            # 使用ExecutionLogger记录开始执行
+            ExecutionLogger.start_execution(
+                execution,
+                f"流水线步骤 {step.name} 开始执行Ansible playbook: {ansible_playbook.name}"
+            )
+            
+            # 同步执行ansible任务（而不是异步）
+            task_result = execute_ansible_playbook(execution.id)
+            
+            # 重新获取execution对象，查看最新状态
+            execution.refresh_from_db()
+            
+            logger.info(f"Ansible执行完成: status={execution.status}, return_code={getattr(execution, 'return_code', None)}")
+            
+            if execution.status == 'success':
+                ExecutionLogger.log_execution_info(
+                    execution,
+                    f"流水线步骤 {step.name} 中的Ansible执行成功完成"
+                )
+                return {
+                    'success': True,
+                    'message': f'Ansible步骤 {step.name} 执行成功',
+                    'output': execution.stdout or 'Ansible playbook executed successfully',
+                    'data': {
+                        'ansible_execution_id': execution.id,
+                        'return_code': getattr(execution, 'return_code', 0),
+                        'status': execution.status
+                    }
+                }
+            else:
+                ExecutionLogger.log_execution_info(
+                    execution,
+                    f"流水线步骤 {step.name} 中的Ansible执行失败: {execution.error_message or 'Unknown error'}",
+                    level='error'
+                )
+                return {
+                    'success': False,
+                    'message': f'Ansible步骤 {step.name} 执行失败',
+                    'output': execution.stdout or '',
+                    'error': execution.stderr or execution.error_message or 'Ansible execution failed',
+                    'data': {
+                        'ansible_execution_id': execution.id,
+                        'return_code': getattr(execution, 'return_code', 1),
+                        'status': execution.status
+                    }
+                }
+                
+        except Exception as e:
+            error_msg = f"Ansible步骤执行异常: {str(e)}"
+            logger.error(error_msg, exc_info=True)
+            return {
+                'success': False,
+                'message': error_msg,
+                'output': '',
+                'error': error_msg
+            }
     
     def _execute_script_step(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """执行脚本步骤"""

@@ -311,23 +311,130 @@ def check_host_connectivity(host_id):
             f"开始检查主机连通性: {host.hostname} ({host.ip_address})"
         )
         
-        # 使用ansible ping模块检查连通性
-        result = subprocess.run([
-            'ansible', f'{host.ip_address}',
+        # 创建临时inventory文件
+        inventory_content = f"[targets]\n{host.ip_address}"
+        if host.port != 22:
+            inventory_content = f"[targets]\n{host.ip_address}:{host.port}"
+            
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as temp_inventory:
+            temp_inventory.write(inventory_content)
+            inventory_path = temp_inventory.name
+        
+        # 构建ansible ping命令，使用主机的认证凭证
+        cmd = [
+            'ansible', 'targets',  # 使用inventory中的组名
+            '-i', inventory_path,   # 指定inventory文件
             '-m', 'ping',
             '-u', host.username,
-            '-p', str(host.port),
             '--timeout=10'
-        ], capture_output=True, text=True, timeout=15)
+        ]
         
-        if result.returncode == 0:
-            host.status = 'active'
-            host.check_message = '连接成功'
-            success = True
-        else:
-            host.status = 'failed'
-            host.check_message = result.stderr or result.stdout
-            success = False
+        # 创建临时文件用于认证
+        key_path = None
+        
+        try:
+            # 如果主机配置了认证凭据，使用凭据进行连接
+            if host.credential:
+                credential = host.credential
+                ExecutionLogger.log_execution_info(
+                    host, 
+                    f"使用认证凭据: {credential.name} ({credential.get_credential_type_display()})"
+                )
+                
+                if credential.credential_type == 'ssh_key' and credential.ssh_private_key:
+                    # 使用SSH密钥认证
+                    decrypted_ssh_key = credential.get_decrypted_ssh_key()
+                    if decrypted_ssh_key:
+                        # 确保SSH密钥格式正确
+                        if not decrypted_ssh_key.endswith('\n'):
+                            decrypted_ssh_key += '\n'
+                        
+                        # 创建临时SSH密钥文件
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as temp_key:
+                            temp_key.write(decrypted_ssh_key)
+                            key_path = temp_key.name
+                        
+                        # 设置密钥文件权限
+                        os.chmod(key_path, 0o600)
+                        cmd.extend(['--private-key', key_path])
+                        
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            f"使用SSH密钥认证，临时密钥文件: {key_path}"
+                        )
+                    else:
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            "SSH密钥解密失败或为空",
+                            level='warning'
+                        )
+                        
+                elif credential.credential_type == 'password' and credential.password:
+                    # 使用密码认证（通过环境变量）
+                    decrypted_password = credential.get_decrypted_password()
+                    if decrypted_password:
+                        cmd.extend(['--ask-pass'])
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            "使用密码认证"
+                        )
+                    else:
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            "密码解密失败或为空",
+                            level='warning'
+                        )
+            else:
+                ExecutionLogger.log_execution_info(
+                    host,
+                    "未配置认证凭据，使用默认SSH连接",
+                    level='warning'
+                )
+            
+            # 记录完整的连接命令
+            ExecutionLogger.log_execution_info(
+                host,
+                f"执行连通性检查命令: {' '.join(cmd)}"
+            )
+            
+            # 执行ansible ping命令
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=15
+            )
+            
+            if result.returncode == 0:
+                host.status = 'active'
+                host.check_message = '连接成功'
+                success = True
+                ExecutionLogger.log_execution_info(
+                    host,
+                    f"主机连通性检查成功: {host.hostname}"
+                )
+            else:
+                host.status = 'failed'
+                host.check_message = result.stderr or result.stdout
+                success = False
+                ExecutionLogger.log_execution_info(
+                    host,
+                    f"主机连通性检查失败: {host.hostname}, 错误: {host.check_message}",
+                    level='error'
+                )
+                
+        finally:
+            # 清理临时密钥文件和inventory文件
+            if key_path and os.path.exists(key_path):
+                try:
+                    os.unlink(key_path)
+                except:
+                    pass
+            if 'inventory_path' in locals() and os.path.exists(inventory_path):
+                try:
+                    os.unlink(inventory_path)
+                except:
+                    pass
             
         host.last_check = timezone.now()
         host.save()
@@ -392,60 +499,223 @@ def gather_host_facts(host_id):
         
         host = AnsibleHost.objects.get(id=host_id)
         
-        logger.info(f"开始收集主机Facts: {host.hostname} ({host.ip_address})")
+        ExecutionLogger.log_execution_info(
+            host,
+            f"开始收集主机Facts: {host.hostname} ({host.ip_address})"
+        )
         
-        # 使用ansible setup模块收集信息
-        result = subprocess.run([
-            'ansible', f'{host.ip_address}',
+        # 创建临时inventory文件
+        inventory_content = f"[targets]\n{host.ip_address}"
+        if host.port != 22:
+            inventory_content = f"[targets]\n{host.ip_address}:{host.port}"
+            
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.ini', delete=False) as temp_inventory:
+            temp_inventory.write(inventory_content)
+            inventory_path = temp_inventory.name
+        
+        # 构建ansible setup命令，使用主机的认证凭证
+        cmd = [
+            'ansible', 'targets',  # 使用inventory中的组名
+            '-i', inventory_path,   # 指定inventory文件
             '-m', 'setup',
             '-u', host.username,
-            '-p', str(host.port),
             '--timeout=30'
-        ], capture_output=True, text=True, timeout=35)
+        ]
         
-        if result.returncode == 0:
-            import json
-            # 解析ansible facts
-            facts_output = result.stdout
-            try:
-                facts_start = facts_output.find('{')
-                facts_json = facts_output[facts_start:]
-                facts = json.loads(facts_json)
+        # 创建临时文件用于认证
+        key_path = None
+        
+        try:
+            # 如果主机配置了认证凭据，使用凭据进行连接
+            if host.credential:
+                credential = host.credential
+                ExecutionLogger.log_execution_info(
+                    host,
+                    f"使用认证凭据收集Facts: {credential.name} ({credential.get_credential_type_display()})"
+                )
                 
-                ansible_facts = facts.get('ansible_facts', {})
+                if credential.credential_type == 'ssh_key' and credential.ssh_private_key:
+                    # 使用SSH密钥认证
+                    decrypted_ssh_key = credential.get_decrypted_ssh_key()
+                    if decrypted_ssh_key:
+                        # 确保SSH密钥格式正确
+                        if not decrypted_ssh_key.endswith('\n'):
+                            decrypted_ssh_key += '\n'
+                        
+                        # 创建临时SSH密钥文件
+                        with tempfile.NamedTemporaryFile(mode='w', suffix='.pem', delete=False) as temp_key:
+                            temp_key.write(decrypted_ssh_key)
+                            key_path = temp_key.name
+                        
+                        # 设置密钥文件权限
+                        os.chmod(key_path, 0o600)
+                        cmd.extend(['--private-key', key_path])
+                        
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            f"使用SSH密钥收集Facts，临时密钥文件: {key_path}"
+                        )
+                    else:
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            "SSH密钥解密失败或为空",
+                            level='warning'
+                        )
+                elif credential.credential_type == 'password' and credential.password:
+                    # 使用密码认证
+                    decrypted_password = credential.get_decrypted_password()
+                    if decrypted_password:
+                        cmd.extend(['--ask-pass'])
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            "使用密码认证收集Facts"
+                        )
+                    else:
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            "密码解密失败或为空",
+                            level='warning'
+                        )
+            else:
+                ExecutionLogger.log_execution_info(
+                    host,
+                    "未配置认证凭据，使用默认SSH连接收集Facts",
+                    level='warning'
+                )
+            
+            # 记录完整的收集命令
+            ExecutionLogger.log_execution_info(
+                host,
+                f"执行Facts收集命令: {' '.join(cmd)}"
+            )
+            
+            # 执行ansible setup命令
+            result = subprocess.run(
+                cmd,  
+                capture_output=True, 
+                text=True, 
+                timeout=35
+            )
+            
+            if result.returncode == 0:
+                import json
+                # 解析ansible facts
+                facts_output = result.stdout
+                ExecutionLogger.log_execution_info(
+                    host,
+                    f"Facts收集原始输出长度: {len(facts_output)} 字符"
+                )
                 
-                # 更新主机信息
-                host.os_family = ansible_facts.get('ansible_os_family', '')
-                host.os_distribution = ansible_facts.get('ansible_distribution', '')
-                host.os_version = ansible_facts.get('ansible_distribution_version', '')
-                host.ansible_facts = ansible_facts
-                host.status = 'active'
-                host.last_check = timezone.now()
-                host.save()
-                
-                logger.info(f"主机Facts收集完成: {host.hostname}")
-                
-                return {
-                    'host_id': host_id,
-                    'hostname': host.hostname,
-                    'success': True,
-                    'facts': ansible_facts
-                }
-                
-            except json.JSONDecodeError as e:
-                logger.error(f"Facts数据解析失败: {str(e)}")
+                try:
+                    # Ansible setup输出通常包含主机名和JSON数据
+                    # 格式类似：172.16.59.128 | SUCCESS => { "ansible_facts": { ... }}
+                    lines = facts_output.strip().split('\n')
+                    json_line = None
+                    
+                    # 查找包含JSON数据的行
+                    for line in lines:
+                        if '{' in line and '"ansible_facts"' in line:
+                            # 提取JSON部分
+                            json_start = line.find('{')
+                            json_line = line[json_start:]
+                            break
+                    
+                    if not json_line:
+                        # 备用方法：查找第一个包含 { 的行
+                        for line in lines:
+                            if line.strip().startswith('{'):
+                                json_line = line.strip()
+                                break
+                    
+                    if json_line:
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            f"找到JSON数据行，长度: {len(json_line)} 字符"
+                        )
+                        facts = json.loads(json_line)
+                    else:
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            f"未找到JSON数据，尝试解析整个输出。输出前500字符: {facts_output[:500]}",
+                            level='warning'
+                        )
+                        # 最后尝试：找到第一个{的位置
+                        facts_start = facts_output.find('{')
+                        if facts_start >= 0:
+                            facts_json = facts_output[facts_start:]
+                            facts = json.loads(facts_json)
+                        else:
+                            raise ValueError("未找到JSON格式的Facts数据")
+                    
+                    ansible_facts = facts.get('ansible_facts', {})
+                    
+                    if not ansible_facts:
+                        ExecutionLogger.log_execution_info(
+                            host,
+                            "警告：未找到ansible_facts字段，使用整个facts数据",
+                            level='warning'
+                        )
+                        ansible_facts = facts
+                    
+                    # 更新主机信息
+                    host.os_family = ansible_facts.get('ansible_os_family', '')
+                    host.os_distribution = ansible_facts.get('ansible_distribution', '')
+                    host.os_version = ansible_facts.get('ansible_distribution_version', '')
+                    host.ansible_facts = ansible_facts
+                    host.status = 'active'
+                    host.last_check = timezone.now()
+                    host.save()
+                    
+                    ExecutionLogger.log_execution_info(
+                        host,
+                        f"主机Facts收集完成: {host.hostname}, 系统: {host.os_distribution} {host.os_version}"
+                    )
+                    
+                    return {
+                        'host_id': host_id,
+                        'hostname': host.hostname,
+                        'success': True,
+                        'facts': ansible_facts
+                    }
+                    
+                except json.JSONDecodeError as e:
+                    error_msg = f"Facts数据解析失败: {str(e)}"
+                    ExecutionLogger.log_execution_info(
+                        host,
+                        error_msg,
+                        level='error'
+                    )
+                    return {
+                        'host_id': host_id,
+                        'success': False,
+                        'message': error_msg
+                    }
+            else:
+                error_msg = result.stderr or result.stdout
+                ExecutionLogger.log_execution_info(
+                    host,
+                    f"Facts收集失败: {error_msg}",
+                    level='error'
+                )
                 return {
                     'host_id': host_id,
                     'success': False,
-                    'message': 'Facts数据解析失败'
+                    'message': error_msg
                 }
-        else:
-            logger.error(f"Facts收集失败: {result.stderr}")
-            return {
-                'host_id': host_id,
-                'success': False,
-                'message': result.stderr or result.stdout
-            }
+                
+        finally:
+            # 清理临时密钥文件
+            if key_path and os.path.exists(key_path):
+                try:
+                    os.unlink(key_path)
+                except:
+                    pass
+            # 清理临时inventory文件
+            if 'inventory_path' in locals() and os.path.exists(inventory_path):
+                try:
+                    os.unlink(inventory_path)
+                except:
+                    pass
             
     except subprocess.TimeoutExpired:
         logger.error(f"主机Facts收集超时: host_id={host_id}")
@@ -552,7 +822,6 @@ def validate_playbook_syntax(playbook_id):
     try:
         from .models import AnsiblePlaybook
         import tempfile
-        import yaml
         
         playbook = AnsiblePlaybook.objects.get(id=playbook_id)
         
