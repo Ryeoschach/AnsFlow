@@ -136,6 +136,29 @@ class GlobalConfig(models.Model):
         verbose_name = "全局配置"
         verbose_name_plural = "全局配置"
     
+    @classmethod
+    def get_config_dict(cls):
+        """获取所有配置的字典形式"""
+        configs = {}
+        try:
+            for config in cls.objects.all():
+                configs[config.key] = config.value
+        except Exception as e:
+            # 如果数据库还没有初始化或者表不存在，返回空字典
+            pass
+        return configs
+    
+    @classmethod  
+    def get_config(cls, key, default=None):
+        """获取单个配置值"""
+        try:
+            config = cls.objects.get(key=key)
+            return config.value
+        except cls.DoesNotExist:
+            return default
+        except Exception:
+            return default
+    
     def __str__(self):
         return f"{self.key}: {self.value[:50]}"
 

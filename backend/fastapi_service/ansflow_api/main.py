@@ -2,6 +2,13 @@
 Main FastAPI application factory
 """
 from contextlib import asynccontextmanager
+from pathlib import Path
+import sys
+
+# 添加项目根路径以便导入统一日志系统
+current_dir = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(current_dir))
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -18,27 +25,39 @@ from .monitoring.health import health_router
 from .monitoring import init_monitoring
 from .services.django_db import django_db_service
 
+# 导入统一日志系统集成
+try:
+    from standalone_logging import setup_standalone_logging, get_fastapi_logger
+    HAS_STANDALONE_LOGGING = True
+except ImportError:
+    try:
+        from logging_integration import setup_structlog_integration, get_fastapi_logger
+        HAS_UNIFIED_LOGGING = True
+        HAS_STANDALONE_LOGGING = False
+    except ImportError:
+        HAS_UNIFIED_LOGGING = False
+        HAS_STANDALONE_LOGGING = False
+        print("⚠️  统一日志系统集成不可用，使用基本日志配置")
 
-# Configure structured logging
-structlog.configure(
-    processors=[
-        structlog.stdlib.filter_by_level,
-        structlog.stdlib.add_logger_name,
-        structlog.stdlib.add_log_level,
-        structlog.stdlib.PositionalArgumentsFormatter(),
-        structlog.processors.TimeStamper(fmt="iso"),
-        structlog.processors.StackInfoRenderer(),
-        structlog.processors.format_exc_info,
-        structlog.processors.UnicodeDecoder(),
-        structlog.processors.JSONRenderer() if settings.log_format == "json" else structlog.dev.ConsoleRenderer(),
-    ],
-    context_class=dict,
-    logger_factory=structlog.stdlib.LoggerFactory(),
-    wrapper_class=structlog.stdlib.BoundLogger,
-    cache_logger_on_first_use=True,
-)
 
-logger = structlog.get_logger(__name__)
+# Configure structured logging with unified system integration
+if HAS_STANDALONE_LOGGING:
+    # 使用独立日志系统（推荐）
+    logger = setup_standalone_logging()
+    print("✅ 使用FastAPI独立日志系统")
+elif HAS_UNIFIED_LOGGING:
+    # 使用原有统一日志系统集成
+    log_integration = setup_structlog_integration()
+    logger = get_fastapi_logger('main')
+    print("✅ 使用原有统一日志系统")
+else:
+    # 基本structlog配置 - 暂时使用标准logging
+    import logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    logger = logging.getLogger('fastapi.main')
 
 
 @asynccontextmanager
@@ -47,7 +66,7 @@ async def lifespan(app: FastAPI):
     Application lifespan manager
     """
     # Startup
-    logger.info("Starting AnsFlow FastAPI service", version=settings.api.version)
+    logger.info(f"Starting AnsFlow FastAPI service v{settings.api.version}")
     
     # Initialize Django database connection pool
     await django_db_service.init_connection_pool()
@@ -154,9 +173,19 @@ def create_application() -> FastAPI:
     except:
         pass
     
+    # 添加日志管理路由
+    try:
+        from .api.log_management import log_router
+        app.include_router(log_router, prefix="/api/v1", tags=["日志管理"])
+        logger.info("Log management router added successfully")
+    except ImportError as e:
+        logger.warning(f"Failed to import log management router: {e}")
+        pass
+    
     @app.get("/")
     async def root():
         """Root endpoint"""
+        logger.info("Root endpoint accessed")
         return {
             "service": "AnsFlow FastAPI Service",
             "version": settings.api.version,

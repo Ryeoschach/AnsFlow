@@ -653,5 +653,265 @@ async def get_execution_logs(execution_id: int, last_count: int = 0):
     return await django_db_service.get_execution_logs(execution_id, last_count)
 
 
+@websocket_router.websocket("/logs/realtime/")
+async def websocket_logs_realtime(websocket: WebSocket):
+    """
+    实时日志流WebSocket端点
+    支持日志级别过滤、关键词搜索、服务过滤等功能
+    """
+    await manager.connect(websocket, "logs_realtime")
+    room = "logs_realtime"
+    user_id = None
+    
+    try:
+        # 发送连接成功消息
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "connected",
+                "message": "日志实时流连接成功",
+                "timestamp": datetime.utcnow().isoformat()
+            }),
+            websocket
+        )
+        
+        # 🔥 方案2: 不发送文件历史数据，只发送连接成功消息
+        logger.info("WebSocket实时日志连接建立，等待Redis Stream新数据")
+        
+        # 可选：发送一条提示消息
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "info",
+                "message": "实时日志监控已启动，等待新的日志数据...",
+                "timestamp": datetime.utcnow().isoformat()
+            }),
+            websocket
+        )
+        
+        # 创建Redis Stream监控任务
+        async def redis_log_monitor():
+            """监控Redis Stream中的新日志并推送更新"""
+            import redis
+            import asyncio
+            import json
+            
+            # 连接到Redis Stream
+            try:
+                redis_client = redis.Redis(
+                    host='localhost',
+                    port=6379,
+                    db=5,
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    socket_timeout=5
+                )
+                redis_client.ping()
+                
+                # 获取当前最新的Stream ID作为起始点
+                try:
+                    stream_info = redis_client.xinfo_stream('ansflow:logs:stream')
+                    last_id = stream_info.get('last-generated-id', '0-0')
+                except Exception:
+                    # 如果Stream不存在，从头开始
+                    last_id = '0-0'
+                
+                logger.info(f"开始监控Redis Stream，起始ID: {last_id}")
+                
+                while True:
+                    try:
+                        # 使用XREAD命令监听新消息，阻塞模式
+                        messages = redis_client.xread(
+                            {'ansflow:logs:stream': last_id},
+                            count=10,  # 一次最多读取10条
+                            block=1000  # 阻塞1秒
+                        )
+                        
+                        if messages:
+                            for stream_name, stream_messages in messages:
+                                for message_id, fields in stream_messages:
+                                    try:
+                                        # 构造日志条目
+                                        log_entry = {
+                                            "type": "new_log",
+                                            "log": {
+                                                "id": message_id,
+                                                "timestamp": fields.get('timestamp', ''),
+                                                "level": fields.get('level', 'INFO').upper(),
+                                                "service": fields.get('service', 'unknown'),
+                                                "message": fields.get('message', ''),
+                                                "module": fields.get('module', ''),
+                                                "logger": fields.get('logger', ''),
+                                                "component": fields.get('component', ''),
+                                                "function": fields.get('function', ''),
+                                                "line": fields.get('line', ''),
+                                                "execution_id": fields.get('execution_id', ''),
+                                                "trace_id": fields.get('trace_id', ''),
+                                                "extra_data": fields.get('extra_data', ''),
+                                                "exception": fields.get('exception', '')
+                                            }
+                                        }
+                                        
+                                        # 推送到所有连接的客户端
+                                        await manager.send_to_room(
+                                            json.dumps(log_entry, ensure_ascii=False),
+                                            room
+                                        )
+                                        
+                                        # 更新last_id
+                                        last_id = message_id
+                                        
+                                    except Exception as e:
+                                        logger.error(f"处理Redis Stream消息失败: {e}")
+                                        continue
+                        
+                        await asyncio.sleep(0.1)  # 短暂休息
+                        
+                    except Exception as e:
+                        logger.error(f"Redis Stream监控错误: {e}")
+                        await asyncio.sleep(5)  # 出错时等待更长时间
+                        
+            except Exception as e:
+                logger.error(f"Redis Stream连接失败: {e}")
+                # 如果Redis连接失败，回退到文件监控
+                await file_log_monitor()
+        
+        # 文件监控作为备用方案
+        async def file_log_monitor():
+            """监控日志文件变化并推送更新（备用方案）"""
+            import os
+            import asyncio
+            from pathlib import Path
+            
+            # 监控的日志目录
+            log_dirs = [
+                "/Users/creed/Workspace/OpenSource/ansflow/logs",
+                "/Users/creed/Workspace/OpenSource/ansflow/backend/django_service/logs",
+                "/Users/creed/Workspace/OpenSource/ansflow/backend/fastapi_service/logs"
+            ]
+            
+            last_sizes = {}
+            
+            while True:
+                try:
+                    for log_dir in log_dirs:
+                        if os.path.exists(log_dir):
+                            for log_file in Path(log_dir).glob("*.log"):
+                                if log_file.is_file():
+                                    current_size = log_file.stat().st_size
+                                    file_path = str(log_file)
+                                    
+                                    if file_path not in last_sizes:
+                                        last_sizes[file_path] = current_size
+                                        continue
+                                    
+                                    if current_size > last_sizes[file_path]:
+                                        # 文件有新内容，读取新增的行
+                                        with open(log_file, 'r', encoding='utf-8') as f:
+                                            f.seek(last_sizes[file_path])
+                                            new_lines = f.read().strip()
+                                            
+                                        if new_lines:
+                                            lines = new_lines.split('\n')
+                                            for line in lines:
+                                                if line.strip():
+                                                    # 解析日志行并发送
+                                                    log_entry = {
+                                                        "type": "new_log",
+                                                        "log": {
+                                                            "id": f"{log_file.name}:{current_size}",
+                                                            "timestamp": datetime.utcnow().isoformat(),
+                                                            "level": extract_log_level(line),
+                                                            "service": log_file.parent.parent.name if log_file.parent.parent.name in ['django_service', 'fastapi_service'] else 'system',
+                                                            "message": line.strip(),
+                                                            "file": log_file.name,
+                                                            "module": None,
+                                                            "logger": None,
+                                                            "line_number": None,
+                                                            "extra_data": None
+                                                        }
+                                                    }
+                                                    
+                                                    await manager.send_to_room(
+                                                        json.dumps(log_entry),
+                                                        room
+                                                    )
+                                        
+                                        last_sizes[file_path] = current_size
+                    
+                    await asyncio.sleep(1)  # 每秒检查一次
+                    
+                except Exception as e:
+                    logger.error("文件日志监控错误", error=str(e))
+                    await asyncio.sleep(5)  # 出错时等待更长时间
+        
+        # 启动Redis Stream监控任务（优先）
+        monitoring_task = asyncio.create_task(redis_log_monitor())
+        
+        # 处理客户端消息
+        while True:
+            try:
+                data = await websocket.receive_text()
+                message = json.loads(data)
+                
+                if message.get("type") == "filter":
+                    # 客户端设置过滤条件 - 目前暂存，后续可用于过滤推送
+                    filters = message.get("filters", {})
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "filter_applied",
+                            "filters": filters,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }),
+                        websocket
+                    )
+                elif message.get("type") == "ping":
+                    # 心跳检测
+                    await manager.send_personal_message(
+                        json.dumps({
+                            "type": "pong",
+                            "timestamp": datetime.utcnow().isoformat()
+                        }),
+                        websocket
+                    )
+                
+            except json.JSONDecodeError:
+                await manager.send_personal_message(
+                    json.dumps({
+                        "type": "error",
+                        "message": "Invalid JSON format",
+                        "timestamp": datetime.utcnow().isoformat()
+                    }),
+                    websocket
+                )
+                
+    except WebSocketDisconnect:
+        # 取消监控任务
+        if 'monitoring_task' in locals():
+            monitoring_task.cancel()
+        manager.disconnect(websocket, room, user_id)
+        logger.info("日志实时流WebSocket断开连接")
+    except Exception as e:
+        # 取消监控任务
+        if 'monitoring_task' in locals():
+            monitoring_task.cancel()
+        logger.error("日志实时流WebSocket错误", error=str(e))
+        manager.disconnect(websocket, room, user_id)
+
+
+def extract_log_level(log_line: str) -> str:
+    """从日志行中提取日志级别"""
+    log_line_upper = log_line.upper()
+    
+    if 'ERROR' in log_line_upper or 'ERRO' in log_line_upper:
+        return 'ERROR'
+    elif 'WARN' in log_line_upper:
+        return 'WARNING'
+    elif 'INFO' in log_line_upper:
+        return 'INFO'
+    elif 'DEBUG' in log_line_upper:
+        return 'DEBUG'
+    else:
+        return 'INFO'  # 默认为INFO级别
+
+
 # Export the connection manager for use by other services
 __all__ = ["websocket_router", "manager"]

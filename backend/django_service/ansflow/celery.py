@@ -1,6 +1,6 @@
 """
 Celery configuration for AnsFlow Django service.
-优化版本 - 支持RabbitMQ队列路由和任务优先级
+优化版本 - 支持RabbitMQ队列路由、任务优先级和统一日志系统
 """
 
 import os
@@ -18,6 +18,16 @@ app.config_from_object('django.conf:settings', namespace='CELERY')
 
 # Load task modules from all registered Django apps.
 app.autodiscover_tasks()
+
+# 统一日志系统集成
+try:
+    from celery_logging_integration import configure_celery_logging
+    configure_celery_logging()
+    print("✅ Celery统一日志系统集成成功")
+except ImportError as e:
+    print(f"⚠️  Celery统一日志系统集成失败: {e}")
+except Exception as e:
+    print(f"⚠️  Celery日志配置错误: {e}")
 
 # RabbitMQ 队列配置
 app.conf.task_queues = [

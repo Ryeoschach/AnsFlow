@@ -75,6 +75,7 @@ LOCAL_APPS = [
     'docker_integration',
     'kubernetes_integration',
     'settings_management',
+    'logging_system',  # 统一日志系统
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -90,6 +91,7 @@ MIDDLEWARE = [
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
     'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    'common.middleware.LoggingMiddleware',  # AnsFlow统一日志中间件
     'monitoring.integration.MetricsLoggingMiddleware',
     'django_prometheus.middleware.PrometheusAfterMiddleware',
 ]
@@ -372,49 +374,143 @@ CHANNEL_LAYERS = {
 }
 
 # Logging configuration
-LOGGING = {
-    'version': 1,
-    'disable_existing_loggers': False,
-    'formatters': {
-        'verbose': {
-            'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
-            'style': '{',
+# 使用AnsFlow统一日志配置
+import sys
+from pathlib import Path
+
+# 添加common模块到Python路径
+common_path = BASE_DIR / 'common'
+if common_path.exists() and str(common_path) not in sys.path:
+    sys.path.insert(0, str(common_path))
+
+try:
+    from common.logging_config import AnsFlowLoggingConfig
+    
+    # 创建AnsFlow统一日志配置实例并设置
+    logging_config = AnsFlowLoggingConfig()
+    logging_config.setup_logging()
+    
+    # Django的LOGGING配置（保持兼容性）
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'ansflow_json': {
+                '()': 'common.logging_config.AnsFlowJSONFormatter',
+            },
+            'simple': {
+                'format': '{levelname} {asctime} {name} {message}',
+                'style': '{',
+            },
         },
-        'simple': {
-            'format': '{levelname} {message}',
-            'style': '{',
+        'filters': {
+            'sensitive_data': {
+                '()': 'common.logging_config.SensitiveDataFilter',
+            },
         },
-    },
-    'handlers': {
-        'file': {
+        'handlers': {
+            'console': {
+                'level': 'INFO',
+                'class': 'logging.StreamHandler',
+                'formatter': 'simple',
+                'filters': ['sensitive_data'],
+            },
+            'file': {
+                'level': 'INFO',
+                'class': 'logging.handlers.TimedRotatingFileHandler',
+                'filename': BASE_DIR / 'logs' / 'django.log',
+                'when': 'midnight',
+                'interval': 1,
+                'backupCount': 30,
+                'formatter': 'ansflow_json',
+                'filters': ['sensitive_data'],
+            },
+            # 暂时注释掉redis处理器，避免配置错误
+            'redis': {
+                'level': 'INFO',  
+                '()': 'common.logging_config.RedisLogHandler',
+                'stream_name': 'ansflow:logs:stream',
+                'max_len': 10000,
+                'formatter': 'ansflow_json',
+                'filters': ['sensitive_data'],
+            },
+        },
+        'root': {
+            'handlers': ['console', 'file'] + (['redis'] if env.bool('LOGGING_ENABLE_REDIS', default=False) else []),
+            'level': env('LOG_LEVEL', default='INFO'),
+        },
+        'loggers': {
+            'django': {
+                'handlers': ['console', 'file'] + (['redis'] if env.bool('LOGGING_ENABLE_REDIS', default=False) else []),
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'ansflow': {
+                'handlers': ['console', 'file'] + (['redis'] if env.bool('LOGGING_ENABLE_REDIS', default=False) else []),
+                'level': env('LOG_LEVEL', default='DEBUG'),
+                'propagate': False,
+            },
+            'django.request': {
+                'handlers': ['console', 'file'] + (['redis'] if env.bool('LOGGING_ENABLE_REDIS', default=False) else []),
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'django.security': {
+                'handlers': ['console', 'file'] + (['redis'] if env.bool('LOGGING_ENABLE_REDIS', default=False) else []),
+                'level': 'WARNING',
+                'propagate': False,
+            },
+        },
+    }
+    
+except ImportError:
+    # 如果AnsFlowLoggingConfig不可用，使用默认配置
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'formatters': {
+            'verbose': {
+                'format': '{levelname} {asctime} {module} {process:d} {thread:d} {message}',
+                'style': '{',
+            },
+            'simple': {
+                'format': '{levelname} {message}',
+                'style': '{',
+            },
+        },
+        'handlers': {
+            'file': {
+                'level': 'INFO',
+                'class': 'logging.handlers.TimedRotatingFileHandler',
+                'filename': BASE_DIR / 'logs' / 'django.log',
+                'when': 'midnight',
+                'interval': 1,
+                'backupCount': 30,
+                'formatter': 'verbose',
+            },
+            'console': {
+                'level': 'INFO',
+                'class': 'logging.StreamHandler',
+                'formatter': 'simple',
+            },
+        },
+        'root': {
+            'handlers': ['console', 'file'],
             'level': 'INFO',
-            'class': 'logging.FileHandler',
-            'filename': BASE_DIR / 'logs' / 'django.log',
-            'formatter': 'verbose',
         },
-        'console': {
-            'level': 'INFO',
-            'class': 'logging.StreamHandler',
-            'formatter': 'simple',
+        'loggers': {
+            'django': {
+                'handlers': ['console', 'file'],
+                'level': 'INFO',
+                'propagate': False,
+            },
+            'ansflow': {
+                'handlers': ['console', 'file'],
+                'level': 'DEBUG',
+                'propagate': False,
+            },
         },
-    },
-    'root': {
-        'handlers': ['console'],
-        'level': 'INFO',
-    },
-    'loggers': {
-        'django': {
-            'handlers': ['console'],
-            'level': 'INFO',
-            'propagate': False,
-        },
-        'ansflow': {
-            'handlers': ['console'],
-            'level': 'DEBUG',
-            'propagate': False,
-        },
-    },
-}
+    }
 
 # JWT Settings
 from datetime import timedelta
