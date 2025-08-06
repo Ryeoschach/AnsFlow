@@ -1,0 +1,14 @@
+# AnsFlow 日志系统定时任务配置
+# 请根据需要修改时间和路径
+
+# 每小时聚合一次日志
+0 * * * * /usr/bin/python3 /Users/creed/Workspace/OpenSource/ansflow/scripts/log_aggregator.py --aggregate
+
+# 每天凌晨2点归档旧日志
+0 2 * * * /usr/bin/python3 /Users/creed/Workspace/OpenSource/ansflow/scripts/log_aggregator.py --archive
+
+# 每天凌晨3点生成日志报告
+0 3 * * * /usr/bin/python3 /Users/creed/Workspace/OpenSource/ansflow/scripts/log_aggregator.py --report
+
+# 每周日凌晨4点执行完整维护
+0 4 * * 0 /usr/bin/python3 /Users/creed/Workspace/OpenSource/ansflow/scripts/log_aggregator.py --all

@@ -20,6 +20,44 @@ export default defineConfig({
     port: 5173,
     host: true,
     proxy: {
+      // 日志管理API路由到FastAPI服务
+      '/api/v1/logs': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        secure: false,
+      },
+      // 其他FastAPI端点
+      '/api/v1/health': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/v1/status': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/v1/metrics': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/v1/cache': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/v1/system': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        secure: false,
+      },
+      '/api/v1/executions': {
+        target: 'http://localhost:8001',
+        changeOrigin: true,
+        secure: false,
+      },
+      // 默认API路由到Django服务
       '/api': {
         target: 'http://localhost:8000',
         changeOrigin: true,

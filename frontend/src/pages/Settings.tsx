@@ -41,6 +41,7 @@ import TeamManagement from '../components/settings/TeamManagement'
 import GlobalConfiguration from '../components/settings/GlobalConfiguration'
 import NotificationSettingsComponent from '../components/settings/NotificationSettings'
 import SystemBackup from '../components/settings/SystemBackup'
+import LogManagement from '../components/settings/LogManagement'
 import DockerRegistries from './settings/DockerRegistries'
 import { usePermissions, Permission } from '../hooks/usePermissions'
 import PermissionGuard from '../components/common/PermissionGuard'
@@ -267,6 +268,15 @@ const Settings: React.FC = () => {
       description: '性能监控和健康检查',
       icon: <DatabaseOutlined />,
       component: SystemMonitoring,
+      category: 'system',
+      permission: Permission.MONITORING_VIEW
+    },
+    {
+      key: 'log-management',
+      title: '日志管理',
+      description: '企业级日志查询、分析和监控',
+      icon: <AuditOutlined />,
+      component: LogManagement,
       category: 'system',
       permission: Permission.MONITORING_VIEW
     },
