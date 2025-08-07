@@ -12,6 +12,8 @@ from typing import Dict, List, Any, Optional
 from django.http import JsonResponse, HttpResponse, StreamingHttpResponse
 from django.utils.decorators import method_decorator
 from django.views.decorators.cache import cache_page
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
 from django.core.cache import cache
 from django.conf import settings
 from rest_framework import status
@@ -40,16 +42,42 @@ class LogFileIndexer:
     """日志文件索引器 - Phase 3核心功能"""
     
     def __init__(self, log_dir: str = None):
-        self.log_dir = Path(log_dir or getattr(settings, 'LOG_DIR', '/Users/creed/Workspace/OpenSource/ansflow/logs'))
+        # 统一日志管理：所有日志都存放在项目根目录的logs文件夹中
+        project_root = Path(settings.BASE_DIR).parent.parent  # 项目根目录
+        self.log_directories = [
+            Path(log_dir) if log_dir else project_root / 'logs',  # 项目根日志目录（主要）
+        ]
+        # 保持向后兼容
+        self.log_dir = self.log_directories[0]
         self.cache_timeout = 300  # 5分钟缓存
         self.logger = logging.getLogger(__name__)
         
+    def _get_logs_last_modified(self) -> float:
+        """获取日志目录中最新文件的修改时间"""
+        latest_time = 0
+        for log_directory in self.log_directories:
+            if not log_directory.exists():
+                continue
+            try:
+                for log_file in log_directory.rglob('*.log*'):
+                    if log_file.is_file():
+                        mtime = log_file.stat().st_mtime
+                        latest_time = max(latest_time, mtime)
+            except Exception:
+                continue
+        return latest_time
+        
     def build_file_index(self, days: int = 30) -> Dict[str, Any]:
         """构建日志文件索引"""
-        cache_key = f"log_file_index_{days}"
-        cached_index = cache.get(cache_key)
-        if cached_index:
-            return cached_index
+        # 为了确保索引的实时性，暂时禁用缓存
+        # cache_key = f"log_file_index_{days}"
+        # cache_time_key = f"log_file_index_time_{days}"
+        
+        # cached_index = cache.get(cache_key)
+        # cached_time = cache.get(cache_time_key, 0)
+        
+        # 直接重建索引，确保实时性
+        current_log_time = self._get_logs_last_modified()
             
         index = {
             'files': [],
@@ -61,37 +89,51 @@ class LogFileIndexer:
         }
         
         try:
-            # 扫描日志目录
+            # 扫描所有配置的日志目录
             cutoff_date = datetime.now() - timedelta(days=days)
             
-            for log_file in self.log_dir.rglob('*.log*'):
-                if not log_file.is_file():
+            for log_directory in self.log_directories:
+                if not log_directory.exists():
+                    self.logger.debug(f"日志目录不存在，跳过: {log_directory}")
                     continue
                     
-                try:
-                    file_stat = log_file.stat()
-                    file_time = datetime.fromtimestamp(file_stat.st_mtime)
-                    
-                    if file_time < cutoff_date:
+                self.logger.info(f"扫描日志目录: {log_directory}")
+                
+                for log_file in log_directory.rglob('*.log*'):
+                    if not log_file.is_file():
                         continue
                         
-                    file_info = {
-                        'path': str(log_file),
-                        'relative_path': str(log_file.relative_to(self.log_dir)),
-                        'size': file_stat.st_size,
-                        'modified': file_time.isoformat(),
-                        'is_compressed': log_file.suffix == '.gz',
-                        'service': self._extract_service_from_path(log_file),
-                        'level': self._extract_level_from_path(log_file)
-                    }
-                    
-                    index['files'].append(file_info)
-                    index['services'].add(file_info['service'])
-                    index['levels'].add(file_info['level'])
-                    index['total_size'] += file_stat.st_size
-                    
-                except Exception as e:
-                    self.logger.warning(f"处理文件 {log_file} 时出错: {e}")
+                    try:
+                        file_stat = log_file.stat()
+                        file_time = datetime.fromtimestamp(file_stat.st_mtime)
+                        
+                        if file_time < cutoff_date:
+                            continue
+                            
+                        # 使用第一个日志目录作为相对路径基准
+                        try:
+                            relative_path = str(log_file.relative_to(self.log_directories[0]))
+                        except ValueError:
+                            # 如果文件不在第一个目录下，使用完整路径
+                            relative_path = str(log_file)
+                            
+                        file_info = {
+                            'path': str(log_file),
+                            'relative_path': relative_path,
+                            'size': file_stat.st_size,
+                            'modified': file_time.isoformat(),
+                            'is_compressed': log_file.suffix == '.gz',
+                            'service': self._extract_service_from_path(log_file),
+                            'level': self._extract_level_from_path(log_file)
+                        }
+                        
+                        index['files'].append(file_info)
+                        index['services'].add(file_info['service'])
+                        index['levels'].add(file_info['level'])
+                        index['total_size'] += file_stat.st_size
+                        
+                    except Exception as e:
+                        self.logger.warning(f"处理文件 {log_file} 时出错: {e}")
                     
             # 转换集合为列表以便序列化
             index['services'] = list(index['services'])
@@ -105,8 +147,9 @@ class LogFileIndexer:
                 dates = [f['modified'] for f in index['files']]
                 index['date_range'] = [min(dates), max(dates)]
                 
-            # 缓存索引
-            cache.set(cache_key, index, self.cache_timeout)
+            # 暂时禁用缓存，确保索引实时性
+            # cache.set(cache_key, index, 300)  # 5分钟缓存
+            # cache.set(cache_time_key, current_log_time, 300)
             
             self.logger.info(f"构建日志文件索引完成: {len(index['files'])} 个文件, "
                            f"总大小 {index['total_size'] / 1024 / 1024:.2f}MB")
@@ -154,11 +197,11 @@ class LogQueryEngine:
         limit = min(int(query_params.get('limit', 100)), 1000)
         offset = int(query_params.get('offset', 0))
         
-        # 构建缓存键
-        cache_key = f"log_search_{hash(json.dumps(query_params, sort_keys=True))}"
-        cached_result = cache.get(cache_key)
-        if cached_result:
-            return cached_result
+        # 为了确保搜索结果的实时性，暂时禁用搜索缓存
+        # cache_key = f"log_search_{hash(json.dumps(query_params, sort_keys=True))}"
+        # cached_result = cache.get(cache_key)
+        # if cached_result:
+        #     return cached_result
         
         try:
             # 获取相关文件
@@ -187,8 +230,8 @@ class LogQueryEngine:
                 'has_more': offset + len(paginated_results) < total_count
             }
             
-            # 缓存结果
-            cache.set(cache_key, result, 60)  # 1分钟缓存
+            # 为了确保搜索结果的实时性，暂时禁用搜索缓存
+            # cache.set(cache_key, result, 15)  # 15秒缓存
             
             return result
             
@@ -489,12 +532,60 @@ class LogFileIndexView(LogManagementAPIView):
     def get(self, request):
         """获取日志文件索引"""
         days = int(request.GET.get('days', 30))
-        index = self.indexer.build_file_index(days)
         
-        return Response({
-            'success': True,
-            'data': index
-        })
+        # 返回后端期望的格式
+        try:
+            index = self.indexer.build_file_index(days)
+            
+            # 转换为前端期望的格式
+            files_data = []
+            for file_info in index['files']:
+                files_data.append({
+                    'file_path': file_info['relative_path'],
+                    'service': file_info['service'],
+                    'size_mb': file_info['size'] / (1024 * 1024),  # 转换为MB
+                    'line_count': 0,  # 暂时设为0，可以后续优化
+                    'last_modified': file_info['modified'],
+                    'date_range': index.get('date_range', []),
+                    'levels_found': [file_info['level']] if file_info['level'] else []
+                })
+            
+            return Response(files_data, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"获取日志索引失败: {e}")
+            return Response(
+                {'error': f'获取日志索引失败: {str(e)}'}, 
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    def post(self, request):
+        """重建日志文件索引"""
+        try:
+            # 清除缓存，强制重建索引
+            cache_keys = cache.keys('log_file_index_*') if hasattr(cache, 'keys') else []
+            for key in cache_keys:
+                cache.delete(key)
+            
+            # 重建索引
+            days = int(request.data.get('days', 30))
+            index = self.indexer.build_file_index(days)
+            
+            logger.info(f"重建日志索引完成: {len(index['files'])} 个文件")
+            
+            return Response({
+                'success': True,
+                'message': f'索引重建成功，找到 {len(index["files"])} 个日志文件',
+                'files_count': len(index['files']),
+                'total_size_mb': index['total_size'] / (1024 * 1024)
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            logger.error(f"重建日志索引失败: {e}")
+            return Response({
+                'success': False,
+                'error': f'重建索引失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class LogSearchView(LogManagementAPIView):
@@ -532,6 +623,108 @@ class LogAnalysisView(LogManagementAPIView):
             'success': True,
             'data': analysis
         })
+    
+    def post(self, request):
+        """基于查询参数进行日志分析"""
+        try:
+            query_params = request.data
+            logger.info(f"日志分析请求参数: {query_params}")
+            
+            # 获取查询结果进行分析
+            search_results = self.query_engine.search_logs(query_params)
+            logs = search_results.get('logs', [])
+            
+            # 初始化统计字典
+            by_level = {}
+            by_service = {}
+            by_hour = {}
+            by_date = {}
+            
+            for log in logs:
+                # 按级别统计
+                level = log.get('level', 'Unknown')
+                by_level[level] = by_level.get(level, 0) + 1
+                
+                # 按服务统计
+                service = log.get('service', 'Unknown')
+                by_service[service] = by_service.get(service, 0) + 1
+                
+                # 按时间统计
+                timestamp = log.get('timestamp', '')
+                if timestamp:
+                    try:
+                        # 解析时间戳并按小时和日期分组
+                        from datetime import datetime
+                        if isinstance(timestamp, str):
+                            # 尝试多种时间格式
+                            for fmt in ['%Y-%m-%d %H:%M:%S', '%Y-%m-%dT%H:%M:%S', '%Y-%m-%d %H:%M:%S.%f']:
+                                try:
+                                    dt = datetime.strptime(timestamp.split('.')[0], fmt)
+                                    break
+                                except ValueError:
+                                    continue
+                            else:
+                                dt = datetime.now()
+                        else:
+                            dt = timestamp
+                        
+                        hour_key = dt.strftime('%Y-%m-%d %H:00')
+                        date_key = dt.strftime('%Y-%m-%d')
+                        by_hour[hour_key] = by_hour.get(hour_key, 0) + 1
+                        by_date[date_key] = by_date.get(date_key, 0) + 1
+                    except Exception as e:
+                        logger.warning(f"解析时间戳失败: {timestamp}, 错误: {e}")
+            
+            # 计算时间范围
+            start_time = query_params.get('start_time')
+            end_time = query_params.get('end_time')
+            days = 7  # 默认值
+            
+            if start_time and end_time:
+                try:
+                    from datetime import datetime
+                    start_dt = datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+                    end_dt = datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+                    days = (end_dt - start_dt).days + 1
+                except:
+                    pass
+            
+            analysis = {
+                'time_range': {
+                    'start': start_time or '',
+                    'end': end_time or '',
+                    'days': days
+                },
+                'summary': {
+                    'total_logs': len(logs),
+                    'files_analyzed': 1  # 暂时固定值，后续可改进
+                },
+                'by_level': by_level,
+                'by_service': by_service,
+                'by_hour': by_hour,
+                'by_date': by_date,
+                'error_patterns': [],  # 暂时为空，后续可添加错误模式分析
+                'top_loggers': {},  # 暂时为空，后续可添加顶级记录器统计
+                'generated_at': datetime.now().isoformat(),
+                'filters_applied': {
+                    'levels': query_params.get('levels', []),
+                    'services': query_params.get('services', []),
+                    'keywords': query_params.get('keywords', '')
+                }
+            }
+            
+            logger.info(f"分析结果: 总计 {len(logs)} 条日志")
+            return Response({
+                'success': True,
+                'data': analysis
+            })
+            
+        except Exception as e:
+            logger.error(f"日志分析失败: {str(e)}")
+            return Response({
+                'success': False,
+                'error': f'分析失败: {str(e)}'
+            }, status=500)
 
 
 class LogExportView(LogManagementAPIView):
@@ -1012,6 +1205,30 @@ def log_metrics_json_view(request):
         
     except Exception as e:
         logger.error(f"获取JSON指标失败: {e}")
+        return JsonResponse({
+            'success': False,
+            'error': str(e)
+        }, status=500)
+
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def clear_logging_cache(request):
+    """清理日志系统缓存"""
+    try:
+        # 清理Django缓存
+        from django.core.cache import cache
+        cache.clear()
+        
+        logger.info("日志系统缓存已清理")
+        
+        return JsonResponse({
+            'success': True,
+            'message': '缓存已清理'
+        })
+        
+    except Exception as e:
+        logger.error(f"清理缓存失败: {e}")
         return JsonResponse({
             'success': False,
             'error': str(e)

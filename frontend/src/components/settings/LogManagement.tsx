@@ -519,29 +519,23 @@ const LogManagement: React.FC = () => {
         services: searchParams.services || [],
         keywords: searchParams.keywords || '',
         limit: searchParams.limit || 100,
-        offset: (page - 1) * (searchParams.limit || 100)
+        offset: (page - 1) * (searchParams.limit || 100),
+        // 添加时间戳强制绕过缓存
+        _timestamp: Date.now()
       };
 
       console.log('发送搜索请求:', requestBody);
 
-      const response = await fetch('http://localhost:8001/api/v1/logs/search', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
-      });
+      const response = await authenticatedApiService.post('/settings/logging/search/', requestBody);
       
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('搜索请求失败:', response.status, errorText);
-        throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+      // 处理后端响应格式 {success: true, data: searchResults}
+      if (response.success && response.data) {
+        console.log('搜索结果:', response.data);
+        setSearchResults(response.data as LogSearchResult);
+      } else {
+        console.warn('搜索API返回格式不正确:', response);
+        setSearchResults(null);
       }
-      
-      const data: LogSearchResult = await response.json();
-      console.log('搜索结果:', data);
-      setSearchResults(data);
       setCurrentPage(page);
       
       // 设置高亮关键词
@@ -552,9 +546,22 @@ const LogManagement: React.FC = () => {
       // After a successful search, fetch analysis data
       fetchLogAnalysis();
 
-    } catch (error) {
+    } catch (error: any) {
       console.error('获取搜索结果失败:', error);
-      showSnackbar(`获取搜索结果失败: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      
+      // 处理axios错误
+      if (error.response) {
+        // 请求已发出，服务器返回状态码不在2xx范围
+        const status = error.response.status;
+        const message = error.response.data?.detail || error.response.data?.error || error.response.statusText || '未知错误';
+        showSnackbar(`搜索失败 (${status}): ${message}`, 'error');
+      } else if (error.request) {
+        // 请求已发出，但没有收到响应
+        showSnackbar('网络错误：无法连接到服务器', 'error');
+      } else {
+        // 其他错误
+        showSnackbar(`搜索失败: ${error.message}`, 'error');
+      }
     } finally {
       setLoading(false);
     }
@@ -573,37 +580,41 @@ const LogManagement: React.FC = () => {
         offset: 0
       };
 
-      const response = await fetch('http://localhost:8001/api/v1/logs/analyze', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-        },
-        body: JSON.stringify(requestBody)
-      });
+      const response = await authenticatedApiService.post('/settings/logging/analysis/', requestBody);
       
-      if (!response.ok) {
-        console.error('分析请求失败:', response.status);
-        return; // 分析失败不影响搜索结果显示
+      // 处理后端响应格式 {success: true, data: analysis}
+      if (response.success && response.data) {
+        const data: LogAnalysis = response.data;
+        setLogAnalysis(data);
+      } else {
+        console.warn('分析API返回格式不正确:', response);
+        setLogAnalysis(null);
       }
-      const data: LogAnalysis = await response.json();
-      setLogAnalysis(data);
-    } catch (error) {
+    } catch (error: any) {
       console.error('获取日志分析失败:', error);
       // 分析失败不显示错误消息，因为不是关键功能
+      setLogAnalysis(null);
     }
   };
 
   const fetchLogStats = async () => {
     try {
       setLoading(true);
-      const response = await fetch('http://localhost:8001/api/v1/logs/stats');
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data: LogStats = await response.json();
-      setLogStats(data);
-    } catch (error) {
+      const response = await authenticatedApiService.get('/settings/logging/stats/');
+      console.log('日志统计响应:', response);
+      
+      if (response.success && response.data) {
+        setLogStats(response.data as LogStats);
+      } else {
+        throw new Error('获取统计信息失败：响应格式错误');
+      }
+    } catch (error: any) {
       console.error('获取日志统计失败:', error);
-      showSnackbar('获取日志统计失败', 'error');
+      if (error.response) {
+        showSnackbar(`获取统计信息失败: ${error.response.data?.detail || error.response.statusText}`, 'error');
+      } else {
+        showSnackbar('获取日志统计失败', 'error');
+      }
     } finally {
       setLoading(false);
     }
@@ -612,9 +623,18 @@ const LogManagement: React.FC = () => {
   const fetchLogIndex = async () => {
      try {
       setLoading(true);
-      const response = await fetch('http://localhost:8001/api/v1/logs/files');
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const data: BackendLogFile[] = await response.json();
+      const response = await authenticatedApiService.get('/settings/logging/index/');
+      
+      // 处理后端响应格式，可能是直接数组或 {success: true, data: []}
+      let data: BackendLogFile[];
+      if (response.success && response.data) {
+        data = response.data as BackendLogFile[];
+      } else if (Array.isArray(response)) {
+        data = response as BackendLogFile[];
+      } else {
+        console.warn('索引API返回格式不正确:', response);
+        data = [];
+      }
       
       // 存储后端文件列表
       setBackendLogFiles(data);
@@ -639,9 +659,13 @@ const LogManagement: React.FC = () => {
         };
         setLogIndex(combinedIndex);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error('获取日志索引失败:', error);
-      showSnackbar('获取日志索引失败', 'error');
+      if (error.response) {
+        showSnackbar(`获取索引失败: ${error.response.data?.detail || error.response.statusText}`, 'error');
+      } else {
+        showSnackbar('获取日志索引失败', 'error');
+      }
     } finally {
       setLoading(false);
     }
@@ -651,21 +675,69 @@ const LogManagement: React.FC = () => {
     try {
       setLoading(true);
       showSnackbar('开始重建索引，请稍候...', 'info');
-      const response = await fetch('http://localhost:8001/api/v1/logs/rebuild-index', { 
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        }
-      });
-      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-      const result = await response.json();
       
-      // 重新获取文件列表
-      await fetchLogIndex();
-      showSnackbar(result.message || '索引重建成功', 'success');
-    } catch (error) {
-      console.error('重建索引失败:', error);
-      showSnackbar('重建索引失败', 'error');
+      console.log('开始发送重建索引请求...');
+      const result = await authenticatedApiService.post('/settings/logging/index/', {});
+      console.log('重建索引响应:', result);
+      
+      if (result.success) {
+        // 重新获取文件列表
+        await fetchLogIndex();
+        showSnackbar(result.message || '索引重建成功', 'success');
+        console.log('重建索引成功完成');
+      } else {
+        throw new Error(result.message || '重建索引失败');
+      }
+    } catch (error: any) {
+      console.error('重建索引失败详细错误:', error);
+      console.error('错误对象:', {
+        message: error.message,
+        response: error.response,
+        request: error.request,
+        status: error.response?.status,
+        data: error.response?.data
+      });
+      
+      if (error.response) {
+        const statusCode = error.response.status;
+        const errorData = error.response.data;
+        const errorMessage = errorData?.detail || errorData?.error || errorData?.message || error.response.statusText || '未知错误';
+        showSnackbar(`重建索引失败 (${statusCode}): ${errorMessage}`, 'error');
+      } else if (error.request) {
+        showSnackbar('网络错误：无法连接到服务器', 'error');
+      } else {
+        showSnackbar(`重建索引失败: ${error.message}`, 'error');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 强制刷新缓存
+  const clearCacheAndRefresh = async () => {
+    try {
+      setLoading(true);
+      showSnackbar('正在清理缓存并刷新数据...', 'info');
+      
+      // 清理后端缓存
+      await authenticatedApiService.post('/settings/logging/clear-cache/', {});
+      
+      // 清理前端状态
+      setSearchResults(null);
+      setLogAnalysis(null);
+      setLogIndex(null);
+      setLogStats(null);
+      
+      // 重新获取数据
+      await Promise.all([
+        fetchLogIndex(),
+        fetchLogStats()
+      ]);
+      
+      showSnackbar('缓存已清理，数据已刷新', 'success');
+    } catch (error: any) {
+      console.error('清理缓存失败:', error);
+      showSnackbar('清理缓存失败，请稍后重试', 'error');
     } finally {
       setLoading(false);
     }
@@ -1153,7 +1225,7 @@ const LogManagement: React.FC = () => {
                     </TableHead>
                     <TableBody>
                       {loading && <TableRow><TableCell colSpan={5}><LinearProgress /></TableCell></TableRow>}
-                      {searchResults?.logs.map((log, idx) => (
+                      {searchResults?.logs?.map((log, idx) => (
                         <TableRow 
                           key={log.id || idx} 
                           hover 
@@ -1227,14 +1299,14 @@ const LogManagement: React.FC = () => {
                         <PieChart>
                           <Pie 
                             dataKey="value" 
-                            data={Object.entries(logAnalysis.by_level).map(([name, value]) => ({ name, value }))} 
+                            data={Object.entries(logAnalysis.by_level || {}).map(([name, value]) => ({ name, value }))} 
                             cx="50%" 
                             cy="50%" 
                             outerRadius={60} 
                             fill="#8884d8" 
                             label={(entry: { name: string; value: number }) => entry.name}
                           >
-                            {Object.entries(logAnalysis.by_level).map(([name, value], index) => (
+                            {Object.entries(logAnalysis.by_level || {}).map(([name, value], index) => (
                               <Cell key={`cell-${index}`} fill={getLogLevelColor(name)} />
                             ))}
                           </Pie>
@@ -1243,7 +1315,7 @@ const LogManagement: React.FC = () => {
                       </ResponsiveContainer>
                       <Typography variant="subtitle1">服务日志量</Typography>
                       <ResponsiveContainer width="100%" height={200}>
-                        <BarChart data={Object.entries(logAnalysis.by_service).map(([name, value]) => ({ name, value }))}>
+                        <BarChart data={Object.entries(logAnalysis.by_service || {}).map(([name, value]) => ({ name, value }))}>
                           <CartesianGrid strokeDasharray="3 3" />
                           <XAxis dataKey="name" />
                           <YAxis />
@@ -1270,12 +1342,12 @@ const LogManagement: React.FC = () => {
                   <Typography variant="h6" gutterBottom>日志系统状态</Typography>
                   {logStats ? (
                     <List>
-                      <ListItem><ListItemText primary="总文件数" secondary={logStats.total_files} /></ListItem>
-                      <ListItem><ListItemText primary="总大小" secondary={`${logStats.total_size_mb.toFixed(2)} MB`} /></ListItem>
-                      <ListItem><ListItemText primary="服务" secondary={logStats.services.join(', ')} /></ListItem>
-                      <ListItem><ListItemText primary="级别" secondary={logStats.levels.join(', ')} /></ListItem>
-                      <ListItem><ListItemText primary="日期范围" secondary={logStats.date_range.join(' to ')} /></ListItem>
-                      <ListItem><ListItemText primary="最后更新" secondary={new Date(logStats.last_updated).toLocaleString()} /></ListItem>
+                      <ListItem><ListItemText primary="总文件数" secondary={logStats.total_files || 0} /></ListItem>
+                      <ListItem><ListItemText primary="总大小" secondary={`${(logStats.total_size_mb || 0).toFixed(2)} MB`} /></ListItem>
+                      <ListItem><ListItemText primary="服务" secondary={logStats.services?.join(', ') || '无'} /></ListItem>
+                      <ListItem><ListItemText primary="级别" secondary={logStats.levels?.join(', ') || '无'} /></ListItem>
+                      <ListItem><ListItemText primary="日期范围" secondary={logStats.date_range?.join(' to ') || '未知'} /></ListItem>
+                      <ListItem><ListItemText primary="最后更新" secondary={logStats.last_updated ? new Date(logStats.last_updated).toLocaleString() : '未知'} /></ListItem>
                     </List>
                   ) : <CircularProgress />}
                    <Button
@@ -1295,7 +1367,17 @@ const LogManagement: React.FC = () => {
                 <CardContent>
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                     <Typography variant="h6" gutterBottom>日志文件索引</Typography>
-                     <Button
+                    <Box sx={{ display: 'flex', gap: 1 }}>
+                      <Button
+                        variant="outlined"
+                        startIcon={<RefreshIcon />}
+                        onClick={clearCacheAndRefresh}
+                        disabled={loading}
+                        size="small"
+                      >
+                        清理缓存
+                      </Button>
+                      <Button
                         variant="contained"
                         startIcon={<AutorenewIcon />}
                         onClick={buildLogIndex}
@@ -1303,6 +1385,7 @@ const LogManagement: React.FC = () => {
                       >
                         重建索引
                       </Button>
+                    </Box>
                   </Box>
                   <TableContainer component={Paper} sx={{maxHeight: 400}}>
                     <Table stickyHeader size="small">

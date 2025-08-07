@@ -418,7 +418,7 @@ try:
             'file': {
                 'level': 'INFO',
                 'class': 'logging.handlers.TimedRotatingFileHandler',
-                'filename': BASE_DIR / 'logs' / 'django.log',
+                'filename': BASE_DIR.parent.parent / 'logs' / 'django.log',  # 修正为项目根目录
                 'when': 'midnight',
                 'interval': 1,
                 'backupCount': 30,

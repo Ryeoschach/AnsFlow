@@ -11,7 +11,8 @@ from .views_extra_logging import (
     log_config_view,
     log_stats_view,
     PrometheusMetricsView,
-    log_metrics_json_view
+    log_metrics_json_view,
+    clear_logging_cache
 )
 
 app_name = 'logging'
@@ -26,6 +27,9 @@ urlpatterns = [
     # 配置和统计API
     path('config/', log_config_view, name='log_config'),
     path('stats/', log_stats_view, name='log_stats'),
+    
+    # 缓存管理
+    path('clear-cache/', clear_logging_cache, name='clear_cache'),
     
     # Phase 3: Prometheus指标集成
     path('metrics/', PrometheusMetricsView.as_view(), name='prometheus_metrics'),

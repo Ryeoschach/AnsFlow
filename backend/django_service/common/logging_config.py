@@ -153,9 +153,23 @@ class RedisLogHandler(logging.Handler):
         # 如果没有提供redis_client，尝试从数据库配置创建
         if redis_client is None:
             try:
-                # 从数据库获取Redis配置
-                from settings_management.models import GlobalConfig
-                redis_config = GlobalConfig.get_config_dict()
+                # 延迟导入，避免在Django应用加载前导入模型
+                from django.apps import apps
+                from django.conf import settings
+                
+                # 检查Django应用是否已加载
+                if not apps.ready:
+                    # 如果应用未加载，使用默认配置
+                    redis_config = {
+                        'LOGGING_REDIS_HOST': 'localhost',
+                        'LOGGING_REDIS_PORT': 6379,
+                        'LOGGING_REDIS_DB': 5
+                    }
+                    logging.getLogger(__name__).warning("Django应用未完全加载，使用默认Redis配置")
+                else:
+                    # 应用已加载，从数据库获取配置
+                    from settings_management.models import GlobalConfig
+                    redis_config = GlobalConfig.get_config_dict()
                 
                 redis_client = redis.Redis(
                     host=redis_config.get('LOGGING_REDIS_HOST', 'localhost'),
