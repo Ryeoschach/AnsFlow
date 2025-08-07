@@ -92,8 +92,13 @@ class FastAPIRedisHandler(logging.Handler):
                     log_id = f"fastapi-{uuid.uuid4().hex[:8]}-{int(datetime.utcnow().timestamp() * 1000)}"
                     log_entry['log_id'] = log_id
                     
-                    # 写入Redis Stream
-                    self.redis_client.xadd(self.stream_name, log_entry)
+                    # 写入Redis Stream（带长度限制）
+                    self.redis_client.xadd(
+                        self.stream_name, 
+                        log_entry,
+                        maxlen=10000,  # 限制Stream最大长度
+                        approximate=True  # 使用近似修剪以提高性能
+                    )
                     
                 except Exception as redis_error:
                     print(f"Redis写入失败: {redis_error}")

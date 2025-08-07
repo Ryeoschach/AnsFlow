@@ -273,8 +273,13 @@ class DirectRedisHandler(logging.Handler):
             if hasattr(record, 'extra_data') and record.extra_data:
                 fields['extra_data'] = json.dumps(record.extra_data)
             
-            # 写入Redis Stream
-            self.redis_client.xadd(self.stream_name, fields)
+            # 写入Redis Stream（带长度限制）
+            self.redis_client.xadd(
+                self.stream_name, 
+                fields,
+                maxlen=10000,  # 限制Stream最大长度
+                approximate=True  # 使用近似修剪以提高性能
+            )
             
         except Exception:
             self.handleError(record)
