@@ -10,6 +10,67 @@ from .models import (
 )
 
 
+class KubernetesClusterValidationSerializer(serializers.Serializer):
+    """Kubernetes 集群连接验证序列化器"""
+    
+    name = serializers.CharField(max_length=100, required=False)
+    api_server = serializers.URLField(required=True, help_text="Kubernetes API 服务器地址")
+    auth_config = serializers.JSONField(required=True, help_text="认证配置")
+    
+    def validate_auth_config(self, value):
+        """验证认证配置"""
+        if not isinstance(value, dict):
+            raise serializers.ValidationError("认证配置必须是有效的 JSON 对象")
+        
+        # 检查认证方式
+        has_token = 'token' in value and value['token']
+        has_kubeconfig = 'kubeconfig' in value and value['kubeconfig']
+        has_cert = all(key in value and value[key] for key in ['client_cert', 'client_key'])
+        
+        if not any([has_token, has_kubeconfig, has_cert]):
+            raise serializers.ValidationError(
+                "必须提供以下认证方式之一：token、kubeconfig 或客户端证书"
+            )
+        
+        # 验证 token 认证
+        if has_token and not isinstance(value['token'], str):
+            raise serializers.ValidationError("token 必须是字符串")
+        
+        # 验证 kubeconfig 认证
+        if has_kubeconfig:
+            try:
+                import yaml
+                yaml.safe_load(value['kubeconfig'])
+            except Exception as e:
+                raise serializers.ValidationError(f"kubeconfig 格式无效: {str(e)}")
+        
+        return value
+        
+        # 检查认证方式
+        has_token = 'token' in value and value['token']
+        has_kubeconfig = 'kubeconfig' in value and value['kubeconfig']
+        has_cert = all(key in value and value[key] for key in ['client_cert', 'client_key'])
+        
+        if not any([has_token, has_kubeconfig, has_cert]):
+            raise serializers.ValidationError(
+                "必须提供以下认证方式之一：token、kubeconfig 或客户端证书"
+            )
+        
+        # 验证 token 认证
+        if has_token and not isinstance(value['token'], str):
+            raise serializers.ValidationError("token 必须是字符串")
+        
+        # 验证 kubeconfig 认证
+        if has_kubeconfig:
+            try:
+                import yaml
+                yaml.safe_load(value['kubeconfig'])
+            except Exception as e:
+                raise serializers.ValidationError(f"kubeconfig 格式无效: {str(e)}")
+        
+        return value
+
+
 class KubernetesClusterSerializer(serializers.ModelSerializer):
     """Kubernetes 集群序列化器"""
     
@@ -26,8 +87,8 @@ class KubernetesClusterSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             'id', 'last_check', 'check_message', 'total_nodes',
-            'ready_nodes', 'total_pods', 'running_pods', 'created_at', 
-            'updated_at', 'created_by_name'
+            'ready_nodes', 'total_pods', 'running_pods', 'created_by',
+            'created_at', 'updated_at', 'created_by_name'
         ]
 
     def create(self, validated_data):
@@ -51,10 +112,11 @@ class KubernetesNamespaceSerializer(serializers.ModelSerializer):
         model = KubernetesNamespace
         fields = [
             'id', 'cluster', 'cluster_name', 'name', 'status',
-            'labels', 'annotations', 'resource_quota', 'description',
+            'labels', 'annotations', 'cpu_limit', 'memory_limit', 'storage_limit',
+            'pod_count', 'service_count', 'deployment_count',
             'created_at', 'updated_at'
         ]
-        read_only_fields = ['id', 'cluster_name', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'cluster_name', 'pod_count', 'service_count', 'deployment_count', 'created_at', 'updated_at']
 
     def validate_labels(self, value):
         """验证标签格式"""
@@ -113,7 +175,7 @@ class KubernetesServiceSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'namespace', 'namespace_name', 'cluster_name', 'name',
             'service_type', 'selector', 'ports', 'cluster_ip', 'external_ip',
-            'labels', 'annotations', 'description', 'created_by',
+            'labels', 'description', 'created_by',
             'created_by_name', 'created_at', 'updated_at'
         ]
         read_only_fields = [
@@ -149,13 +211,14 @@ class KubernetesPodSerializer(serializers.ModelSerializer):
         model = KubernetesPod
         fields = [
             'id', 'namespace', 'namespace_name', 'cluster_name', 'name',
-            'status', 'phase', 'node_name', 'pod_ip', 'containers',
-            'labels', 'annotations', 'restart_count', 'description',
-            'created_at', 'updated_at'
+            'phase', 'node_name', 'pod_ip', 'host_ip', 'containers',
+            'labels', 'annotations', 'restart_count', 'cpu_usage', 'memory_usage',
+            'start_time', 'ready', 'created_at', 'updated_at'
         ]
         read_only_fields = [
-            'id', 'namespace_name', 'cluster_name', 'status', 'phase',
-            'node_name', 'pod_ip', 'restart_count', 'created_at', 'updated_at'
+            'id', 'namespace_name', 'cluster_name', 'phase',
+            'node_name', 'pod_ip', 'host_ip', 'restart_count', 'cpu_usage', 'memory_usage',
+            'start_time', 'ready', 'created_at', 'updated_at'
         ]
 
     def validate_containers(self, value):
@@ -247,9 +310,10 @@ class KubernetesClusterListSerializer(serializers.ModelSerializer):
     class Meta:
         model = KubernetesCluster
         fields = [
-            'id', 'name', 'cluster_type', 'status', 'kubernetes_version',
-            'total_nodes', 'ready_nodes', 'total_pods', 'running_pods',
-            'is_default', 'created_by_name', 'created_at'
+            'id', 'name', 'description', 'cluster_type', 'api_server',
+            'auth_config', 'kubernetes_version', 'default_namespace',
+            'status', 'total_nodes', 'ready_nodes', 'total_pods', 
+            'running_pods', 'is_default', 'created_by_name', 'created_at'
         ]
 
 

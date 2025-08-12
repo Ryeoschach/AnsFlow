@@ -24,6 +24,7 @@ from .tasks import (
     check_cluster_status, sync_cluster_resources, deploy_application,
     scale_deployment, delete_resource
 )
+from .k8s_client import KubernetesManager
 
 
 class KubernetesClusterViewSet(viewsets.ModelViewSet):
@@ -58,6 +59,55 @@ class KubernetesClusterViewSet(viewsets.ModelViewSet):
             'task_id': task.id,
             'cluster_id': cluster.id
         })
+    
+    @action(detail=False, methods=['post'])
+    def validate_connection(self, request):
+        """验证集群连接配置（创建前验证）"""
+        from .k8s_client import KubernetesManager
+        from .serializers import KubernetesClusterValidationSerializer
+        
+        serializer = KubernetesClusterValidationSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(
+                {'error': '参数验证失败', 'details': serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        # 创建临时集群对象用于验证
+        temp_cluster = type('TempCluster', (), {
+            'api_server': serializer.validated_data['api_server'],
+            'auth_config': serializer.validated_data['auth_config'],
+            'name': serializer.validated_data.get('name', 'temp-cluster')
+        })()
+        
+        try:
+            # 使用临时集群对象测试连接
+            k8s_manager = KubernetesManager(temp_cluster)
+            cluster_info = k8s_manager.get_cluster_info()
+            
+            if cluster_info['connected']:
+                return Response({
+                    'valid': True,
+                    'message': '集群连接验证成功',
+                    'cluster_info': {
+                        'version': cluster_info.get('version'),
+                        'total_nodes': cluster_info.get('total_nodes'),
+                        'ready_nodes': cluster_info.get('ready_nodes'),
+                        'total_pods': cluster_info.get('total_pods'),
+                        'running_pods': cluster_info.get('running_pods')
+                    }
+                })
+            else:
+                return Response({
+                    'valid': False,
+                    'message': cluster_info.get('message', '连接失败')
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response({
+                'valid': False,
+                'message': f'连接验证失败: {str(e)}'
+            }, status=status.HTTP_400_BAD_REQUEST)
     
     @action(detail=True, methods=['post'])
     def sync_resources(self, request, pk=None):
@@ -108,6 +158,45 @@ class KubernetesClusterViewSet(viewsets.ModelViewSet):
                 'last_sync': cluster.last_check,
             }
         })
+    
+    @action(detail=True, methods=['get'])
+    def cluster_info(self, request, pk=None):
+        """获取集群实时统计信息"""
+        cluster = self.get_object()
+        
+        try:
+            # 使用KubernetesManager获取集群实时信息
+            k8s_manager = KubernetesManager(cluster)
+            cluster_info = k8s_manager.get_cluster_info()
+            
+            return Response({
+                'cluster_id': cluster.id,
+                'cluster_name': cluster.name,
+                'connected': cluster_info['connected'],
+                'message': cluster_info.get('message', ''),
+                'cluster_stats': {
+                    'version': cluster_info.get('version', ''),
+                    'total_nodes': cluster_info.get('total_nodes', 0),
+                    'ready_nodes': cluster_info.get('ready_nodes', 0),
+                    'total_pods': cluster_info.get('total_pods', 0),
+                    'running_pods': cluster_info.get('running_pods', 0),
+                }
+            })
+            
+        except Exception as e:
+            return Response({
+                'cluster_id': cluster.id,
+                'cluster_name': cluster.name,
+                'connected': False,
+                'message': f'获取集群信息失败: {str(e)}',
+                'cluster_stats': {
+                    'version': '',
+                    'total_nodes': 0,
+                    'ready_nodes': 0,
+                    'total_pods': 0,
+                    'running_pods': 0,
+                }
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 class KubernetesNamespaceViewSet(viewsets.ModelViewSet):

@@ -718,9 +718,10 @@ export interface KubernetesCluster {
   id: number
   name: string
   description: string
+  cluster_type: string
   api_server: string
   auth_config: Record<string, any>
-  status: 'connected' | 'disconnected' | 'error'
+  status: 'connected' | 'disconnected' | 'error' | 'active' | 'inactive'
   is_default: boolean
   created_at: string
   updated_at: string

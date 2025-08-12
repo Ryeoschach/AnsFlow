@@ -48,19 +48,27 @@ class KubernetesManager:
             # 从集群配置创建客户端配置
             auth_config = self.cluster.auth_config or {}
             
-            # 创建临时的 kubeconfig 文件
+            # 根据认证方式初始化客户端
             if auth_config.get('token'):
+                logger.info("使用 Token 认证方式")
                 self._init_from_token(auth_config)
             elif auth_config.get('kubeconfig'):
+                logger.info("使用 Kubeconfig 认证方式")
                 self._init_from_kubeconfig(auth_config)
+            elif auth_config.get('client_cert') and auth_config.get('client_key'):
+                logger.info("使用客户端证书认证方式")
+                self._init_from_cert(auth_config)
             else:
-                # 使用默认配置
+                logger.info("尝试使用集群内认证")
+                # 使用默认配置（集群内认证）
                 self._config.load_incluster_config()
             
             # 创建 API 实例
             self.api_client = self._client.ApiClient()
             self.core_v1_api = self._client.CoreV1Api()
             self.apps_v1_api = self._client.AppsV1Api()
+            
+            logger.info("Kubernetes 客户端初始化成功")
             
         except Exception as e:
             logger.error(f"初始化 K8s 客户端失败: {str(e)}")
@@ -71,7 +79,10 @@ class KubernetesManager:
         """使用 Token 初始化客户端"""
         configuration = self._client.Configuration()
         configuration.host = self.cluster.api_server
-        configuration.api_key = {"authorization": f"Bearer {auth_config['token']}"}
+        
+        # 正确的Token认证方式
+        configuration.api_key = {"authorization": auth_config['token']}
+        configuration.api_key_prefix = {"authorization": "Bearer"}
         
         # 设置 CA 证书
         if auth_config.get('ca_cert'):
@@ -79,8 +90,13 @@ class KubernetesManager:
                 f.write(auth_config['ca_cert'])
                 configuration.ssl_ca_cert = f.name
         else:
-            configuration.verify_ssl = False
+            # 如果没有提供 CA 证书，根据配置决定是否验证 SSL
+            configuration.verify_ssl = auth_config.get('verify_ssl', False)
         
+        # 设置超时
+        configuration.timeout_seconds = 30
+        
+        # 应用配置
         self._client.Configuration.set_default(configuration)
     
     def _init_from_kubeconfig(self, auth_config):
@@ -99,6 +115,56 @@ class KubernetesManager:
             if os.path.exists(kubeconfig_path):
                 os.unlink(kubeconfig_path)
     
+    def _init_from_cert(self, auth_config):
+        """使用客户端证书初始化客户端"""
+        configuration = self._client.Configuration()
+        configuration.host = self.cluster.api_server
+        
+        # 创建临时证书文件
+        cert_file = None
+        key_file = None
+        ca_file = None
+        
+        try:
+            # 客户端证书
+            if auth_config.get('client_cert'):
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.crt') as f:
+                    f.write(auth_config['client_cert'])
+                    cert_file = f.name
+                    configuration.cert_file = cert_file
+            
+            # 客户端私钥
+            if auth_config.get('client_key'):
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.key') as f:
+                    f.write(auth_config['client_key'])
+                    key_file = f.name
+                    configuration.key_file = key_file
+            
+            # CA 证书
+            if auth_config.get('ca_cert'):
+                with tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.crt') as f:
+                    f.write(auth_config['ca_cert'])
+                    ca_file = f.name
+                    configuration.ssl_ca_cert = ca_file
+            else:
+                configuration.verify_ssl = auth_config.get('verify_ssl', False)
+            
+            # 设置超时
+            configuration.timeout_seconds = 30
+            
+            # 应用配置
+            self._client.Configuration.set_default(configuration)
+            
+        except Exception as e:
+            # 清理临时文件
+            for temp_file in [cert_file, key_file, ca_file]:
+                if temp_file and os.path.exists(temp_file):
+                    try:
+                        os.unlink(temp_file)
+                    except:
+                        pass
+            raise e
+    
     def get_cluster_info(self) -> Dict[str, Any]:
         """获取集群信息"""
         if not self._client:
@@ -114,21 +180,33 @@ class KubernetesManager:
             }
         
         try:
-            # 获取版本信息
-            version_info = self.core_v1_api.get_code_version()
+            # 测试基本连接 - 使用 list_namespace 来检查连接
+            namespaces = self.core_v1_api.list_namespace()
+            
+            # 获取版本信息 - 使用 VersionApi
+            version_api = self._client.VersionApi(self.api_client)
+            version_info = version_api.get_code()
             
             # 获取节点信息
             nodes = self.core_v1_api.list_node()
             total_nodes = len(nodes.items)
-            ready_nodes = sum(1 for node in nodes.items 
-                            if any(condition.type == "Ready" and condition.status == "True" 
-                                  for condition in node.status.conditions))
+            ready_nodes = 0
+            
+            for node in nodes.items:
+                if node.status.conditions:
+                    for condition in node.status.conditions:
+                        if condition.type == "Ready" and condition.status == "True":
+                            ready_nodes += 1
+                            break
             
             # 获取 Pod 信息
             pods = self.core_v1_api.list_pod_for_all_namespaces()
             total_pods = len(pods.items)
-            running_pods = sum(1 for pod in pods.items 
-                             if pod.status.phase == "Running")
+            running_pods = 0
+            
+            for pod in pods.items:
+                if pod.status.phase == "Running":
+                    running_pods += 1
             
             return {
                 'connected': True,
@@ -140,7 +218,19 @@ class KubernetesManager:
                 'message': '集群连接成功'
             }
             
+        except self._ApiException as e:
+            logger.error(f"Kubernetes API 错误: {e}")
+            return {
+                'connected': False,
+                'message': f'API 错误: {e.reason} (状态码: {e.status})',
+                'version': '',
+                'total_nodes': 0,
+                'ready_nodes': 0,
+                'total_pods': 0,
+                'running_pods': 0,
+            }
         except Exception as e:
+            logger.error(f"集群连接失败: {e}")
             return {
                 'connected': False,
                 'message': f'连接失败: {str(e)}',
@@ -300,6 +390,66 @@ class KubernetesManager:
             
         except Exception as e:
             logger.error(f"获取 Pod 列表失败: {str(e)}")
+            return []
+    
+    def list_services(self, namespace: str = None) -> List[Dict[str, Any]]:
+        """获取服务列表"""
+        if not self._client:
+            # 模拟模式
+            return [
+                {
+                    'name': 'nginx-service',
+                    'namespace': 'default',
+                    'type': 'ClusterIP',
+                    'cluster_ip': '10.96.1.100',
+                    'external_ip': '',
+                    'ports': [{'port': 80, 'target_port': 80, 'protocol': 'TCP'}],
+                    'selector': {'app': 'nginx'},
+                    'labels': {}
+                }
+            ]
+        
+        try:
+            result = []
+            
+            if namespace:
+                services = self.core_v1_api.list_namespaced_service(namespace)
+            else:
+                services = self.core_v1_api.list_service_for_all_namespaces()
+            
+            for svc in services.items:
+                # 获取端口信息
+                ports = []
+                if svc.spec.ports:
+                    for port in svc.spec.ports:
+                        ports.append({
+                            'name': port.name or '',
+                            'port': port.port,
+                            'target_port': str(port.target_port) if port.target_port else '',
+                            'protocol': port.protocol or 'TCP'
+                        })
+                
+                # 获取外部IP
+                external_ip = ''
+                if svc.status.load_balancer and svc.status.load_balancer.ingress:
+                    ingress = svc.status.load_balancer.ingress[0]
+                    external_ip = ingress.ip or ingress.hostname or ''
+                
+                result.append({
+                    'name': svc.metadata.name,
+                    'namespace': svc.metadata.namespace,
+                    'type': svc.spec.type or 'ClusterIP',
+                    'cluster_ip': svc.spec.cluster_ip or '',
+                    'external_ip': external_ip,
+                    'ports': ports,
+                    'selector': svc.spec.selector or {},
+                    'labels': svc.metadata.labels or {}
+                })
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"获取服务列表失败: {str(e)}")
             return []
     
     def create_deployment(self, deploy_spec: Dict[str, Any]) -> Dict[str, Any]:

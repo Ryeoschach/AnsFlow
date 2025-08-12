@@ -1,4 +1,5 @@
 import axios, { AxiosInstance, AxiosResponse } from 'axios'
+import { tokenManager } from '../utils/tokenManager'
 import { 
   Tool, Pipeline, PipelineExecution, 
   JenkinsJob, JenkinsBuild, User,
@@ -18,7 +19,9 @@ import {
   AuditLog, SystemAlert, GlobalConfig, UserProfile, BackupRecord, SystemMonitoringData,
   CreateUserRequest, UpdateUserRequest, CreateGlobalConfigRequest, UpdateGlobalConfigRequest,
   CreateBackupRequest, UpdateNotificationConfigRequest, NotificationConfig, PaginatedResponse,
-  APIKey, APIEndpoint, APIStatistics, SystemSetting, Team, TeamMembership, BackupSchedule
+  APIKey, APIEndpoint, APIStatistics, SystemSetting, Team, TeamMembership, BackupSchedule,
+  // Kubernetes 相关类型
+  KubernetesCluster, KubernetesNamespace
 } from '../types'
 
 // Docker types
@@ -44,12 +47,25 @@ class ApiService {
       },
     })
 
-    // Request interceptor to add auth token
+    // Request interceptor to add auth token (统一从 tokenManager 获取，兼容本地存储)
     this.api.interceptors.request.use(
-      (config) => {
-        const token = localStorage.getItem('authToken')
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`
+      async (config) => {
+        try {
+          let token: string | null = null
+          // 优先使用 tokenManager
+          if (tokenManager && typeof tokenManager.getAccessToken === 'function') {
+            token = await tokenManager.getAccessToken()
+          }
+          // 回退到本地存储（兼容旧逻辑）
+          if (!token) {
+            token = localStorage.getItem('authToken') || localStorage.getItem('access_token')
+          }
+          if (token) {
+            config.headers = config.headers || {}
+            config.headers.Authorization = `Bearer ${token}`
+          }
+        } catch (e) {
+          // 忽略 token 获取错误，继续请求以便触发 401 并由响应拦截器处理
         }
         return config
       },
@@ -61,6 +77,7 @@ class ApiService {
       (response) => response,
       (error) => {
         if (error.response?.status === 401) {
+          try { tokenManager?.clearTokens?.() } catch {}
           localStorage.removeItem('authToken')
           window.location.href = '/login'
         }
@@ -80,6 +97,8 @@ class ApiService {
       headers: { Authorization: `Bearer ${access}` }
     })
     
+    // 兼容：同时把 access 写入本地，用于旧的 apiService 读取
+    try { localStorage.setItem('authToken', access) } catch {}
     return {
       token: access,
       user: userResponse.data
@@ -2002,6 +2021,188 @@ class ApiService {
     redis: { status: string; memory_usage?: number }
   }> {
     const response = await this.api.get('/settings/system-monitoring/health/')
+    return response.data
+  }
+
+  // ===== Kubernetes 集群管理 =====
+
+  // 获取所有集群
+  async getKubernetesClusters(): Promise<KubernetesCluster[]> {
+    const response = await this.api.get('/kubernetes/clusters/')
+    return response.data.results || response.data
+  }
+
+  // 获取单个集群详情
+  async getKubernetesCluster(id: number): Promise<KubernetesCluster> {
+    const response = await this.api.get(`/kubernetes/clusters/${id}/`)
+    return response.data
+  }
+
+  // 创建集群
+  async createKubernetesCluster(data: {
+    name: string
+    description?: string
+    cluster_type: string
+    api_server: string
+    auth_config: Record<string, any>
+    default_namespace?: string
+    is_default?: boolean
+  }): Promise<KubernetesCluster> {
+    const response = await this.api.post('/kubernetes/clusters/', data)
+    return response.data
+  }
+
+  // 更新集群
+  async updateKubernetesCluster(id: number, data: Partial<{
+    name: string
+    description: string
+    cluster_type: string
+    api_server: string
+    auth_config: Record<string, any>
+    default_namespace: string
+    is_default: boolean
+  }>): Promise<KubernetesCluster> {
+    const response = await this.api.put(`/kubernetes/clusters/${id}/`, data)
+    return response.data
+  }
+
+  // 删除集群
+  async deleteKubernetesCluster(id: number): Promise<void> {
+    await this.api.delete(`/kubernetes/clusters/${id}/`)
+  }
+
+  // 验证集群连接（创建前验证）
+  async validateKubernetesConnection(data: {
+    name?: string
+    api_server: string
+    auth_config: Record<string, any>
+  }): Promise<{
+    valid: boolean
+    message: string
+    cluster_info?: {
+      version?: string
+      total_nodes?: number
+      ready_nodes?: number
+      total_pods?: number
+      running_pods?: number
+    }
+  }> {
+    const response = await this.api.post('/kubernetes/clusters/validate_connection/', data)
+    return response.data
+  }
+
+  // 检查集群连接状态
+  async checkKubernetesClusterConnection(id: number): Promise<{
+    message: string
+    task_id: string
+    cluster_id: number
+  }> {
+    const response = await this.api.post(`/kubernetes/clusters/${id}/check_connection/`)
+    return response.data
+  }
+
+  // 同步集群资源
+  async syncKubernetesClusterResources(id: number): Promise<{
+    message: string
+    task_id: string
+    cluster_id: number
+  }> {
+    const response = await this.api.post(`/kubernetes/clusters/${id}/sync_resources/`)
+    return response.data
+  }
+
+  // 获取集群概览信息
+  async getKubernetesClusterOverview(id: number): Promise<{
+    cluster: KubernetesCluster
+    statistics: {
+      namespaces: number
+      deployments: number
+      services: number
+      pods: number
+      last_sync: string | null
+    }
+  }> {
+    const response = await this.api.get(`/kubernetes/clusters/${id}/overview/`)
+    return response.data
+  }
+
+  // 获取集群实时统计信息
+  async getKubernetesClusterInfo(id: number): Promise<{
+    cluster_id: number
+    cluster_name: string
+    connected: boolean
+    message: string
+    cluster_stats: {
+      version: string
+      total_nodes: number
+      ready_nodes: number
+      total_pods: number
+      running_pods: number
+    }
+  }> {
+    const response = await this.api.get(`/kubernetes/clusters/${id}/cluster_info/`)
+    return response.data
+  }
+
+  // 获取集群的命名空间列表
+  async getKubernetesClusterNamespaces(id: number): Promise<KubernetesNamespace[]> {
+    const response = await this.api.get(`/kubernetes/clusters/${id}/namespaces/`)
+    return response.data
+  }
+
+  // ===== Kubernetes 命名空间管理 =====
+
+  // 获取所有命名空间
+  async getKubernetesNamespaces(clusterId?: number): Promise<KubernetesNamespace[]> {
+    const params = clusterId ? { cluster_id: clusterId } : {}
+    const response = await this.api.get('/kubernetes/namespaces/', { params })
+    return response.data.results || response.data
+  }
+
+  // 获取单个命名空间详情
+  async getKubernetesNamespace(id: number): Promise<KubernetesNamespace> {
+    const response = await this.api.get(`/kubernetes/namespaces/${id}/`)
+    return response.data
+  }
+
+  // 创建命名空间
+  async createKubernetesNamespace(data: {
+    cluster: number
+    name: string
+    description?: string
+    labels?: Record<string, string>
+    annotations?: Record<string, string>
+  }): Promise<KubernetesNamespace> {
+    const response = await this.api.post('/kubernetes/namespaces/', data)
+    return response.data
+  }
+
+  // 更新命名空间
+  async updateKubernetesNamespace(id: number, data: Partial<{
+    name: string
+    description: string
+    labels: Record<string, string>
+    annotations: Record<string, string>
+  }>): Promise<KubernetesNamespace> {
+    const response = await this.api.put(`/kubernetes/namespaces/${id}/`, data)
+    return response.data
+  }
+
+  // 删除命名空间
+  async deleteKubernetesNamespace(id: number): Promise<void> {
+    await this.api.delete(`/kubernetes/namespaces/${id}/`)
+  }
+
+  // 获取命名空间详细资源信息
+  async getKubernetesNamespaceResources(id: number): Promise<{
+    namespace: KubernetesNamespace
+    deployments: any[]
+    services: any[]
+    pods: any[]
+    configmaps: any[]
+    secrets: any[]
+  }> {
+    const response = await this.api.get(`/kubernetes/namespaces/${id}/resources/`)
     return response.data
   }
 }

@@ -17,16 +17,9 @@ import {
   Popconfirm,
   Typography,
   Tooltip,
-  Progress,
-  Divider,
-  Badge,
   Switch,
-  InputNumber,
   Alert,
-  Upload,
-  Descriptions,
-  Timeline,
-  List
+  Spin,
 } from 'antd';
 import {
   CloudServerOutlined,
@@ -37,73 +30,22 @@ import {
   CheckCircleOutlined,
   ExclamationCircleOutlined,
   CloseCircleOutlined,
-  MonitorOutlined,
-  SettingOutlined,
-  EyeOutlined,
   DatabaseOutlined,
   NodeIndexOutlined,
   ClusterOutlined,
-  ContainerOutlined,
-  FileTextOutlined,
-  LinkOutlined,
-  DisconnectOutlined,
-  SafetyCertificateOutlined,
-  ApiOutlined
+  LoadingOutlined,
 } from '@ant-design/icons';
+import { apiService } from '../services/api';
+import { KubernetesCluster, KubernetesNamespace } from '../types';
 
-const { Title, Text, Paragraph } = Typography;
-const { TabPane } = Tabs;
+const { Title, Paragraph, Text } = Typography;
 const { TextArea } = Input;
-
-// 类型定义
-interface KubernetesCluster {
-  id: number;
-  name: string;
-  endpoint: string;
-  description?: string;
-  region?: string;
-  provider?: string;
-  version?: string;
-  status: 'connected' | 'disconnected' | 'error';
-  node_count?: number;
-  created_at: string;
-  updated_at: string;
-  config_type: 'kubeconfig' | 'token' | 'certificate';
-  tls_verify: boolean;
-  ca_cert?: string;
-  client_cert?: string;
-  client_key?: string;
-  token?: string;
-  username?: string;
-  password?: string;
-}
-
-interface KubernetesNamespace {
-  id: number;
-  name: string;
-  cluster_id: number;
-  cluster_name: string;
-  description?: string;
-  status: 'active' | 'terminating';
-  resource_quota?: any;
-  created_at: string;
-}
-
-interface KubernetesResource {
-  id: number;
-  cluster_id: number;
-  namespace: string;
-  kind: string;
-  name: string;
-  status: string;
-  created_at: string;
-}
 
 const KubernetesPage: React.FC = () => {
   const [clusters, setClusters] = useState<KubernetesCluster[]>([]);
   const [namespaces, setNamespaces] = useState<KubernetesNamespace[]>([]);
-  const [resources, setResources] = useState<KubernetesResource[]>([]);
   const [loading, setLoading] = useState(false);
+  const [validating, setValidating] = useState(false);
   const [clusterModalVisible, setClusterModalVisible] = useState(false);
   const [namespaceModalVisible, setNamespaceModalVisible] = useState(false);
   const [editingCluster, setEditingCluster] = useState<KubernetesCluster | null>(null);
@@ -112,146 +54,78 @@ const KubernetesPage: React.FC = () => {
   const [namespaceForm] = Form.useForm();
   const [activeTab, setActiveTab] = useState('clusters');
 
-  // 模拟数据
   useEffect(() => {
-    loadMockData();
+    loadClusters();
+    loadNamespaces();
   }, []);
 
-  const loadMockData = () => {
-    const mockClusters: KubernetesCluster[] = [
-      {
-        id: 1,
-        name: '开发集群',
-        endpoint: 'https://dev-k8s.example.com',
-        description: '开发环境 Kubernetes 集群',
-        region: 'us-west-1',
-        provider: 'AWS EKS',
-        version: 'v1.28.3',
-        status: 'connected',
-        node_count: 3,
-        created_at: '2024-01-15T10:00:00Z',
-        updated_at: '2024-01-20T15:30:00Z',
-        config_type: 'kubeconfig',
-        tls_verify: true
-      },
-      {
-        id: 2,
-        name: '生产集群',
-        endpoint: 'https://prod-k8s.example.com',
-        description: '生产环境 Kubernetes 集群',
-        region: 'us-east-1',
-        provider: 'Azure AKS',
-        version: 'v1.28.5',
-        status: 'connected',
-        node_count: 8,
-        created_at: '2024-01-10T08:00:00Z',
-        updated_at: '2024-01-20T12:15:00Z',
-        config_type: 'token',
-        tls_verify: true
-      },
-      {
-        id: 3,
-        name: '测试集群',
-        endpoint: 'https://test-k8s.example.com',
-        description: '测试环境 Kubernetes 集群',
-        region: 'us-central-1',
-        provider: 'Google GKE',
-        version: 'v1.27.8',
-        status: 'error',
-        node_count: 2,
-        created_at: '2024-01-05T14:00:00Z',
-        updated_at: '2024-01-18T09:45:00Z',
-        config_type: 'certificate',
-        tls_verify: true
+  const loadClusters = async () => {
+    try {
+      setLoading(true);
+      const data = await apiService.getKubernetesClusters();
+      console.log('API返回的集群数据:', data);
+      console.log('集群数量:', data.length);
+      setClusters(data);
+    } catch (error: any) {
+      console.error('Failed to load clusters:', error);
+      if (error.response?.status === 401) {
+        message.error('请先登录系统');
+        // 可以在这里跳转到登录页面
+        // window.location.href = '/login';
+      } else {
+        message.error('加载集群列表失败');
       }
-    ];
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const mockNamespaces: KubernetesNamespace[] = [
-      {
-        id: 1,
-        name: 'default',
-        cluster_id: 1,
-        cluster_name: '开发集群',
-        description: '默认命名空间',
-        status: 'active',
-        created_at: '2024-01-15T10:00:00Z'
-      },
-      {
-        id: 2,
-        name: 'development',
-        cluster_id: 1,
-        cluster_name: '开发集群',
-        description: '开发环境命名空间',
-        status: 'active',
-        created_at: '2024-01-15T10:30:00Z'
-      },
-      {
-        id: 3,
-        name: 'production',
-        cluster_id: 2,
-        cluster_name: '生产集群',
-        description: '生产环境命名空间',
-        status: 'active',
-        created_at: '2024-01-10T08:30:00Z'
-      },
-      {
-        id: 4,
-        name: 'monitoring',
-        cluster_id: 2,
-        cluster_name: '生产集群',
-        description: '监控服务命名空间',
-        status: 'active',
-        created_at: '2024-01-10T09:00:00Z'
+  const loadNamespaces = async () => {
+    try {
+      const data = await apiService.getKubernetesNamespaces();
+      setNamespaces(data);
+    } catch (error: any) {
+      console.error('Failed to load namespaces:', error);
+      if (error.response?.status === 401) {
+        message.error('请先登录系统');
+      } else {
+        message.error('加载命名空间失败');
       }
-    ];
+    }
+  };
 
-    const mockResources: KubernetesResource[] = [
-      {
-        id: 1,
-        cluster_id: 1,
-        namespace: 'development',
-        kind: 'Deployment',
-        name: 'web-app',
-        status: 'Running',
-        created_at: '2024-01-16T10:00:00Z'
-      },
-      {
-        id: 2,
-        cluster_id: 1,
-        namespace: 'development',
-        kind: 'Service',
-        name: 'web-app-service',
-        status: 'Active',
-        created_at: '2024-01-16T10:05:00Z'
-      },
-      {
-        id: 3,
-        cluster_id: 2,
-        namespace: 'production',
-        kind: 'Deployment',
-        name: 'api-server',
-        status: 'Running',
-        created_at: '2024-01-11T14:00:00Z'
+  const validateConnection = async (values: any) => {
+    try {
+      setValidating(true);
+      const result = await apiService.validateKubernetesConnection(values);
+      if (result.valid) {
+        message.success(`集群连接验证成功！Kubernetes 版本: ${result.cluster_info?.version || '未知'}`);
+        return true;
+      } else {
+        message.error(`连接验证失败: ${result.message}`);
+        return false;
       }
-    ];
-
-    setClusters(mockClusters);
-    setNamespaces(mockNamespaces);
-    setResources(mockResources);
+    } catch (error) {
+      console.error('Connection validation failed:', error);
+      message.error('连接验证失败');
+      return false;
+    } finally {
+      setValidating(false);
+    }
   };
 
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'connected':
       case 'active':
-      case 'Running':
-      case 'Active':
         return 'success';
       case 'disconnected':
-      case 'terminating':
+      case 'inactive':
         return 'warning';
       case 'error':
         return 'error';
+      case 'connecting':
+        return 'processing';
       default:
         return 'default';
     }
@@ -263,9 +137,12 @@ const KubernetesPage: React.FC = () => {
       case 'active':
         return <CheckCircleOutlined />;
       case 'disconnected':
+      case 'inactive':
         return <ExclamationCircleOutlined />;
       case 'error':
         return <CloseCircleOutlined />;
+      case 'connecting':
+        return <LoadingOutlined />;
       default:
         return null;
     }
@@ -275,21 +152,41 @@ const KubernetesPage: React.FC = () => {
   const handleAddCluster = () => {
     setEditingCluster(null);
     clusterForm.resetFields();
+    // 设置默认值
+    clusterForm.setFieldsValue({
+      cluster_type: 'standard',
+      auth_config: {
+        type: 'token'
+      },
+      is_default: false
+    });
     setClusterModalVisible(true);
   };
 
   const handleEditCluster = (cluster: KubernetesCluster) => {
     setEditingCluster(cluster);
-    clusterForm.setFieldsValue(cluster);
+    clusterForm.setFieldsValue({
+      name: cluster.name,
+      description: cluster.description,
+      cluster_type: cluster.cluster_type,
+      api_server: cluster.api_server,
+      auth_config: {
+        type: cluster.auth_config?.type || 'token',
+        ...cluster.auth_config
+      },
+      is_default: cluster.is_default
+    });
     setClusterModalVisible(true);
   };
 
   const handleDeleteCluster = async (clusterId: number) => {
     try {
-      setClusters(clusters.filter(c => c.id !== clusterId));
-      setNamespaces(namespaces.filter(ns => ns.cluster_id !== clusterId));
+      await apiService.deleteKubernetesCluster(clusterId);
+      await loadClusters();
+      await loadNamespaces();
       message.success('集群删除成功');
     } catch (error) {
+      console.error('Failed to delete cluster:', error);
       message.error('删除集群失败');
     }
   };
@@ -298,51 +195,28 @@ const KubernetesPage: React.FC = () => {
     try {
       const values = await clusterForm.validateFields();
       
+      // 验证连接
+      const isValid = await validateConnection(values);
+      if (!isValid) {
+        return;
+      }
+
       if (editingCluster) {
         // 更新集群
-        const updatedClusters = clusters.map(c => 
-          c.id === editingCluster.id 
-            ? { ...c, ...values, updated_at: new Date().toISOString() }
-            : c
-        );
-        setClusters(updatedClusters);
+        await apiService.updateKubernetesCluster(editingCluster.id, values);
         message.success('集群更新成功');
       } else {
-        // 添加新集群
-        const newCluster: KubernetesCluster = {
-          id: Date.now(),
-          ...values,
-          status: 'disconnected',
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString()
-        };
-        setClusters([...clusters, newCluster]);
-        message.success('集群添加成功');
+        // 创建新集群
+        await apiService.createKubernetesCluster(values);
+        message.success('集群创建成功');
       }
       
       setClusterModalVisible(false);
+      clusterForm.resetFields();
+      await loadClusters();
     } catch (error) {
-      message.error('保存集群失败');
-    }
-  };
-
-  const handleTestConnection = async (cluster: KubernetesCluster) => {
-    setLoading(true);
-    try {
-      // 模拟连接测试
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const updatedClusters = clusters.map(c => 
-        c.id === cluster.id 
-          ? { ...c, status: 'connected' as const, updated_at: new Date().toISOString() }
-          : c
-      );
-      setClusters(updatedClusters);
-      message.success('连接测试成功');
-    } catch (error) {
-      message.error('连接测试失败');
-    } finally {
-      setLoading(false);
+      console.error('Failed to save cluster:', error);
+      message.error(editingCluster ? '更新集群失败' : '创建集群失败');
     }
   };
 
@@ -361,9 +235,11 @@ const KubernetesPage: React.FC = () => {
 
   const handleDeleteNamespace = async (namespaceId: number) => {
     try {
-      setNamespaces(namespaces.filter(ns => ns.id !== namespaceId));
+      await apiService.deleteKubernetesNamespace(namespaceId);
+      await loadNamespaces();
       message.success('命名空间删除成功');
     } catch (error) {
+      console.error('Failed to delete namespace:', error);
       message.error('删除命名空间失败');
     }
   };
@@ -374,30 +250,32 @@ const KubernetesPage: React.FC = () => {
       
       if (editingNamespace) {
         // 更新命名空间
-        const updatedNamespaces = namespaces.map(ns => 
-          ns.id === editingNamespace.id 
-            ? { ...ns, ...values }
-            : ns
-        );
-        setNamespaces(updatedNamespaces);
+        await apiService.updateKubernetesNamespace(editingNamespace.id, values);
         message.success('命名空间更新成功');
       } else {
-        // 添加新命名空间
-        const selectedCluster = clusters.find(c => c.id === values.cluster_id);
-        const newNamespace: KubernetesNamespace = {
-          id: Date.now(),
-          ...values,
-          cluster_name: selectedCluster?.name || '',
-          status: 'active',
-          created_at: new Date().toISOString()
-        };
-        setNamespaces([...namespaces, newNamespace]);
-        message.success('命名空间添加成功');
+        // 创建新命名空间
+        await apiService.createKubernetesNamespace(values);
+        message.success('命名空间创建成功');
       }
       
       setNamespaceModalVisible(false);
+      namespaceForm.resetFields();
+      await loadNamespaces();
     } catch (error) {
-      message.error('保存命名空间失败');
+      console.error('Failed to save namespace:', error);
+      message.error(editingNamespace ? '更新命名空间失败' : '创建命名空间失败');
+    }
+  };
+
+  // 刷新集群状态
+  const handleRefreshCluster = async (clusterId: number) => {
+    try {
+      await apiService.checkKubernetesClusterConnection(clusterId);
+      await loadClusters();
+      message.success('集群状态刷新成功');
+    } catch (error) {
+      console.error('Failed to refresh cluster:', error);
+      message.error('刷新集群状态失败');
     }
   };
 
@@ -407,234 +285,216 @@ const KubernetesPage: React.FC = () => {
       title: '集群名称',
       dataIndex: 'name',
       key: 'name',
-      render: (text: string, record: KubernetesCluster) => (
+      render: (name: string, record: KubernetesCluster) => (
         <Space>
           <ClusterOutlined />
-          <strong>{text}</strong>
-          <Tag color={getStatusColor(record.status)}>
-            {getStatusIcon(record.status)}
-            {record.status}
-          </Tag>
+          <span>{name}</span>
+          {record.is_default && <Tag color="blue">默认</Tag>}
         </Space>
-      )
+      ),
     },
     {
-      title: '端点地址',
-      dataIndex: 'endpoint',
-      key: 'endpoint',
-      render: (text: string) => (
-        <Text code copyable={{ text }}>{text}</Text>
-      )
-    },
-    {
-      title: '提供商',
-      dataIndex: 'provider',
-      key: 'provider',
-      render: (text: string) => text || '-'
-    },
-    {
-      title: '版本',
-      dataIndex: 'version',
-      key: 'version',
-      render: (text: string) => (
-        <Tag color="blue">{text || '-'}</Tag>
-      )
-    },
-    {
-      title: '节点数',
-      dataIndex: 'node_count',
-      key: 'node_count',
-      render: (count: number) => (
-        <Badge count={count} color="green" />
-      )
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (text: string) => new Date(text).toLocaleString()
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      render: (_text: any, record: KubernetesCluster) => (
-        <Space>
-          <Tooltip title="测试连接">
-            <Button
-              size="small"
-              icon={<LinkOutlined />}
-              onClick={() => handleTestConnection(record)}
-              loading={loading}
-            />
-          </Tooltip>
-          <Tooltip title="编辑">
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => handleEditCluster(record)}
-            />
-          </Tooltip>
-          <Tooltip title="删除">
-            <Popconfirm
-              title="确定要删除这个集群吗？"
-              onConfirm={() => handleDeleteCluster(record.id)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-              />
-            </Popconfirm>
-          </Tooltip>
-        </Space>
-      )
-    }
-  ];
-
-  // 命名空间表格列定义
-  const namespaceColumns = [
-    {
-      title: '命名空间',
-      dataIndex: 'name',
-      key: 'name',
-      render: (text: string, record: KubernetesNamespace) => (
-        <Space>
-          <DatabaseOutlined />
-          <strong>{text}</strong>
-          <Tag color={getStatusColor(record.status)}>{record.status}</Tag>
-        </Space>
-      )
-    },
-    {
-      title: '所属集群',
-      dataIndex: 'cluster_name',
-      key: 'cluster_name',
-      render: (text: string) => (
-        <Tag color="blue">{text}</Tag>
-      )
-    },
-    {
-      title: '描述',
-      dataIndex: 'description',
-      key: 'description',
-      render: (text: string) => text || '-'
-    },
-    {
-      title: '创建时间',
-      dataIndex: 'created_at',
-      key: 'created_at',
-      render: (text: string) => new Date(text).toLocaleString()
-    },
-    {
-      title: '操作',
-      key: 'actions',
-      render: (_text: any, record: KubernetesNamespace) => (
-        <Space>
-          <Tooltip title="编辑">
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => handleEditNamespace(record)}
-            />
-          </Tooltip>
-          <Tooltip title="删除">
-            <Popconfirm
-              title="确定要删除这个命名空间吗？"
-              onConfirm={() => handleDeleteNamespace(record.id)}
-              okText="确定"
-              cancelText="取消"
-            >
-              <Button
-                size="small"
-                danger
-                icon={<DeleteOutlined />}
-              />
-            </Popconfirm>
-          </Tooltip>
-        </Space>
-      )
-    }
-  ];
-
-  // 资源表格列定义
-  const resourceColumns = [
-    {
-      title: '资源类型',
-      dataIndex: 'kind',
-      key: 'kind',
-      render: (text: string) => (
-        <Tag color="purple">{text}</Tag>
-      )
-    },
-    {
-      title: '资源名称',
-      dataIndex: 'name',
-      key: 'name',
-      render: (text: string) => (
-        <Space>
-          <ContainerOutlined />
-          <strong>{text}</strong>
-        </Space>
-      )
-    },
-    {
-      title: '命名空间',
-      dataIndex: 'namespace',
-      key: 'namespace'
+      title: 'API 服务器',
+      dataIndex: 'api_server',
+      key: 'api_server',
+      render: (url: string) => (
+        <Tooltip title={url}>
+          <Text code copyable ellipsis style={{ maxWidth: 200 }}>
+            {url}
+          </Text>
+        </Tooltip>
+      ),
     },
     {
       title: '状态',
       dataIndex: 'status',
       key: 'status',
-      render: (text: string) => (
-        <Tag color={getStatusColor(text)}>{text}</Tag>
-      )
+      render: (status: string) => (
+        <Space>
+          {getStatusIcon(status)}
+          <Tag color={getStatusColor(status)}>{status}</Tag>
+        </Space>
+      ),
+    },
+    {
+      title: '描述',
+      dataIndex: 'description',
+      key: 'description',
+      ellipsis: true,
     },
     {
       title: '创建时间',
       dataIndex: 'created_at',
       key: 'created_at',
-      render: (text: string) => new Date(text).toLocaleString()
-    }
+      render: (date: string) => new Date(date).toLocaleString(),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_: any, record: KubernetesCluster) => (
+        <Space>
+          <Tooltip title="刷新状态">
+            <Button
+              type="text"
+              icon={<ReloadOutlined />}
+              onClick={() => handleRefreshCluster(record.id)}
+            />
+          </Tooltip>
+          <Tooltip title="编辑">
+            <Button
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => handleEditCluster(record)}
+            />
+          </Tooltip>
+          <Popconfirm
+            title="确定要删除此集群吗？"
+            onConfirm={() => handleDeleteCluster(record.id)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Tooltip title="删除">
+              <Button
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+              />
+            </Tooltip>
+          </Popconfirm>
+        </Space>
+      ),
+    },
   ];
 
-  // 统计数据
-  const connectedClusters = clusters.filter(c => c.status === 'connected').length;
-  const totalNodes = clusters.reduce((sum, c) => sum + (c.node_count || 0), 0);
-  const activeNamespaces = namespaces.filter(ns => ns.status === 'active').length;
-  const totalResources = resources.length;
+  // 命名空间表格列定义
+  const namespaceColumns = [
+    {
+      title: '命名空间名称',
+      dataIndex: 'name',
+      key: 'name',
+      render: (name: string) => (
+        <Space>
+          <DatabaseOutlined />
+          <span>{name}</span>
+        </Space>
+      ),
+    },
+    {
+      title: '所属集群',
+      dataIndex: 'cluster_name',
+      key: 'cluster_name',
+      render: (clusterName: string) => clusterName || '未知',
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      key: 'status',
+      render: (status: string) => (
+        <Space>
+          {getStatusIcon(status)}
+          <Tag color={getStatusColor(status)}>{status}</Tag>
+        </Space>
+      ),
+    },
+    {
+      title: '创建时间',
+      dataIndex: 'created_at',
+      key: 'created_at',
+      render: (date: string) => new Date(date).toLocaleString(),
+    },
+    {
+      title: '操作',
+      key: 'action',
+      render: (_: any, record: KubernetesNamespace) => (
+        <Space>
+          <Tooltip title="编辑">
+            <Button
+              type="text"
+              icon={<EditOutlined />}
+              onClick={() => handleEditNamespace(record)}
+            />
+          </Tooltip>
+          <Popconfirm
+            title="确定要删除此命名空间吗？"
+            onConfirm={() => handleDeleteNamespace(record.id)}
+            okText="确定"
+            cancelText="取消"
+          >
+            <Tooltip title="删除">
+              <Button
+                type="text"
+                danger
+                icon={<DeleteOutlined />}
+              />
+            </Tooltip>
+          </Popconfirm>
+        </Space>
+      ),
+    },
+  ];
 
   return (
     <div style={{ padding: '24px' }}>
-      <Title level={2}>
-        <CloudServerOutlined /> Kubernetes 管理
-      </Title>
-      <Paragraph type="secondary">
-        管理 Kubernetes 集群、命名空间和资源配置
-      </Paragraph>
+      <div style={{ marginBottom: '24px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <Title level={2} style={{ margin: 0 }}>
+            <ClusterOutlined style={{ marginRight: '8px' }} />
+            Kubernetes 管理
+          </Title>
+          <Paragraph type="secondary" style={{ margin: '4px 0 0 0' }}>
+            管理 Kubernetes 集群和命名空间，支持多种认证方式
+          </Paragraph>
+        </div>
+        <Space>
+          <Button
+            type="primary"
+            icon={<PlusOutlined />}
+            onClick={handleAddCluster}
+          >
+            添加集群
+          </Button>
+        </Space>
+      </div>
 
       {/* 统计卡片 */}
-      <Row gutter={16} style={{ marginBottom: 24 }}>
+      <Row gutter={16} style={{ marginBottom: '24px' }}>
         <Col span={6}>
           <Card>
             <Statistic
-              title="已连接集群"
-              value={connectedClusters}
-              suffix={`/ ${clusters.length}`}
-              valueStyle={{ color: '#3f8600' }}
+              title="总集群数"
+              value={clusters.length}
               prefix={<ClusterOutlined />}
+              valueStyle={{ color: '#1890ff' }}
             />
           </Card>
         </Col>
         <Col span={6}>
           <Card>
             <Statistic
-              title="总节点数"
-              value={totalNodes}
+              title="总集群数"
+              value={clusters.length}
+              prefix={<ClusterOutlined />}
               valueStyle={{ color: '#1890ff' }}
-              prefix={<NodeIndexOutlined />}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="已连接集群"
+              value={clusters.filter(c => c.status === 'connected').length}
+              prefix={<CheckCircleOutlined />}
+              valueStyle={{ color: '#52c41a' }}
+            />
+          </Card>
+        </Col>
+        <Col span={6}>
+          <Card>
+            <Statistic
+              title="命名空间数"
+              value={namespaces.length}
+              prefix={<DatabaseOutlined />}
+              valueStyle={{ color: '#722ed1' }}
             />
           </Card>
         </Col>
@@ -642,29 +502,19 @@ const KubernetesPage: React.FC = () => {
           <Card>
             <Statistic
               title="活跃命名空间"
-              value={activeNamespaces}
-              valueStyle={{ color: '#722ed1' }}
-              prefix={<DatabaseOutlined />}
-            />
-          </Card>
-        </Col>
-        <Col span={6}>
-          <Card>
-            <Statistic
-              title="总资源数"
-              value={totalResources}
-              valueStyle={{ color: '#eb2f96' }}
-              prefix={<ContainerOutlined />}
+              value={namespaces.filter(ns => ns.status === 'active').length}
+              prefix={<NodeIndexOutlined />}
+              valueStyle={{ color: '#13c2c2' }}
             />
           </Card>
         </Col>
       </Row>
 
-      <Tabs activeKey={activeTab} onChange={setActiveTab}>
-        <TabPane tab="集群管理" key="clusters">
-          <Card
-            title="Kubernetes 集群"
-            extra={
+      {/* 主要内容 */}
+      <Card>
+        <Tabs activeKey={activeTab} onChange={setActiveTab}>
+          <Tabs.TabPane tab="集群管理" key="clusters">
+            <div style={{ marginBottom: '16px' }}>
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
@@ -672,156 +522,198 @@ const KubernetesPage: React.FC = () => {
               >
                 添加集群
               </Button>
-            }
-          >
+            </div>
             <Table
               columns={clusterColumns}
               dataSource={clusters}
               rowKey="id"
-              size="small"
+              loading={loading}
+              pagination={{
+                pageSize: 10,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 个集群`,
+              }}
             />
-          </Card>
-        </TabPane>
+          </Tabs.TabPane>
 
-        <TabPane tab="命名空间" key="namespaces">
-          <Card
-            title="命名空间管理"
-            extra={
+          <Tabs.TabPane tab="命名空间管理" key="namespaces">
+            <div style={{ marginBottom: '16px' }}>
               <Button
                 type="primary"
                 icon={<PlusOutlined />}
                 onClick={handleAddNamespace}
+                disabled={clusters.length === 0}
               >
                 添加命名空间
               </Button>
-            }
-          >
+              {clusters.length === 0 && (
+                <Alert
+                  message="请先添加至少一个集群"
+                  type="warning"
+                  style={{ marginTop: '8px' }}
+                />
+              )}
+            </div>
             <Table
               columns={namespaceColumns}
               dataSource={namespaces}
               rowKey="id"
-              size="small"
+              loading={loading}
+              pagination={{
+                pageSize: 10,
+                showSizeChanger: true,
+                showQuickJumper: true,
+                showTotal: (total) => `共 ${total} 个命名空间`,
+              }}
             />
-          </Card>
-        </TabPane>
+          </Tabs.TabPane>
+        </Tabs>
+      </Card>
 
-        <TabPane tab="资源监控" key="resources">
-          <Card title="集群资源">
-            <Table
-              columns={resourceColumns}
-              dataSource={resources}
-              rowKey="id"
-              size="small"
-            />
-          </Card>
-        </TabPane>
-      </Tabs>
-
-      {/* 添加/编辑集群模态框 */}
+      {/* 集群模态框 */}
       <Modal
         title={editingCluster ? '编辑集群' : '添加集群'}
         open={clusterModalVisible}
         onOk={handleClusterSubmit}
-        onCancel={() => setClusterModalVisible(false)}
-        width={720}
-        okText="保存"
-        cancelText="取消"
+        onCancel={() => {
+          setClusterModalVisible(false);
+          clusterForm.resetFields();
+        }}
+        width={600}
+        confirmLoading={validating}
+        okText={validating ? '验证连接中...' : '确定'}
       >
         <Form
           form={clusterForm}
           layout="vertical"
-          initialValues={{
-            config_type: 'kubeconfig',
-            tls_verify: true
-          }}
+          preserve={false}
         >
-          <Row gutter={16}>
-            <Col span={12}>
-              <Form.Item
-                label="集群名称"
-                name="name"
-                rules={[{ required: true, message: '请输入集群名称' }]}
-              >
-                <Input placeholder="输入集群名称" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item
-                label="端点地址"
-                name="endpoint"
-                rules={[{ required: true, message: '请输入端点地址' }]}
-              >
-                <Input placeholder="https://cluster.example.com" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Row gutter={16}>
-            <Col span={8}>
-              <Form.Item label="提供商" name="provider">
-                <Select placeholder="选择提供商">
-                  <Select.Option value="AWS EKS">AWS EKS</Select.Option>
-                  <Select.Option value="Azure AKS">Azure AKS</Select.Option>
-                  <Select.Option value="Google GKE">Google GKE</Select.Option>
-                  <Select.Option value="Self-managed">自建集群</Select.Option>
-                </Select>
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="区域" name="region">
-                <Input placeholder="us-west-1" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item label="版本" name="version">
-                <Input placeholder="v1.28.3" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item label="描述" name="description">
-            <TextArea rows={2} placeholder="集群描述信息" />
+          <Form.Item
+            name="name"
+            label="集群名称"
+            rules={[{ required: true, message: '请输入集群名称' }]}
+          >
+            <Input placeholder="输入集群名称" />
           </Form.Item>
 
-          <Divider>认证配置</Divider>
+          <Form.Item
+            name="api_server"
+            label="API 服务器地址"
+            rules={[
+              { required: true, message: '请输入 API 服务器地址' },
+              { type: 'url', message: '请输入有效的 URL' }
+            ]}
+          >
+            <Input placeholder="https://your-k8s-api-server:6443" />
+          </Form.Item>
 
-          <Form.Item label="认证方式" name="config_type">
-            <Select>
-              <Select.Option value="kubeconfig">Kubeconfig 文件</Select.Option>
-              <Select.Option value="token">Token 认证</Select.Option>
-              <Select.Option value="certificate">证书认证</Select.Option>
+          <Form.Item
+            name="cluster_type"
+            label="集群类型"
+            rules={[{ required: true, message: '请选择集群类型' }]}
+            initialValue="standard"
+          >
+            <Select placeholder="选择集群类型">
+              <Select.Option value="standard">标准集群</Select.Option>
+              <Select.Option value="development">开发集群</Select.Option>
+              <Select.Option value="testing">测试集群</Select.Option>
+              <Select.Option value="production">生产集群</Select.Option>
             </Select>
           </Form.Item>
 
-          <Form.Item label="启用 TLS 验证" name="tls_verify" valuePropName="checked">
-            <Switch />
+          <Form.Item
+            name="description"
+            label="描述"
+          >
+            <TextArea
+              placeholder="输入集群描述"
+              rows={3}
+            />
           </Form.Item>
 
-          <Form.Item shouldUpdate={(prevValues, currentValues) => 
-            prevValues.config_type !== currentValues.config_type
-          }>
+          <Form.Item
+            name={['auth_config', 'type']}
+            label="认证方式"
+            rules={[{ required: true, message: '请选择认证方式' }]}
+          >
+            <Select placeholder="选择认证方式">
+              <Select.Option value="token">Bearer Token</Select.Option>
+              <Select.Option value="kubeconfig">Kubeconfig 文件</Select.Option>
+              <Select.Option value="certificate">客户端证书</Select.Option>
+            </Select>
+          </Form.Item>
+
+          <Form.Item
+            noStyle
+            shouldUpdate={(prevValues, currentValues) =>
+              prevValues?.auth_config?.type !== currentValues?.auth_config?.type
+            }
+          >
             {({ getFieldValue }) => {
-              const configType = getFieldValue('config_type');
+              const authType = getFieldValue(['auth_config', 'type']);
               
-              if (configType === 'token') {
+              if (authType === 'token') {
                 return (
-                  <Form.Item label="Token" name="token">
-                    <TextArea rows={3} placeholder="输入访问令牌" />
+                  <Form.Item
+                    name={['auth_config', 'token']}
+                    label="Bearer Token"
+                    rules={[{ required: true, message: '请输入 Bearer Token' }]}
+                  >
+                    <TextArea
+                      placeholder="输入 Bearer Token"
+                      rows={3}
+                    />
                   </Form.Item>
                 );
               }
               
-              if (configType === 'certificate') {
+              if (authType === 'kubeconfig') {
+                return (
+                  <Form.Item
+                    name={['auth_config', 'kubeconfig']}
+                    label="Kubeconfig 内容"
+                    rules={[{ required: true, message: '请输入 Kubeconfig 内容' }]}
+                  >
+                    <TextArea
+                      placeholder="粘贴 kubeconfig 文件内容"
+                      rows={6}
+                    />
+                  </Form.Item>
+                );
+              }
+              
+              if (authType === 'certificate') {
                 return (
                   <>
-                    <Form.Item label="CA 证书" name="ca_cert">
-                      <TextArea rows={3} placeholder="CA 证书内容" />
+                    <Form.Item
+                      name={['auth_config', 'client_cert']}
+                      label="客户端证书"
+                      rules={[{ required: true, message: '请输入客户端证书' }]}
+                    >
+                      <TextArea
+                        placeholder="输入客户端证书内容"
+                        rows={4}
+                      />
                     </Form.Item>
-                    <Form.Item label="客户端证书" name="client_cert">
-                      <TextArea rows={3} placeholder="客户端证书内容" />
+                    <Form.Item
+                      name={['auth_config', 'client_key']}
+                      label="客户端密钥"
+                      rules={[{ required: true, message: '请输入客户端密钥' }]}
+                    >
+                      <TextArea
+                        placeholder="输入客户端密钥内容"
+                        rows={4}
+                      />
                     </Form.Item>
-                    <Form.Item label="客户端密钥" name="client_key">
-                      <TextArea rows={3} placeholder="客户端密钥内容" />
+                    <Form.Item
+                      name={['auth_config', 'ca_cert']}
+                      label="CA 证书"
+                    >
+                      <TextArea
+                        placeholder="输入 CA 证书内容（可选）"
+                        rows={4}
+                      />
                     </Form.Item>
                   </>
                 );
@@ -830,35 +722,55 @@ const KubernetesPage: React.FC = () => {
               return null;
             }}
           </Form.Item>
+
+          <Form.Item
+            name="is_default"
+            valuePropName="checked"
+          >
+            <Switch checkedChildren="默认集群" unCheckedChildren="普通集群" />
+          </Form.Item>
         </Form>
       </Modal>
 
-      {/* 添加/编辑命名空间模态框 */}
+      {/* 命名空间模态框 */}
       <Modal
         title={editingNamespace ? '编辑命名空间' : '添加命名空间'}
         open={namespaceModalVisible}
         onOk={handleNamespaceSubmit}
-        onCancel={() => setNamespaceModalVisible(false)}
-        okText="保存"
-        cancelText="取消"
+        onCancel={() => {
+          setNamespaceModalVisible(false);
+          namespaceForm.resetFields();
+        }}
+        width={500}
       >
-        <Form form={namespaceForm} layout="vertical">
+        <Form
+          form={namespaceForm}
+          layout="vertical"
+          preserve={false}
+        >
           <Form.Item
-            label="命名空间名称"
             name="name"
-            rules={[{ required: true, message: '请输入命名空间名称' }]}
+            label="命名空间名称"
+            rules={[
+              { required: true, message: '请输入命名空间名称' },
+              { pattern: /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/, message: '名称只能包含小写字母、数字和连字符，且不能以连字符开头或结尾' }
+            ]}
           >
             <Input placeholder="输入命名空间名称" />
           </Form.Item>
 
           <Form.Item
+            name="cluster"
             label="所属集群"
-            name="cluster_id"
             rules={[{ required: true, message: '请选择所属集群' }]}
           >
-            <Select placeholder="选择集群">
+            <Select
+              placeholder="选择集群"
+              showSearch
+              optionFilterProp="children"
+            >
               {clusters
-                .filter(c => c.status === 'connected')
+                .filter(cluster => cluster.status === 'connected')
                 .map(cluster => (
                   <Select.Option key={cluster.id} value={cluster.id}>
                     {cluster.name}
@@ -866,10 +778,6 @@ const KubernetesPage: React.FC = () => {
                 ))
               }
             </Select>
-          </Form.Item>
-
-          <Form.Item label="描述" name="description">
-            <TextArea rows={3} placeholder="命名空间描述信息" />
           </Form.Item>
         </Form>
       </Modal>

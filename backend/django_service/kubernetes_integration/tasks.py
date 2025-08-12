@@ -18,6 +18,7 @@ def check_cluster_status(self, cluster_id):
         from .k8s_client import KubernetesManager
         
         cluster = KubernetesCluster.objects.get(id=cluster_id)
+        logger.info(f"开始检查集群 {cluster.name} (ID: {cluster_id}) 的状态")
         
         # 创建 K8s 管理器
         k8s_manager = KubernetesManager(cluster)
@@ -26,46 +27,61 @@ def check_cluster_status(self, cluster_id):
         cluster_info = k8s_manager.get_cluster_info()
         
         # 更新集群信息
-        cluster.status = 'active' if cluster_info['connected'] else 'error'
-        cluster.last_check = timezone.now()
-        cluster.check_message = cluster_info.get('message', '')
-        cluster.kubernetes_version = cluster_info.get('version', '')
-        cluster.total_nodes = cluster_info.get('total_nodes', 0)
-        cluster.ready_nodes = cluster_info.get('ready_nodes', 0)
-        cluster.total_pods = cluster_info.get('total_pods', 0)
-        cluster.running_pods = cluster_info.get('running_pods', 0)
-        cluster.save()
+        if cluster_info['connected']:
+            cluster.status = 'active'
+            cluster.last_check = timezone.now()
+            cluster.check_message = cluster_info.get('message', '连接成功')
+            cluster.kubernetes_version = cluster_info.get('version', '')
+            cluster.total_nodes = cluster_info.get('total_nodes', 0)
+            cluster.ready_nodes = cluster_info.get('ready_nodes', 0)
+            cluster.total_pods = cluster_info.get('total_pods', 0)
+            cluster.running_pods = cluster_info.get('running_pods', 0)
+            
+            logger.info(f"集群 {cluster.name} 连接成功: {cluster.kubernetes_version}, "
+                       f"节点 {cluster.ready_nodes}/{cluster.total_nodes}, "
+                       f"Pod {cluster.running_pods}/{cluster.total_pods}")
+        else:
+            cluster.status = 'error'
+            cluster.last_check = timezone.now()
+            cluster.check_message = cluster_info.get('message', '连接失败')
+            
+            logger.warning(f"集群 {cluster.name} 连接失败: {cluster.check_message}")
         
-        logger.info(f"集群 {cluster.name} 状态检查完成: {cluster.status}")
+        cluster.save()
         
         return {
             'cluster_id': cluster_id,
+            'cluster_name': cluster.name,
             'status': cluster.status,
             'message': cluster.check_message,
             'cluster_info': cluster_info
         }
         
     except Exception as e:
-        logger.error(f"检查集群 {cluster_id} 状态失败: {str(e)}")
+        error_msg = f"检查集群 {cluster_id} 状态失败: {str(e)}"
+        logger.error(error_msg)
         
         # 更新集群为错误状态
         try:
             cluster = KubernetesCluster.objects.get(id=cluster_id)
             cluster.status = 'error'
             cluster.last_check = timezone.now()
-            cluster.check_message = f"连接失败: {str(e)}"
+            cluster.check_message = f"状态检查失败: {str(e)}"
             cluster.save()
-        except:
-            pass
+        except Exception as update_error:
+            logger.error(f"无法更新集群状态: {update_error}")
         
-        # 重试
+        # 重试逻辑
         if self.request.retries < self.max_retries:
-            raise self.retry(countdown=60 * (self.request.retries + 1))
+            retry_countdown = 60 * (self.request.retries + 1)
+            logger.info(f"将在 {retry_countdown} 秒后重试 (第 {self.request.retries + 1} 次)")
+            raise self.retry(countdown=retry_countdown)
         
         return {
             'cluster_id': cluster_id,
             'status': 'error',
-            'error': str(e)
+            'error': str(e),
+            'retries_exhausted': True
         }
 
 
@@ -209,6 +225,54 @@ def sync_cluster_resources(self, cluster_id):
             
         except Exception as e:
             sync_results['errors'].append(f"同步 Pod 失败: {str(e)}")
+        
+        try:
+            # 同步服务
+            services = k8s_manager.list_services()
+            synced_services = 0
+            
+            for svc_data in services:
+                try:
+                    namespace = KubernetesNamespace.objects.get(
+                        cluster=cluster,
+                        name=svc_data['namespace']
+                    )
+                    
+                    service, created = KubernetesService.objects.get_or_create(
+                        cluster=cluster,
+                        namespace=namespace,
+                        name=svc_data['name'],
+                        defaults={
+                            'service_type': svc_data.get('type', 'ClusterIP'),
+                            'cluster_ip': svc_data.get('cluster_ip', ''),
+                            'external_ip': svc_data.get('external_ip', ''),
+                            'ports': svc_data.get('ports', []),
+                            'selector': svc_data.get('selector', {}),
+                            'labels': svc_data.get('labels', {}),
+                            'created_by_id': 1,  # 系统用户
+                        }
+                    )
+                    if not created:
+                        # 更新现有服务
+                        service.service_type = svc_data.get('type', service.service_type)
+                        service.cluster_ip = svc_data.get('cluster_ip', service.cluster_ip)
+                        service.external_ip = svc_data.get('external_ip', service.external_ip)
+                        service.ports = svc_data.get('ports', service.ports)
+                        service.selector = svc_data.get('selector', service.selector)
+                        service.labels = svc_data.get('labels', service.labels)
+                        service.save()
+                    
+                    synced_services += 1
+                    
+                except KubernetesNamespace.DoesNotExist:
+                    sync_results['errors'].append(
+                        f"命名空间 {svc_data['namespace']} 不存在，跳过服务 {svc_data['name']}"
+                    )
+            
+            sync_results['synced_resources']['services'] = synced_services
+            
+        except Exception as e:
+            sync_results['errors'].append(f"同步服务失败: {str(e)}")
         
         # 更新集群最后同步时间
         cluster.last_check = timezone.now()
