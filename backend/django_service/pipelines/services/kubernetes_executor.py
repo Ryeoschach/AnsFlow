@@ -98,34 +98,69 @@ class KubernetesStepExecutor:
         # 获取部署参数
         namespace = step.k8s_namespace or k8s_config.get('namespace', 'default')
         resource_name = step.k8s_resource_name or k8s_config.get('name')
+        deploy_type = k8s_config.get('deploy_type', 'manifest')
         
         if not resource_name:
             raise ValueError("No resource name specified for deployment")
-        
-        # 构建部署规格
-        deployment_spec = k8s_config.get('deployment_spec', {})
-        
-        # 处理镜像名称（可能来自上下文）
-        image = deployment_spec.get('image') or context.get('docker_image')
-        if not image:
-            raise ValueError("No Docker image specified for deployment")
-        
-        # 处理变量替换
-        deployment_spec = self._process_variables(deployment_spec, context)
-        deployment_spec['image'] = self._process_variables(image, context)
-        deployment_spec['name'] = resource_name
-        deployment_spec['namespace'] = namespace
         
         try:
             # 创建 Kubernetes 管理器
             k8s_manager = KubernetesManager(step.k8s_cluster)
             
-            # 执行部署
-            result = k8s_manager.create_deployment(deployment_spec)
+            if deploy_type == 'helm':
+                # Helm 部署
+                result = self._execute_helm_deploy(step, k8s_manager, context)
+            else:
+                # 原生 YAML 部署
+                result = self._execute_manifest_deploy(step, k8s_manager, context)
             
             # 更新上下文
             context['k8s_deployment'] = resource_name
             context['k8s_namespace'] = namespace
+            
+            return result
+            
+        except Exception as e:
+            raise Exception(f"Kubernetes deployment failed: {str(e)}")
+    
+    def _execute_manifest_deploy(self, step, k8s_manager, context: Dict[str, Any]) -> Dict[str, Any]:
+        """执行原生 YAML 清单部署"""
+        k8s_config = step.k8s_config or {}
+        namespace = step.k8s_namespace or k8s_config.get('namespace', 'default')
+        resource_name = step.k8s_resource_name or k8s_config.get('name')
+        
+        # 获取清单内容
+        manifest_content = k8s_config.get('manifest_content')
+        manifest_path = k8s_config.get('manifest_path')
+        
+        if manifest_content:
+            # 处理变量替换
+            manifest_content = self._process_variables(manifest_content, context)
+            manifest_yaml = manifest_content
+        elif manifest_path:
+            # 读取文件
+            manifest_path = self._process_variables(manifest_path, context)
+            try:
+                with open(manifest_path, 'r', encoding='utf-8') as f:
+                    manifest_yaml = f.read()
+                # 处理变量替换
+                manifest_yaml = self._process_variables(manifest_yaml, context)
+            except FileNotFoundError:
+                raise ValueError(f"Manifest file not found: {manifest_path}")
+        else:
+            # 构建默认部署规格（向后兼容）
+            deployment_spec = k8s_config.get('deployment_spec', {})
+            image = deployment_spec.get('image') or context.get('docker_image')
+            if not image:
+                raise ValueError("No Docker image or manifest specified for deployment")
+            
+            deployment_spec = self._process_variables(deployment_spec, context)
+            deployment_spec['image'] = self._process_variables(image, context)
+            deployment_spec['name'] = resource_name
+            deployment_spec['namespace'] = namespace
+            
+            # 执行部署
+            result = k8s_manager.create_deployment(deployment_spec)
             
             return {
                 'message': f'Deployment {resource_name} created successfully in namespace {namespace}',
@@ -137,9 +172,96 @@ class KubernetesStepExecutor:
                     'replicas': deployment_spec.get('replicas', 1)
                 }
             }
-            
-        except Exception as e:
-            raise Exception(f"Kubernetes deployment failed: {str(e)}")
+        
+        # 应用 YAML 清单
+        dry_run = k8s_config.get('dry_run', False)
+        wait_for_rollout = k8s_config.get('wait_for_rollout', True)
+        
+        result = k8s_manager.apply_manifest(
+            manifest_yaml, 
+            namespace, 
+            dry_run=dry_run,
+            wait_for_rollout=wait_for_rollout
+        )
+        
+        return {
+            'message': f'Manifest deployed successfully in namespace {namespace}',
+            'output': json.dumps(result, indent=2),
+            'data': {
+                'resource_name': resource_name,
+                'namespace': namespace,
+                'dry_run': dry_run
+            }
+        }
+    
+    def _execute_helm_deploy(self, step, k8s_manager, context: Dict[str, Any]) -> Dict[str, Any]:
+        """执行 Helm Chart 部署"""
+        k8s_config = step.k8s_config or {}
+        namespace = step.k8s_namespace or k8s_config.get('namespace', 'default')
+        
+        # 获取 Helm 配置
+        chart_name = k8s_config.get('chart_name')
+        chart_repo = k8s_config.get('chart_repo')
+        chart_version = k8s_config.get('chart_version')
+        release_name = k8s_config.get('release_name')
+        values_file = k8s_config.get('values_file')
+        custom_values = k8s_config.get('custom_values')
+        
+        # Helm 选项
+        helm_upgrade = k8s_config.get('helm_upgrade', True)
+        helm_wait = k8s_config.get('helm_wait', True)
+        helm_atomic = k8s_config.get('helm_atomic', False)
+        helm_timeout = k8s_config.get('helm_timeout', 300)
+        dry_run = k8s_config.get('dry_run', False)
+        
+        if not chart_name:
+            raise ValueError("Chart name is required for Helm deployment")
+        
+        if not release_name:
+            raise ValueError("Release name is required for Helm deployment")
+        
+        # 处理变量替换
+        chart_name = self._process_variables(chart_name, context)
+        release_name = self._process_variables(release_name, context)
+        if chart_repo:
+            chart_repo = self._process_variables(chart_repo, context)
+        if chart_version:
+            chart_version = self._process_variables(chart_version, context)
+        if values_file:
+            values_file = self._process_variables(values_file, context)
+        if custom_values:
+            custom_values = self._process_variables(custom_values, context)
+        
+        # 构建 Helm 部署参数
+        helm_params = {
+            'chart_name': chart_name,
+            'release_name': release_name,
+            'namespace': namespace,
+            'chart_repo': chart_repo,
+            'chart_version': chart_version,
+            'values_file': values_file,
+            'custom_values': custom_values,
+            'upgrade': helm_upgrade,
+            'wait': helm_wait,
+            'atomic': helm_atomic,
+            'timeout': helm_timeout,
+            'dry_run': dry_run
+        }
+        
+        # 执行 Helm 部署
+        result = k8s_manager.deploy_helm_chart(helm_params)
+        
+        return {
+            'message': f'Helm chart {chart_name} deployed as {release_name} in namespace {namespace}',
+            'output': result.get('output', ''),
+            'data': {
+                'chart_name': chart_name,
+                'release_name': release_name,
+                'namespace': namespace,
+                'chart_version': chart_version,
+                'dry_run': dry_run
+            }
+        }
     
     def _execute_k8s_scale(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """执行 Kubernetes 扩缩容步骤"""

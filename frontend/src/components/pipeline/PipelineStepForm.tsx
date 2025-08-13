@@ -42,6 +42,7 @@ interface PipelineStepFormProps {
   onParameterSelect: (paramKey: string, paramValue: any) => void
   onCreateDockerRegistry?: () => void
   onCreateK8sCluster?: () => void
+  onK8sClusterChange?: (clusterId: number) => void
 }
 
 const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
@@ -64,7 +65,8 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
   onToggleParameterDoc,
   onParameterSelect,
   onCreateDockerRegistry,
-  onCreateK8sCluster
+  onCreateK8sCluster,
+  onK8sClusterChange
 }) => {
   return (
     <Drawer
@@ -478,6 +480,7 @@ const PipelineStepForm: React.FC<PipelineStepFormProps> = ({
             k8sClusters={k8sClusters}
             k8sNamespaces={k8sNamespaces}
             onCreateCluster={onCreateK8sCluster}
+            onClusterChange={onK8sClusterChange}
           />
         )}
         

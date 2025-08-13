@@ -2150,6 +2150,83 @@ class ApiService {
     return response.data
   }
 
+  // 获取集群 Token 状态
+  async getKubernetesClusterTokenStatus(id: number): Promise<{
+    status: 'valid' | 'invalid' | 'no_token' | 'warning'
+    token_info: {
+      has_expiry: boolean
+      expires_at: string | null
+      is_expired: boolean
+      auto_refresh_available: boolean
+      last_validated: string
+      error_message: string
+    }
+    connection_info: {
+      cluster_version?: string
+      total_nodes?: number
+      ready_nodes?: number
+      connection_time: string
+      message: string
+      error?: string
+    }
+    recommendations: string[]
+  }> {
+    const response = await this.api.get(`/kubernetes/clusters/${id}/token_status/`)
+    return response.data
+  }
+
+  // 获取集群 Token 更新策略
+  async getKubernetesClusterTokenRenewalStrategy(id: number): Promise<{
+    current_status: any
+    strategies: {
+      immediate_actions: Array<{
+        action: string
+        title: string
+        description: string
+        urgency: 'high' | 'medium' | 'low'
+        commands?: string[]
+        steps?: string[]
+      }>
+      long_term_solutions: Array<{
+        solution: string
+        title: string
+        description: string
+        benefits: string[]
+        implementation: string
+      }>
+      automation_options: Array<{
+        option: string
+        title: string
+        description: string
+        features: string[]
+      }>
+    }
+    priority_actions: Array<{
+      priority: number
+      action: string
+      reason: string
+    }>
+  }> {
+    const response = await this.api.get(`/kubernetes/clusters/${id}/token_renewal_strategy/`)
+    return response.data
+  }
+
+  // 立即验证集群 Token
+  async validateKubernetesClusterToken(id: number): Promise<{
+    valid: boolean
+    message: string
+    cluster_info?: {
+      version?: string
+      total_nodes?: number
+      ready_nodes?: number
+      total_pods?: number
+      running_pods?: number
+    }
+  }> {
+    const response = await this.api.post(`/kubernetes/clusters/${id}/validate_token/`)
+    return response.data
+  }
+
   // ===== Kubernetes 命名空间管理 =====
 
   // 获取所有命名空间

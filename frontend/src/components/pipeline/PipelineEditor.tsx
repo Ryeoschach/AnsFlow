@@ -402,29 +402,60 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   // 获取Docker和Kubernetes资源
   const fetchDockerK8sResources = async () => {
     try {
-      // 临时使用模拟数据，实际API需要后端提供
-      const mockRegistries = [
-        { id: 1, name: 'Docker Hub', url: 'https://registry-1.docker.io', username: '', description: '官方Docker Hub' },
-        { id: 2, name: '阿里云容器镜像', url: 'registry.cn-hangzhou.aliyuncs.com', username: '', description: '阿里云ACR' }
-      ]
-      const mockClusters = [
-        { id: 1, name: '开发集群', endpoint: 'https://dev-k8s.example.com', description: '开发环境K8s集群' },
-        { id: 2, name: '生产集群', endpoint: 'https://prod-k8s.example.com', description: '生产环境K8s集群' }
-      ]
-      const mockNamespaces = [
-        { id: 1, name: 'default', cluster_id: 1, description: '默认命名空间' },
-        { id: 2, name: 'development', cluster_id: 1, description: '开发命名空间' },
-        { id: 3, name: 'production', cluster_id: 2, description: '生产命名空间' }
-      ]
+      // 获取 Kubernetes 集群列表
+      const clusters = await apiService.getKubernetesClusters()
+      setK8sClusters(clusters)
       
-      setDockerRegistries(mockRegistries)
-      setK8sClusters(mockClusters)
-      setK8sNamespaces(mockNamespaces)
+      // 如果有集群，获取第一个集群的命名空间作为默认显示
+      if (clusters.length > 0) {
+        try {
+          const namespaces = await apiService.getKubernetesClusterNamespaces(clusters[0].id)
+          setK8sNamespaces(namespaces)
+        } catch (nsError) {
+          console.error('Failed to fetch default namespaces:', nsError)
+          setK8sNamespaces([])
+        }
+      } else {
+        setK8sNamespaces([])
+      }
+
+      // 获取 Docker 镜像仓库列表（如果有相应的API）
+      try {
+        // TODO: 如果后端有 Docker Registry API，在这里调用
+        // const registries = await apiService.getDockerRegistries()
+        // setDockerRegistries(registries)
+        
+        // 临时使用模拟数据
+        const mockRegistries = [
+          { id: 1, name: 'Docker Hub', url: 'https://registry-1.docker.io', username: '', description: '官方Docker Hub' },
+          { id: 2, name: '阿里云容器镜像', url: 'registry.cn-hangzhou.aliyuncs.com', username: '', description: '阿里云ACR' }
+        ]
+        setDockerRegistries(mockRegistries)
+      } catch (registryError) {
+        console.error('Failed to fetch docker registries:', registryError)
+        setDockerRegistries([])
+      }
+      
     } catch (error) {
       console.error('Failed to fetch docker/k8s resources:', error)
+      message.error('获取 Docker/K8s 资源失败')
       // 设置空数组作为兜底
       setDockerRegistries([])
       setK8sClusters([])
+      setK8sNamespaces([])
+    }
+  }
+
+  // 处理 K8s 集群变化，动态加载命名空间
+  const handleK8sClusterChange = async (clusterId: number) => {
+    try {
+      console.log('K8s cluster changed to:', clusterId)
+      const namespaces = await apiService.getKubernetesClusterNamespaces(clusterId)
+      setK8sNamespaces(namespaces)
+      console.log('Loaded namespaces for cluster', clusterId, ':', namespaces.length, 'namespaces')
+    } catch (error) {
+      console.error('Failed to fetch namespaces for cluster', clusterId, ':', error)
+      message.error('获取集群命名空间失败')
       setK8sNamespaces([])
     }
   }
@@ -1681,6 +1712,7 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         stepTypes={STEP_TYPES}
         onClose={() => setStepFormVisible(false)}
         onSubmit={handleStepSubmit}
+        onK8sClusterChange={handleK8sClusterChange}
         onStepTypeChange={(value: string) => {
           setSelectedStepType(value)
           setShowParameterDoc(true)

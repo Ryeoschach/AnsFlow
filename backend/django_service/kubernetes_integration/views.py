@@ -198,6 +198,75 @@ class KubernetesClusterViewSet(viewsets.ModelViewSet):
                 }
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    @action(detail=True, methods=['get'])
+    def token_status(self, request, pk=None):
+        """获取集群 Token 状态"""
+        from .token_manager import KubernetesTokenManager
+        
+        cluster = self.get_object()
+        token_manager = KubernetesTokenManager(cluster)
+        
+        try:
+            status_data = token_manager.get_token_status()
+            return Response(status_data)
+        except Exception as e:
+            return Response({
+                'error': f'获取 Token 状态失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['get'])
+    def token_renewal_strategy(self, request, pk=None):
+        """获取集群 Token 更新策略"""
+        from .token_manager import KubernetesTokenManager
+        
+        cluster = self.get_object()
+        token_manager = KubernetesTokenManager(cluster)
+        
+        try:
+            strategy_data = token_manager.suggest_token_renewal_strategy()
+            return Response(strategy_data)
+        except Exception as e:
+            return Response({
+                'error': f'生成更新策略失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+    @action(detail=True, methods=['post'])
+    def validate_token(self, request, pk=None):
+        """立即验证集群 Token"""
+        from .token_manager import KubernetesTokenManager
+        
+        cluster = self.get_object()
+        auth_config = cluster.auth_config or {}
+        current_token = auth_config.get('token')
+        
+        if not current_token:
+            return Response({
+                'valid': False,
+                'message': '集群未配置 Token'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        token_manager = KubernetesTokenManager(cluster)
+        
+        try:
+            is_valid, connection_info = token_manager.validate_token_connection(current_token)
+            
+            return Response({
+                'valid': is_valid,
+                'message': connection_info.get('message', '验证完成'),
+                'cluster_info': {
+                    'version': connection_info.get('cluster_version'),
+                    'total_nodes': connection_info.get('total_nodes'),
+                    'ready_nodes': connection_info.get('ready_nodes'),
+                    'total_pods': connection_info.get('total_pods'),
+                    'running_pods': connection_info.get('running_pods')
+                } if is_valid else None
+            })
+        except Exception as e:
+            return Response({
+                'valid': False,
+                'message': f'Token 验证失败: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 class KubernetesNamespaceViewSet(viewsets.ModelViewSet):
     """Kubernetes 命名空间管理视图集"""

@@ -34,10 +34,12 @@ import {
   DatabaseOutlined,
   SyncOutlined,
   EyeOutlined,
-  InfoCircleOutlined
+  InfoCircleOutlined,
+  ToolOutlined
 } from '@ant-design/icons';
 import { apiService } from '../../services/api';
 import { KubernetesCluster, KubernetesNamespace } from '../../types';
+import KubernetesTokenManager from './KubernetesTokenManager';
 
 const { Text } = Typography;
 const { TextArea } = Input;
@@ -58,6 +60,8 @@ const KubernetesSettings: React.FC = () => {
   const [namespaceResources, setNamespaceResources] = useState<any>(null);
   const [clusterStats, setClusterStats] = useState<any>(null);
   const [loadingClusterStats, setLoadingClusterStats] = useState(false);
+  const [tokenManagerVisible, setTokenManagerVisible] = useState(false);
+  const [selectedClusterForToken, setSelectedClusterForToken] = useState<KubernetesCluster | null>(null);
   const [clusterForm] = Form.useForm();
   const [namespaceForm] = Form.useForm();
 
@@ -176,6 +180,22 @@ const KubernetesSettings: React.FC = () => {
         message.error('删除集群失败: ' + (error.response?.data?.message || error.message));
       }
     }
+  };
+
+  // Token 管理相关函数
+  const handleManageToken = (cluster: KubernetesCluster) => {
+    setSelectedClusterForToken(cluster);
+    setTokenManagerVisible(true);
+  };
+
+  const handleTokenManagerClose = () => {
+    setTokenManagerVisible(false);
+    setSelectedClusterForToken(null);
+  };
+
+  const handleTokenUpdated = () => {
+    // Token 更新后重新加载集群列表
+    loadClusters();
   };
 
   const handleClusterSubmit = async () => {
@@ -464,6 +484,14 @@ const KubernetesSettings: React.FC = () => {
               size="small"
               icon={<EyeOutlined />}
               onClick={() => handleViewClusterDetail(record)}
+            />
+          </Tooltip>
+          <Tooltip title="Token 管理">
+            <Button
+              size="small"
+              icon={<ToolOutlined />}
+              onClick={() => handleManageToken(record)}
+              type={record.auth_config?.token ? 'default' : 'dashed'}
             />
           </Tooltip>
           <Tooltip title="测试连接">
@@ -1344,6 +1372,16 @@ const KubernetesSettings: React.FC = () => {
           </Tabs>
         )}
       </Modal>
+
+      {/* Token 管理器 */}
+      {selectedClusterForToken && (
+        <KubernetesTokenManager
+          cluster={selectedClusterForToken}
+          visible={tokenManagerVisible}
+          onClose={handleTokenManagerClose}
+          onTokenUpdated={handleTokenUpdated}
+        />
+      )}
     </div>
   );
 };

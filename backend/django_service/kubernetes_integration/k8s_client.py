@@ -649,3 +649,175 @@ class KubernetesManager:
         )
         
         return deployment
+
+    def deploy_helm_chart(self, helm_params: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        使用 Helm 部署 Chart
+        
+        Args:
+            helm_params: Helm 部署参数
+            
+        Returns:
+            部署结果
+        """
+        import subprocess
+        import tempfile
+        import yaml
+        
+        try:
+            # 构建 Helm 命令
+            cmd = self._build_helm_command(helm_params)
+            
+            # 执行 Helm 命令
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=helm_params.get('timeout', 300)
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"Helm command failed: {result.stderr}")
+            
+            return {
+                'status': 'success',
+                'message': f"Helm chart {helm_params['chart_name']} deployed successfully",
+                'output': result.stdout,
+                'command': cmd
+            }
+            
+        except subprocess.TimeoutExpired:
+            raise Exception(f"Helm deployment timed out after {helm_params.get('timeout', 300)} seconds")
+        except Exception as e:
+            logger.error(f"Helm deployment failed: {e}")
+            raise
+    
+    def _build_helm_command(self, helm_params: Dict[str, Any]) -> str:
+        """构建 Helm 命令"""
+        chart_name = helm_params['chart_name']
+        release_name = helm_params['release_name']
+        namespace = helm_params['namespace']
+        
+        # 基础命令
+        if helm_params.get('upgrade', True):
+            cmd = f"helm upgrade --install {release_name} {chart_name}"
+        else:
+            cmd = f"helm install {release_name} {chart_name}"
+        
+        # 添加命名空间
+        cmd += f" --namespace {namespace} --create-namespace"
+        
+        # 添加仓库
+        if helm_params.get('chart_repo'):
+            # 如果有仓库 URL，先添加仓库
+            repo_name = f"temp-repo-{hash(helm_params['chart_repo']) % 10000}"
+            chart_name = f"{repo_name}/{chart_name}"
+            # 注意：这里需要先执行 helm repo add
+            pre_cmd = f"helm repo add {repo_name} {helm_params['chart_repo']} && helm repo update && "
+            cmd = pre_cmd + cmd.replace(helm_params['chart_name'], chart_name)
+        
+        # 添加版本
+        if helm_params.get('chart_version'):
+            cmd += f" --version {helm_params['chart_version']}"
+        
+        # 添加 values 文件
+        if helm_params.get('values_file'):
+            cmd += f" --values {helm_params['values_file']}"
+        
+        # 添加自定义 values
+        if helm_params.get('custom_values'):
+            # 创建临时文件存储自定义 values
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                f.write(helm_params['custom_values'])
+                cmd += f" --values {f.name}"
+        
+        # 添加选项
+        if helm_params.get('wait', True):
+            cmd += " --wait"
+        
+        if helm_params.get('atomic', False):
+            cmd += " --atomic"
+        
+        if helm_params.get('timeout'):
+            cmd += f" --timeout {helm_params['timeout']}s"
+        
+        if helm_params.get('dry_run', False):
+            cmd += " --dry-run"
+        
+        return cmd
+    
+    def apply_manifest(self, manifest_yaml: str, namespace: str, dry_run: bool = False, wait_for_rollout: bool = True) -> Dict[str, Any]:
+        """
+        应用 Kubernetes YAML 清单
+        
+        Args:
+            manifest_yaml: YAML 清单内容
+            namespace: 命名空间
+            dry_run: 是否执行干运行
+            wait_for_rollout: 是否等待部署完成
+            
+        Returns:
+            应用结果
+        """
+        import subprocess
+        import tempfile
+        
+        try:
+            # 创建临时文件存储 YAML 内容
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.yaml', delete=False) as f:
+                f.write(manifest_yaml)
+                temp_file = f.name
+            
+            # 构建 kubectl 命令
+            cmd = f"kubectl apply -f {temp_file} -n {namespace}"
+            
+            if dry_run:
+                cmd += " --dry-run=client"
+            
+            # 执行命令
+            result = subprocess.run(
+                cmd,
+                shell=True,
+                capture_output=True,
+                text=True,
+                timeout=300
+            )
+            
+            if result.returncode != 0:
+                raise Exception(f"kubectl apply failed: {result.stderr}")
+            
+            output = result.stdout
+            
+            # 如果需要等待部署完成
+            if wait_for_rollout and not dry_run:
+                # 尝试等待 deployment 完成
+                wait_cmd = f"kubectl rollout status deployment -n {namespace} --timeout=300s"
+                wait_result = subprocess.run(
+                    wait_cmd,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=300
+                )
+                if wait_result.stdout:
+                    output += "\n" + wait_result.stdout
+            
+            return {
+                'status': 'success',
+                'message': f"Manifest applied successfully in namespace {namespace}",
+                'output': output,
+                'command': cmd
+            }
+            
+        except subprocess.TimeoutExpired:
+            raise Exception("kubectl apply timed out after 300 seconds")
+        except Exception as e:
+            logger.error(f"Manifest apply failed: {e}")
+            raise
+        finally:
+            # 清理临时文件
+            try:
+                os.unlink(temp_file)
+            except:
+                pass
