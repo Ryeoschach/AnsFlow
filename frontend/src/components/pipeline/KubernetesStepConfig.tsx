@@ -24,9 +24,28 @@ const KubernetesStepConfig: React.FC<KubernetesStepConfigProps> = ({
 }) => {
   const form = Form.useFormInstance()
   
+  // 辅助函数：获取集群状态显示信息
+  const getClusterStatusInfo = (status: string) => {
+    switch (status) {
+      case 'active':
+      case 'connected':
+        return { color: 'green', text: '已连接' }
+      case 'connecting':
+        return { color: 'blue', text: '连接中' }
+      case 'error':
+        return { color: 'red', text: '连接错误' }
+      case 'inactive':
+      case 'disconnected':
+      default:
+        return { color: 'red', text: '未连接' }
+    }
+  }
+  
   const renderK8sDeployConfig = () => {
-    // 获取当前的部署类型
-    const deployType = form.getFieldValue(['k8s_config', 'deploy_type']) || 'manifest'
+    // 实时监听部署类型变化
+    const deployType = Form.useWatch(['k8s_config', 'deploy_type'], form) || 'manifest'
+    
+    console.log('🎯 KubernetesStepConfig - current deployType:', deployType)
     
     return (
       <Card size="small" title="Kubernetes Deploy 配置" style={{ marginBottom: 16 }}>
@@ -542,16 +561,19 @@ const KubernetesStepConfig: React.FC<KubernetesStepConfigProps> = ({
               </>
             )}
           >
-            {k8sClusters.map(cluster => (
-              <Option key={cluster.id} value={cluster.id}>
-                <Space>
-                  <span>{cluster.name}</span>
-                  <Tag color={cluster.status === 'connected' ? 'green' : 'red'}>
-                    {cluster.status === 'connected' ? '已连接' : '未连接'}
-                  </Tag>
-                </Space>
-              </Option>
-            ))}
+            {k8sClusters.map(cluster => {
+              const statusInfo = getClusterStatusInfo(cluster.status)
+              return (
+                <Option key={cluster.id} value={cluster.id}>
+                  <Space>
+                    <span>{cluster.name}</span>
+                    <Tag color={statusInfo.color}>
+                      {statusInfo.text}
+                    </Tag>
+                  </Space>
+                </Option>
+              )
+            })}
           </Select>
         </Form.Item>
 

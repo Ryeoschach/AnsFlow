@@ -28,7 +28,9 @@ import {
   PipelineStep, 
   EnhancedPipelineStep,
   ParallelGroup,
-  ValidationResult
+  ValidationResult,
+  KubernetesStepConfig,
+  DockerStepConfig
 } from '../../types'
 import apiService from '../../services/api'
 import PipelineStepList from './PipelineStepList'
@@ -109,6 +111,17 @@ interface StepFormData {
   ansible_playbook?: number | null
   ansible_inventory?: number | null
   ansible_credential?: number | null
+  // Kubernetes 字段
+  k8s_cluster_id?: number | null
+  k8s_cluster?: number | null
+  k8s_namespace?: string
+  k8s_resource_name?: string
+  k8s_config?: KubernetesStepConfig | null
+  // Docker 字段
+  docker_image?: string
+  docker_tag?: string
+  docker_registry?: number | null
+  docker_config?: DockerStepConfig | null
 }
 
 // 工具函数：判断是否为AtomicStep
@@ -124,6 +137,7 @@ const isPipelineStep = (step: PipelineStep | AtomicStep): step is PipelineStep =
 // 工具函数：获取步骤参数
 const getStepParameters = (step: PipelineStep | AtomicStep): Record<string, any> => {
   if (isAtomicStep(step)) {
+    // AtomicStep的所有配置都存储在parameters字段中
     return step.parameters || {}
   } else {
     // 对于旧的PipelineStep，需要从独立字段构建参数
@@ -136,6 +150,17 @@ const getStepParameters = (step: PipelineStep | AtomicStep): Record<string, any>
         playbook_id: step.ansible_playbook,
         inventory_id: step.ansible_inventory,
         credential_id: step.ansible_credential
+      }
+    }
+    
+    // 🔥 修复：如果是Kubernetes步骤，确保从独立字段获取K8s配置
+    if (step.step_type?.startsWith('k8s_')) {
+      return {
+        ...parameters,
+        k8s_cluster: step.k8s_cluster,
+        k8s_namespace: step.k8s_namespace,
+        k8s_resource_name: step.k8s_resource_name,
+        k8s_config: step.k8s_config
       }
     }
     
@@ -163,7 +188,67 @@ const getStepAnsibleConfig = (step: PipelineStep | AtomicStep) => {
 // 工具函数：规范化步骤数据用于显示
 const normalizeStepForDisplay = (step: PipelineStep | AtomicStep): AtomicStep => {
   if (isAtomicStep(step)) {
-    return step
+    // 对于AtomicStep，检查是否为K8s步骤，只有K8s步骤才需要从parameters中提取K8s字段到顶层
+    const parameters = step.parameters || {}
+    const isK8sStep = step.step_type?.startsWith('k8s_')
+    
+    if (isK8sStep) {
+      // 仅对K8s步骤执行K8s字段提取逻辑
+      // 从parameters中提取K8s字段
+      const k8sCluster = parameters.k8s_cluster || parameters.k8s_cluster_id || parameters.cluster_id
+      const k8sNamespace = parameters.k8s_namespace || parameters.namespace
+      const k8sResourceName = parameters.k8s_resource_name || parameters.resource_name
+      
+      // 🔥 修复：正确提取 k8s_config 对象（AtomicStep 的 k8s_config 在 parameters 中）
+      let k8sConfig = {}
+      
+      if (parameters.k8s_config && typeof parameters.k8s_config === 'object') {
+        // AtomicStep 的 k8s_config 保存在 parameters.k8s_config 中
+        k8sConfig = parameters.k8s_config
+      } else {
+        // 如果 parameters 中没有，初始化为空对象
+        k8sConfig = {}
+      }
+      
+      console.log('🔄 normalizeStepForDisplay - K8s AtomicStep processing:', {
+        stepId: step.id,
+        stepName: step.name,
+        stepType: step.step_type,
+        originalParameters: parameters,
+        extractedK8sFields: {
+          k8s_cluster: k8sCluster,
+          k8s_namespace: k8sNamespace,
+          k8s_resource_name: k8sResourceName,
+        },
+        k8sConfigAnalysis: {
+          parametersHasK8sConfig: !!(parameters.k8s_config && typeof parameters.k8s_config === 'object'),
+          parametersK8sConfig: parameters.k8s_config,
+          finalK8sConfig: k8sConfig
+        }
+      })
+      
+      return {
+        ...step,
+        // 优先使用parameters中的K8s字段，如果没有则使用已有的顶层字段
+        k8s_cluster: k8sCluster || step.k8s_cluster,
+        k8s_namespace: k8sNamespace || step.k8s_namespace || '',
+        k8s_resource_name: k8sResourceName || step.k8s_resource_name || '',
+        // 🔥 修复：AtomicStep 的 k8s_config 只来自 parameters，不回退到 step.k8s_config
+        k8s_config: k8sConfig
+      }
+    } else {
+      // 非K8s的AtomicStep，直接返回，不进行任何K8s字段处理
+      console.log('🔄 normalizeStepForDisplay - Non-K8s AtomicStep processing:', {
+        stepId: step.id,
+        stepName: step.name,
+        stepType: step.step_type,
+        message: 'No K8s processing needed'
+      })
+      
+      return {
+        ...step
+      }
+    }
   } else {
     // 将PipelineStep转换为AtomicStep格式用于显示
     // 确保正确传递参数，包括ansible相关的ID
@@ -180,6 +265,20 @@ const normalizeStepForDisplay = (step: PipelineStep | AtomicStep): AtomicStep =>
       parameters.credential_id = step.ansible_credential
     }
     
+    // 🔥 修复：如果有Kubernetes相关的字段，添加到parameters中
+    if (step.k8s_cluster) {
+      parameters.k8s_cluster = step.k8s_cluster
+    }
+    if (step.k8s_namespace) {
+      parameters.k8s_namespace = step.k8s_namespace
+    }
+    if (step.k8s_resource_name) {
+      parameters.k8s_resource_name = step.k8s_resource_name
+    }
+    if (step.k8s_config) {
+      parameters.k8s_config = step.k8s_config
+    }
+    
     return {
       id: step.id,
       name: step.name,
@@ -193,6 +292,11 @@ const normalizeStepForDisplay = (step: PipelineStep | AtomicStep): AtomicStep =>
       ansible_playbook: step.ansible_playbook,
       ansible_inventory: step.ansible_inventory,
       ansible_credential: step.ansible_credential,
+      // K8s字段
+      k8s_cluster: step.k8s_cluster,
+      k8s_namespace: step.k8s_namespace,
+      k8s_resource_name: step.k8s_resource_name,
+      k8s_config: step.k8s_config,
       parallel_group: step.parallel_group || ''  // 添加并行组字段
     }
   }
@@ -772,6 +876,22 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
   }
 
   const handleEditStep = (step: PipelineStep | AtomicStep) => {
+    console.log('🔍 handleEditStep called with step:', {
+      stepId: step.id,
+      stepName: step.name,
+      stepType: step.step_type,
+      isAtomicStep: isAtomicStep(step),
+      rawStepData: step,
+      k8sFields: {
+        k8s_cluster: step.k8s_cluster,
+        k8s_namespace: step.k8s_namespace,
+        k8s_resource_name: step.k8s_resource_name,
+        k8s_config: step.k8s_config
+      },
+      allKeys: Object.keys(step),
+      parameters: isAtomicStep(step) ? step.parameters : (step as any).ansible_parameters
+    })
+    
     setEditingStep(step)
     setSelectedStepType(step.step_type)
     setShowParameterDoc(false)
@@ -779,6 +899,12 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
     // 获取步骤的参数和Ansible配置
     const stepParams = getStepParameters(step)
     const ansibleConfig = getStepAnsibleConfig(step)
+    
+    console.log('🔧 step processing:', {
+      stepParams,
+      ansibleConfig,
+      originalStep: step
+    })
     
     // 准备基础表单值
     const formValues: any = {
@@ -869,12 +995,77 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         cleanParameters: cleanParameters,
         finalFormValues: formValues
       })
+    } else if (step.step_type?.startsWith('k8s_')) {
+      // Kubernetes步骤特殊处理：K8s配置存储在parameters中
+      const k8sParams = stepParams
+      
+      console.log('🔍 K8s step parameters analysis:', {
+        stepType: step.step_type,
+        isAtomicStep: isAtomicStep(step),
+        allStepKeys: Object.keys(step),
+        stepParameters: k8sParams,
+        rawStep: step
+      })
+      
+      // 对于AtomicStep，K8s配置存储在parameters中
+      if (isAtomicStep(step)) {
+        // 从parameters中提取K8s配置
+        formValues.k8s_cluster_id = k8sParams.k8s_cluster_id || k8sParams.k8s_cluster || k8sParams.cluster_id
+        formValues.k8s_namespace = k8sParams.k8s_namespace || k8sParams.namespace
+        formValues.k8s_resource_name = k8sParams.k8s_resource_name || k8sParams.resource_name
+        formValues.k8s_config = k8sParams.k8s_config || k8sParams.config || {}
+      } else {
+        // 对于PipelineStep，从顶层字段获取K8s配置
+        formValues.k8s_cluster_id = step.k8s_cluster
+        formValues.k8s_namespace = step.k8s_namespace
+        formValues.k8s_resource_name = step.k8s_resource_name
+        formValues.k8s_config = step.k8s_config
+      }
+      
+      // 清理参数中的K8s字段，避免重复显示
+      const cleanParameters = { ...k8sParams }
+      delete cleanParameters.k8s_cluster_id
+      delete cleanParameters.k8s_cluster
+      delete cleanParameters.cluster_id
+      delete cleanParameters.k8s_namespace
+      delete cleanParameters.namespace
+      delete cleanParameters.k8s_resource_name
+      delete cleanParameters.resource_name
+      delete cleanParameters.k8s_config
+      delete cleanParameters.config
+      
+      formValues.parameters = Object.keys(cleanParameters).length > 0 
+        ? JSON.stringify(cleanParameters, null, 2) 
+        : '{}'
+      
+      console.log('📝 Loading k8s step:', {
+        stepType: step.step_type,
+        clusterId: formValues.k8s_cluster_id,
+        namespace: formValues.k8s_namespace,
+        resourceName: formValues.k8s_resource_name,
+        k8sConfig: formValues.k8s_config,
+        k8sConfigType: typeof formValues.k8s_config,
+        k8sConfigDeployType: formValues.k8s_config?.deploy_type,
+        originalStep: step,
+        k8sParams: k8sParams,
+        cleanParameters: cleanParameters,
+        finalFormValues: formValues
+      })
     } else {
-      // 非ansible、非docker步骤直接使用原始参数
+      // 非ansible、非docker、非k8s步骤直接使用原始参数
       formValues.parameters = JSON.stringify(stepParams, null, 2)
     }
 
     form.setFieldsValue(formValues)
+    
+    // 如果是K8s步骤且有集群ID，自动加载命名空间
+    if (step.step_type?.startsWith('k8s_') && formValues.k8s_cluster_id) {
+      handleK8sClusterChange(formValues.k8s_cluster_id)
+        .catch(error => {
+          console.error('自动加载K8s命名空间失败:', error)
+        })
+    }
+    
     setStepFormVisible(true)
   }
 
@@ -949,6 +1140,19 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         }
       }
 
+      // 处理Kubernetes步骤的特殊字段
+      if (values.step_type?.startsWith('k8s_')) {
+        // 将Kubernetes相关字段添加到parameters中
+        parameters = {
+          ...parameters,
+          // 核心K8s配置
+          k8s_cluster: values.k8s_cluster_id,
+          k8s_namespace: values.k8s_namespace,
+          k8s_resource_name: values.k8s_resource_name,
+          ...(values.k8s_config && { k8s_config: values.k8s_config }),
+        }
+      }
+
       const stepData: StepFormData = {
         ...values,
         parameters,
@@ -957,12 +1161,24 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
         ansible_inventory: values.step_type === 'ansible' ? values.ansible_inventory_id : undefined,
         ansible_credential: values.step_type === 'ansible' ? values.ansible_credential_id : undefined,
         // Docker步骤的兼容性字段
-        docker_registry: values.step_type?.startsWith('docker_') ? values.docker_registry : undefined
+        docker_registry: values.step_type?.startsWith('docker_') ? values.docker_registry : undefined,
+        // Kubernetes步骤的兼容性字段
+        k8s_cluster: values.step_type?.startsWith('k8s_') ? values.k8s_cluster_id : undefined,
+        k8s_namespace: values.step_type?.startsWith('k8s_') ? values.k8s_namespace : undefined,
+        k8s_resource_name: values.step_type?.startsWith('k8s_') ? values.k8s_resource_name : undefined,
+        k8s_config: values.step_type?.startsWith('k8s_') ? values.k8s_config : undefined
       }
 
       console.log('📝 Step edit - constructed stepData:', {
         stepType: stepData.step_type,
         parameters: stepData.parameters,
+        k8sInParameters: {
+          k8s_cluster: stepData.parameters?.k8s_cluster,
+          k8s_namespace: stepData.parameters?.k8s_namespace,
+          k8s_resource_name: stepData.parameters?.k8s_resource_name,
+          k8s_config: stepData.parameters?.k8s_config
+        },
+        formValues: values,
         fullStepData: stepData
       })
 
@@ -987,20 +1203,35 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
               name: stepData.name,
               step_type: stepData.step_type as any,
               description: stepData.description,
-              parameters: stepData.parameters,
+              parameters: stepData.parameters, // 所有配置都在parameters中，包括K8s配置
               order: step.order, // 保持原有顺序
               is_active: true,
               git_credential: values.git_credential_id || null,
-              // 兼容性字段
+              // 兼容性字段 - 对于AtomicStep，这些字段不会保存到数据库，只用于前端显示
               ansible_playbook: stepData.ansible_playbook,
               ansible_inventory: stepData.ansible_inventory,
-              ansible_credential: stepData.ansible_credential
+              ansible_credential: stepData.ansible_credential,
+              // 对于AtomicStep，K8s字段只在前端使用，实际数据在parameters中
+              k8s_cluster: stepData.k8s_cluster || null,
+              k8s_namespace: stepData.k8s_namespace || '',
+              k8s_resource_name: stepData.k8s_resource_name || '',
+              k8s_config: stepData.k8s_config || undefined,
+              // Docker 字段 - 同样只用于前端显示
+              docker_image: stepData.docker_image || '',
+              docker_tag: stepData.docker_tag || '',
+              docker_registry: stepData.docker_registry || null,
+              docker_config: stepData.docker_config || undefined
             }
             
             console.log('🔄 Step edit - step after update:', {
               originalStep: step,
               newStepData: stepData,
               updatedStep: updatedStep,
+              k8sFields: {
+                k8s_cluster: updatedStep.k8s_cluster,
+                k8s_namespace: updatedStep.k8s_namespace,
+                k8s_resource_name: updatedStep.k8s_resource_name
+              },
               parametersComparison: {
                 original: isAtomicStep(step) ? step.parameters : {},
                 new: updatedStep.parameters
@@ -1015,12 +1246,29 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
       } else {
         const newStep: AtomicStep = {
           id: Date.now(), // 临时ID，后端会重新分配
-          ...stepData,
+          name: stepData.name,
           step_type: stepData.step_type as any,
+          description: stepData.description || '',
+          parameters: stepData.parameters,
+          order: steps.length + 1,
           pipeline: pipeline?.id || 0,
           is_active: true,
           created_at: new Date().toISOString(),
-          git_credential: values.git_credential_id || null
+          git_credential: values.git_credential_id || null,
+          // Ansible 字段
+          ansible_playbook: stepData.ansible_playbook || null,
+          ansible_inventory: stepData.ansible_inventory || null,
+          ansible_credential: stepData.ansible_credential || null,
+          // Kubernetes 字段
+          k8s_cluster: stepData.k8s_cluster || null,
+          k8s_namespace: stepData.k8s_namespace || '',
+          k8s_resource_name: stepData.k8s_resource_name || '',
+          k8s_config: stepData.k8s_config || undefined,
+          // Docker 字段
+          docker_image: stepData.docker_image || '',
+          docker_tag: stepData.docker_tag || '',
+          docker_registry: stepData.docker_registry || null,
+          docker_config: stepData.docker_config || undefined
         }
         updatedSteps = [...steps, newStep]
         console.log('➕ Step edit - added new step:', newStep)
@@ -1066,27 +1314,83 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
             tool_job_name: pipelineInfo.tool_job_name || pipeline.tool_job_name,
             tool_job_config: pipeline.tool_job_config,
             steps: updatedSteps.map((step, index) => {
-              // 直接使用步骤的参数，不通过getStepParameters处理
-              const stepParams = isAtomicStep(step) ? (step.parameters || {}) : (step.ansible_parameters || {})
+              // 获取步骤参数
+              let stepParams = isAtomicStep(step) ? (step.parameters || {}) : (step.ansible_parameters || {})
               
-              console.log(`🔍 Step ${index + 1} (${step.name}) - building API payload:`, {
-                stepId: step.id,
-                stepName: step.name,
-                stepType: step.step_type,
-                directParams: stepParams,
-                isEditedStep: editingStep && step.id === editingStep.id,
-                fullStep: step
-              })
+              // 🔥 修复：仅对Kubernetes步骤且为AtomicStep时，才进行特殊处理
+              let k8sConfig = null
+              const isK8sStep = step.step_type?.startsWith('k8s_')
               
-              return {
+              if (isK8sStep) {
+                if (isAtomicStep(step)) {
+                  // 对于AtomicStep的K8s步骤，k8s_config应该保存在parameters中
+                  k8sConfig = step.parameters?.k8s_config || step.k8s_config || {}
+                  
+                  // 🔥 关键修复：只对K8s步骤的AtomicStep才将k8s_config保存到parameters中
+                  // 并且只有当k8s_config非空时才添加K8s字段，避免污染非K8s步骤
+                  if (Object.keys(k8sConfig).length > 0 || step.k8s_cluster || step.k8s_namespace || step.k8s_resource_name) {
+                    stepParams = {
+                      ...stepParams,
+                      k8s_config: k8sConfig,
+                      // 只有在有实际K8s配置时才保留这些字段
+                      ...(step.k8s_cluster && { k8s_cluster: step.k8s_cluster }),
+                      ...(step.k8s_namespace && { k8s_namespace: step.k8s_namespace }),
+                      ...(step.k8s_resource_name && { k8s_resource_name: step.k8s_resource_name })
+                    }
+                  }
+                  
+                  // 对于AtomicStep，不在顶层设置k8s_config，因为模型中没有这个字段
+                  k8sConfig = null
+                } else {
+                  // 对于PipelineStep的K8s步骤，k8s_config在顶层字段中
+                  k8sConfig = step.k8s_config || {}
+                }
+              }
+              
+              // 构建API负载，包含所有必要字段
+              const apiPayload = {
                 name: step.name,
                 step_type: step.step_type,
                 description: step.description || '',
                 parameters: stepParams,
                 order: index + 1,
                 is_active: true,
-                git_credential: isAtomicStep(step) ? step.git_credential : null
+                git_credential: isAtomicStep(step) ? step.git_credential : null,
+                // 添加 Kubernetes 相关字段 - 只对K8s步骤有效
+                ...(isK8sStep && {
+                  k8s_cluster: step.k8s_cluster || null,
+                  k8s_namespace: step.k8s_namespace || '',
+                  k8s_resource_name: step.k8s_resource_name || '',
+                  k8s_config: k8sConfig,
+                }),
+                // 添加 Docker 相关字段
+                docker_image: step.docker_image || '',
+                docker_tag: step.docker_tag || '',
+                docker_registry: step.docker_registry || null,
+                docker_config: step.docker_config || null,
+                // 添加 Ansible 相关字段
+                ansible_credential: step.ansible_credential || null
               }
+              
+              console.log(`🔍 Step ${index + 1} (${step.name}) - building API payload:`, {
+                stepId: step.id,
+                stepName: step.name,
+                stepType: step.step_type,
+                isAtomicStep: isAtomicStep(step),
+                isK8sStep: isK8sStep,
+                k8sConfig: isK8sStep ? {
+                  fromStepK8sConfig: step.k8s_config,
+                  fromStepParametersK8sConfig: isAtomicStep(step) ? step.parameters?.k8s_config : null,
+                  finalTopLevelK8sConfig: apiPayload.k8s_config,
+                  finalParametersK8sConfig: stepParams.k8s_config,
+                  isAtomicStepLogic: isAtomicStep(step) ? 'k8s_config saved to parameters' : 'k8s_config saved to top level'
+                } : 'Not a K8s step - no K8s processing',
+                directParams: stepParams,
+                isEditedStep: editingStep && step.id === editingStep.id,
+                fullPayload: apiPayload
+              })
+              
+              return apiPayload
             })
           }
 
@@ -1109,10 +1413,58 @@ const PipelineEditor: React.FC<PipelineEditorProps> = ({
           // 更新本地状态为服务器返回的最新数据
           if (updatedPipeline.steps && updatedPipeline.steps.length > 0) {
             console.log('🔄 Step edit - updating local state with API response steps')
-            setSteps(updatedPipeline.steps.sort((a, b) => a.order - b.order))
+            
+            // 🔥 关键调试：检查API返回的原始数据中的k8s_config
+            console.log('🔍 Step edit - API response analysis:', {
+              totalSteps: updatedPipeline.steps.length,
+              k8sSteps: updatedPipeline.steps.filter(step => step.step_type?.startsWith('k8s_')),
+              k8sStepDetails: updatedPipeline.steps
+                .filter(step => step.step_type?.startsWith('k8s_'))
+                .map(step => ({
+                  stepId: step.id,
+                  stepName: step.name,
+                  stepType: step.step_type,
+                  rawStep: step,
+                  isAtomicStep: isAtomicStep(step),
+                  parameters: isAtomicStep(step) ? step.parameters : undefined,
+                  parametersK8sConfig: isAtomicStep(step) ? step.parameters?.k8s_config : undefined,
+                  hasK8sConfigInParameters: isAtomicStep(step) && !!(step.parameters?.k8s_config && typeof step.parameters.k8s_config === 'object'),
+                  k8sConfigContent: isAtomicStep(step) ? step.parameters?.k8s_config : undefined,
+                  pipelineStepK8sConfig: !isAtomicStep(step) ? (step as any).k8s_config : undefined
+                }))
+            })
+            
+            // 使用normalizeStepForDisplay处理API返回的数据，确保K8s字段正确映射
+            const normalizedSteps = updatedPipeline.steps
+              .sort((a, b) => a.order - b.order)
+              .map(normalizeStepForDisplay)
+            
+            console.log('🔄 Step edit - normalized steps:', {
+              originalSteps: updatedPipeline.steps,
+              normalizedSteps: normalizedSteps,
+              k8sFieldsComparison: normalizedSteps
+                .filter(step => step.step_type?.startsWith('k8s_'))
+                .map(step => ({
+                  stepName: step.name,
+                  stepType: step.step_type,
+                  originalParameters: isAtomicStep(step) ? step.parameters : {},
+                  normalizedK8sConfig: step.k8s_config,
+                  k8sFields: {
+                    k8s_cluster: step.k8s_cluster,
+                    k8s_namespace: step.k8s_namespace,
+                    k8s_resource_name: step.k8s_resource_name
+                  }
+                }))
+            })
+            
+            setSteps(normalizedSteps)
           } else if (updatedPipeline.atomic_steps && updatedPipeline.atomic_steps.length > 0) {
             console.log('🔄 Step edit - updating local state with API response atomic_steps (compatibility)')
-            setSteps(updatedPipeline.atomic_steps.sort((a, b) => a.order - b.order))
+            // 同样对atomic_steps进行normalize处理
+            const normalizedSteps = updatedPipeline.atomic_steps
+              .sort((a, b) => a.order - b.order)
+              .map(normalizeStepForDisplay)
+            setSteps(normalizedSteps)
           }
           
           message.success(editingStep ? '步骤更新并保存成功' : '步骤添加并保存成功')

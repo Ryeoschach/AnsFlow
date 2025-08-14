@@ -239,6 +239,18 @@ export interface AtomicStep {
   ansible_inventory?: number | null  // Ansible Inventory ID
   ansible_credential?: number | null  // Ansible Credential ID
   parallel_group?: string  // 并行组名称
+  
+  // Docker 相关
+  docker_image?: string
+  docker_tag?: string
+  docker_registry?: number | null
+  docker_config?: DockerStepConfig
+  
+  // Kubernetes 相关
+  k8s_cluster?: number | null
+  k8s_namespace?: string
+  k8s_resource_name?: string
+  k8s_config?: KubernetesStepConfig
 }
 
 // 步骤执行类型
@@ -721,7 +733,7 @@ export interface KubernetesCluster {
   cluster_type: string
   api_server: string
   auth_config: Record<string, any>
-  status: 'connected' | 'disconnected' | 'error' | 'active' | 'inactive'
+  status: 'active' | 'inactive' | 'error' | 'connecting' | 'connected' | 'disconnected'
   is_default: boolean
   created_at: string
   updated_at: string

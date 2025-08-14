@@ -12,6 +12,9 @@ class PipelineStepSerializer(serializers.ModelSerializer):
     ansible_inventory_name = serializers.CharField(source='ansible_inventory.name', read_only=True)
     ansible_credential_name = serializers.CharField(source='ansible_credential.name', read_only=True)
     
+    # Kubernetes关联字段
+    k8s_cluster_name = serializers.CharField(source='k8s_cluster.name', read_only=True)
+    
     class Meta:
         model = PipelineStep
         fields = [
@@ -21,6 +24,9 @@ class PipelineStepSerializer(serializers.ModelSerializer):
             'ansible_inventory', 'ansible_inventory_name', 
             'ansible_credential', 'ansible_credential_name',
             'ansible_parameters',
+            # Kubernetes 字段
+            'k8s_cluster', 'k8s_cluster_name', 'k8s_namespace', 
+            'k8s_resource_name', 'k8s_config',
             # 高级工作流功能字段
             'dependencies', 'parallel_group', 'conditions',
             'approval_required', 'approval_users', 'approval_status',
@@ -205,6 +211,27 @@ class PipelineSerializer(serializers.ModelSerializer):
                         pipeline_step_data['ansible_inventory_id'] = inventory_id
                     if credential_id:
                         pipeline_step_data['ansible_credential_id'] = credential_id
+                
+                # 处理Kubernetes相关字段 - 🔥 关键修复：处理k8s步骤的配置
+                if step_data.get('step_type', '').startswith('k8s_'):
+                    print(f"🔧 处理K8s步骤: {step_data.get('name')}")
+                    
+                    # 从step_data顶层或parameters中获取k8s字段
+                    k8s_cluster_id = step_data.get('k8s_cluster') or parameters.get('k8s_cluster')
+                    k8s_namespace = step_data.get('k8s_namespace') or parameters.get('k8s_namespace', '')
+                    k8s_resource_name = step_data.get('k8s_resource_name') or parameters.get('k8s_resource_name', '')
+                    k8s_config = step_data.get('k8s_config') or parameters.get('k8s_config', {})
+                    
+                    print(f"🔧 K8s字段提取结果: cluster={k8s_cluster_id}, namespace={k8s_namespace}, resource={k8s_resource_name}, config={k8s_config}")
+                    
+                    if k8s_cluster_id:
+                        pipeline_step_data['k8s_cluster_id'] = k8s_cluster_id
+                    if k8s_namespace:
+                        pipeline_step_data['k8s_namespace'] = k8s_namespace
+                    if k8s_resource_name:
+                        pipeline_step_data['k8s_resource_name'] = k8s_resource_name
+                    if k8s_config:
+                        pipeline_step_data['k8s_config'] = k8s_config
                 
                 # 处理Git凭据
                 if step_data.get('git_credential'):

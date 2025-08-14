@@ -699,23 +699,72 @@ class KubernetesManager:
         release_name = helm_params['release_name']
         namespace = helm_params['namespace']
         
+        # 处理Chart名称和仓库逻辑
+        final_chart_name = chart_name
+        pre_cmd = ""
+        
+        if helm_params.get('chart_repo'):
+            # 如果用户提供了仓库URL，添加临时仓库
+            repo_name = f"temp-repo-{hash(helm_params['chart_repo']) % 10000}"
+            final_chart_name = f"{repo_name}/{chart_name}"
+            pre_cmd = f"helm repo add {repo_name} {helm_params['chart_repo']} && helm repo update && "
+        elif '/' not in chart_name and not chart_name.startswith('./') and not chart_name.startswith('/'):
+            # 如果Chart名称不包含仓库信息且不是本地路径，尝试智能识别
+            print(f"🔧 Chart名称 '{chart_name}' 看起来像是Chart包名，开始智能识别...")
+            
+            # 检查是否存在本地Chart目录
+            import os
+            local_chart_found = False
+            
+            # 策略1：检查当前工作目录是否就是Chart目录
+            current_dir = os.getcwd()
+            chart_yaml_path = os.path.join(current_dir, 'Chart.yaml')
+            print(f"🔍 检查当前工作目录: {current_dir}")
+            print(f"🔍 检查Chart.yaml路径: {chart_yaml_path}")
+            print(f"🔍 Chart.yaml文件是否存在: {os.path.exists(chart_yaml_path)}")
+            
+            if os.path.exists(chart_yaml_path):
+                # 当前目录就是Chart目录，使用相对路径
+                final_chart_name = "."
+                local_chart_found = True
+                print(f"✅ 当前工作目录就是Chart目录: {current_dir}")
+            else:
+                print(f"📂 当前目录内容: {os.listdir(current_dir) if os.path.exists(current_dir) else '目录不存在'}")
+                # 策略2：在常见位置查找Chart目录
+                possible_paths = [
+                    f"./{chart_name}",
+                    f"./charts/{chart_name}",
+                    f"./helm/{chart_name}",
+                    f"./k8s/{chart_name}",
+                    chart_name  # 也尝试直接作为目录名
+                ]
+                
+                print(f"🔍 尝试在以下路径查找Chart:")
+                for path in possible_paths:
+                    chart_yaml_in_path = os.path.join(path, 'Chart.yaml')
+                    exists = os.path.exists(chart_yaml_in_path)
+                    print(f"  - {path}/Chart.yaml: {'✅存在' if exists else '❌不存在'}")
+                    if exists:
+                        final_chart_name = path
+                        local_chart_found = True
+                        print(f"✅ 找到本地Chart目录: {path}")
+                        break
+            
+            if not local_chart_found:
+                # 策略3：添加stable仓库并尝试
+                print(f"⚠️ 未找到本地Chart，尝试从stable仓库获取: {chart_name}")
+                repo_name = "stable"
+                final_chart_name = f"{repo_name}/{chart_name}"
+                pre_cmd = f"helm repo add {repo_name} https://charts.helm.sh/stable 2>/dev/null || true && helm repo update && "
+        
         # 基础命令
         if helm_params.get('upgrade', True):
-            cmd = f"helm upgrade --install {release_name} {chart_name}"
+            cmd = f"helm upgrade --install {release_name} {final_chart_name}"
         else:
-            cmd = f"helm install {release_name} {chart_name}"
+            cmd = f"helm install {release_name} {final_chart_name}"
         
         # 添加命名空间
         cmd += f" --namespace {namespace} --create-namespace"
-        
-        # 添加仓库
-        if helm_params.get('chart_repo'):
-            # 如果有仓库 URL，先添加仓库
-            repo_name = f"temp-repo-{hash(helm_params['chart_repo']) % 10000}"
-            chart_name = f"{repo_name}/{chart_name}"
-            # 注意：这里需要先执行 helm repo add
-            pre_cmd = f"helm repo add {repo_name} {helm_params['chart_repo']} && helm repo update && "
-            cmd = pre_cmd + cmd.replace(helm_params['chart_name'], chart_name)
         
         # 添加版本
         if helm_params.get('chart_version'):
@@ -745,7 +794,10 @@ class KubernetesManager:
         if helm_params.get('dry_run', False):
             cmd += " --dry-run"
         
-        return cmd
+        # 组合最终命令
+        final_cmd = pre_cmd + cmd
+        print(f"🚀 构建的Helm命令: {final_cmd}")
+        return final_cmd
     
     def apply_manifest(self, manifest_yaml: str, namespace: str, dry_run: bool = False, wait_for_rollout: bool = True) -> Dict[str, Any]:
         """

@@ -482,7 +482,7 @@ const KubernetesPage: React.FC = () => {
           <Card>
             <Statistic
               title="已连接集群"
-              value={clusters.filter(c => c.status === 'connected').length}
+              value={clusters.filter(c => c.status === 'active' || c.status === 'connected').length}
               prefix={<CheckCircleOutlined />}
               valueStyle={{ color: '#52c41a' }}
             />
@@ -770,7 +770,7 @@ const KubernetesPage: React.FC = () => {
               optionFilterProp="children"
             >
               {clusters
-                .filter(cluster => cluster.status === 'connected')
+                .filter(cluster => cluster.status === 'active' || cluster.status === 'connected')
                 .map(cluster => (
                   <Select.Option key={cluster.id} value={cluster.id}>
                     {cluster.name}

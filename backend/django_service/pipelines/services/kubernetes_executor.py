@@ -5,6 +5,7 @@ Kubernetes 步骤执行器
 
 import logging
 import json
+import os
 import time
 from typing import Dict, Any, Optional
 from django.utils import timezone
@@ -43,6 +44,16 @@ class KubernetesStepExecutor:
             Dict[str, Any]: 执行结果
         """
         context = context or {}
+        
+        # 应用工作目录上下文
+        original_cwd = None
+        if 'working_directory' in context and context['working_directory']:
+            original_cwd = os.getcwd()
+            try:
+                os.chdir(context['working_directory'])
+                logger.debug(f"K8s executor: Changed working directory to: {context['working_directory']}")
+            except Exception as e:
+                logger.warning(f"K8s executor: Failed to change working directory to {context['working_directory']}: {e}")
         
         try:
             # 根据步骤类型选择执行方法
@@ -90,6 +101,14 @@ class KubernetesStepExecutor:
                 'output': getattr(e, 'output', ''),
                 'data': {}
             }
+        finally:
+            # 恢复原始工作目录
+            if original_cwd:
+                try:
+                    os.chdir(original_cwd)
+                    logger.debug(f"K8s executor: Restored working directory to: {original_cwd}")
+                except Exception as e:
+                    logger.warning(f"K8s executor: Failed to restore working directory to {original_cwd}: {e}")
     
     def _execute_k8s_deploy(self, step, context: Dict[str, Any]) -> Dict[str, Any]:
         """执行 Kubernetes 部署步骤"""
